@@ -1,0 +1,2099 @@
+diff --color -ruN r3a/frontend/src/App.js r3b/frontend/src/App.js
+--- r3a/frontend/src/App.js	2026-10-21 02:08:22
++++ r3b/frontend/src/App.js	2026-10-21 02:08:22
+@@ -18,7 +18,11 @@
+ import Exceptions from "@/features/exceptions/Exceptions";
+ import DocumentExtraction from "@/features/extraction/DocumentExtraction";
+ import ModulePlaceholder from "@/features/modules/ModulePlaceholder";
+-import MyWork from "@/features/mywork/MyWork";
++import Today from "@/features/today/Today";
++import Approvals from "@/features/approvals/Approvals";
++import FundRelease from "@/features/release/FundRelease";
++import Refunds from "@/features/refunds/Refunds";
++import Reports from "@/features/reports/Reports";
+ import { useStore } from "@/state/store";
+ import { homePath } from "@/lib/access";
+ 
+@@ -35,7 +39,12 @@
+           <Route path="/" element={<HomeRedirect />} />
+           <Route path="/admin/users" element={<UserManagement />} />
+           <Route path="/admin/roles" element={<RolesAccess />} />
+-          <Route path="/my-work" element={<MyWork />} />
++          <Route path="/today" element={<Today />} />
++          <Route path="/my-work" element={<Navigate to="/today" replace />} />
++          <Route path="/approvals" element={<Approvals />} />
++          <Route path="/release" element={<FundRelease />} />
++          <Route path="/refunds" element={<Refunds />} />
++          <Route path="/reports" element={<Reports />} />
+           <Route path="/command" element={<CommandCentre />} />
+           <Route path="/ingestion" element={<FileInbox />} />
+           <Route path="/rules" element={<MatchRules />} />
+diff --color -ruN r3a/frontend/src/components/AppShell.js r3b/frontend/src/components/AppShell.js
+--- r3a/frontend/src/components/AppShell.js	2026-10-21 02:08:22
++++ r3b/frontend/src/components/AppShell.js	2026-10-21 02:08:22
+@@ -3,15 +3,20 @@
+ import {
+   LayoutDashboard, Landmark, CreditCard, GitCompareArrows, History, Gauge, Inbox, Combine, Siren, ScanText, ListOrdered,
+   PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound, Lock,
+-  Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, ListTodo, Eye,
++  Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, Eye,
++  Home, ClipboardCheck, FileInput, Banknote, FileBarChart, Search,
+ } from "lucide-react";
++import CommandPalette from "@/components/CommandPalette";
++import { useApprovals } from "@/features/approvals/useApprovals";
++import { dailyCycle } from "@/lib/journey";
+ import { useStore } from "@/state/store";
+ import { ConfirmModal } from "@/components/Modal";
+ import { navFor, homePath, screenForPath, hasCap, PERSONAS, screenLabel } from "@/lib/access";
+ import { toast } from "sonner";
+ 
+ const ICONS = {
+-  my_work: ListTodo, command: Gauge, ingestion: Inbox, match: Combine, exceptions: Siren, extraction: ScanText,
++  today: Home, inbox: ClipboardCheck, release: Banknote, refunds: Undo2, reports: FileBarChart,
++  command: Gauge, ingestion: FileInput, match: Combine, exceptions: Siren, extraction: ScanText,
+   bank_setup: Landmark, credit_mis: CreditCard, mapping: GitCompareArrows, rules: ListOrdered,
+   approvals: LayoutDashboard, audit: History, users: Users, roles: KeyRound,
+   brk_compute: Calculator, brk_payout: Wallet, brk_master: BookUser,
+@@ -31,12 +36,20 @@
+   const [personaOpen, setPersonaOpen] = React.useState(false);
+   const [confirmReset, setConfirmReset] = React.useState(false);
+   const [bannerSeen, setBannerSeen] = React.useState(false);
++  const [paletteOpen, setPaletteOpen] = React.useState(false);
++  const [bellOpen, setBellOpen] = React.useState(false);
++  const approvals = useApprovals().filter((a) => !a.own);
++  React.useEffect(() => {
++    const h = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((o) => !o); } };
++    window.addEventListener("keydown", h);
++    return () => window.removeEventListener("keydown", h);
++  }, []);
+ 
+   React.useEffect(() => { setBannerSeen(false); }, [persona, state.sessionId]);
+   React.useEffect(() => {
+-    const close = () => { setMenuOpen(false); setPersonaOpen(false); };
+-    if (menuOpen || personaOpen) { window.addEventListener("click", close); return () => window.removeEventListener("click", close); }
+-  }, [menuOpen, personaOpen]);
++    const close = () => { setMenuOpen(false); setPersonaOpen(false); setBellOpen(false); };
++    if (menuOpen || personaOpen || bellOpen) { window.addEventListener("click", close); return () => window.removeEventListener("click", close); }
++  }, [menuOpen, personaOpen, bellOpen]);
+ 
+   const modules = navFor(perms, simple);
+   const screen = screenForPath(loc.pathname);
+@@ -51,9 +64,13 @@
+ 
+   const myWorkCount = (collections.exceptions || []).filter((e) => e.status !== "closed" && e.status !== "pending_approval" && (e.owner === personaUser.name || (!e.owner && e.amount > 0 && e.interestHoursLeft < 24))).length
+     + (collections.suggestions || []).filter((s) => !s.decided).length + docsToReview;
++  const release = (collections.releases || [])[0];
+   const badgeFor = (key) => ({
+-    my_work: myWorkCount,
+-    approvals: role === "auth" ? queueCount : 0,
++    today: hasCap(perms, "inbox", "approve") ? 0 : hasCap(perms, "match", "edit") ? myWorkCount : 0,
++    inbox: approvals.length,
++    release: release && ((release.status === "not_started" && hasCap(perms, "release", "edit")) || (release.status === "pending" && hasCap(perms, "release", "approve"))) ? 1 : 0,
++    refunds: hasCap(perms, "refunds", "edit") ? (collections.refunds || []).filter((r) => r.status === "draft").length : 0,
++    approvals: 0,
+     bank_setup: role === "maker" ? rejectedCount : 0,
+     roles: hasCap(perms, "roles", "approve") ? accessPending : 0,
+     exceptions: openExceptions,
+@@ -65,6 +82,13 @@
+   EXTRA_CRUMBS.forEach(([re, label]) => { if (re.test(loc.pathname) && crumbs.length === 2) crumbs.push(label); });
+   const toggleSimple = () => { setSimple(!simple); setMenuOpen(false); nav("/"); };
+ 
++  const late = dailyCycle(collections).filter((s) => s.late && s.state !== "done" && hasCap(perms, s.screen));
++  const notes = [
++    ...late.map((s) => ({ id: "late-" + s.key, tone: "red", text: `${s.title} was due by ${s.by}`, sub: s.summary, path: s.cta.path })),
++    ...(approvals.length ? [{ id: "ap", tone: "amber", text: `${approvals.length} item${approvals.length > 1 ? "s" : ""} waiting for your approval`, sub: approvals.slice(0, 2).map((a) => a.kind).join(", "), path: "/approvals" }] : []),
++    ...(role === "maker" && rejectedCount ? [{ id: "rej", tone: "amber", text: `${rejectedCount} setup${rejectedCount > 1 ? "s" : ""} sent back to you`, sub: "Fix and resubmit", path: "/bank-setup?status=rejected" }] : []),
++    ...(hasCap(perms, "ingestion") && driftCount ? [{ id: "files", tone: "amber", text: `${driftCount} bank file${driftCount > 1 ? "s" : ""} need attention`, sub: "Late, missing or changed layout", path: "/ingestion" }] : []),
++  ];
+   const personaLabel = PERSONAS.find((p) => p.id === persona)?.label || currentUser;
+   const choosePersona = (id) => { switchPersona(id); setPersonaOpen(false); nav("/"); };
+ 
+@@ -91,8 +115,7 @@
+                     const badge = badgeFor(s.key);
+                     return (
+                       <NavLink key={s.key} to={s.path} end={s.path === "/dashboard"} className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} data-testid={"nav-" + s.key}>
+-                        <Icon /><span className="nav-label">{screenLabel(s, simple)}</span>
+-                        {!simple && s.phase && s.phase !== "P1" && <span className={"phase-tag " + s.phase.toLowerCase()} title={`Roadmap phase ${s.phase.slice(1)}`}>{s.phase}</span>}
++                        <Icon /><span className="nav-label">{screenLabel(s, simple)}</span>{s.step && <span className="nav-step" title={`Step ${s.step} of the daily cycle`}>{s.step}</span>}
+                         {badge > 0 && <span className="nav-badge pop" key={badge}>{badge}</span>}
+                       </NavLink>
+                     );
+@@ -122,7 +145,23 @@
+               </React.Fragment>
+             ))}
+           </nav>
++          <button className="search-trigger" onClick={() => setPaletteOpen(true)} data-testid="open-search"><Search size={14} /><span>Search or jump to…</span><kbd>⌘K</kbd></button>
+           <div className="topbar-spacer" />
++          <div style={{ position: "relative" }}>
++            <button className="icon-btn" aria-label="Notifications" data-testid="bell" onClick={(e) => { e.stopPropagation(); setBellOpen((o) => !o); }}>
++              <Bell size={17} />{notes.length > 0 && <span className="bell-dot">{notes.length}</span>}
++            </button>
++            {bellOpen && (
++              <div className="menu-pop bell-pop" onClick={(e) => e.stopPropagation()} data-testid="bell-menu">
++                <div className="menu-head"><b>Needs your attention</b><span>{notes.length ? "Click to go straight there" : "You're all caught up"}</span></div>
++                {notes.map((n) => (
++                  <button key={n.id} className={"note-row tone-" + n.tone} onClick={() => { setBellOpen(false); nav(n.path); }}>
++                    <i /><div><b>{n.text}</b><span>{n.sub}</span></div>
++                  </button>
++                ))}
++              </div>
++            )}
++          </div>
+ 
+           {/* Demo persona switcher — each persona is a real seeded user with a different role mix */}
+           <div style={{ position: "relative" }}>
+@@ -161,7 +200,7 @@
+ 
+         <div className="content">
+           <div className="page-wrap">
+-            {!bannerSeen && role === "maker" && rejectedCount > 0 && allowed && (
++            {!bannerSeen && role === "maker" && rejectedCount > 0 && allowed && loc.pathname === "/bank-setup" && (
+               <div className="sess-banner warn" data-testid="banner-maker-rejected">
+                 <span className="ico"><AlertTriangle size={20} /></span>
+                 <div>You have <b>{rejectedCount} rejected configuration{rejectedCount > 1 ? "s" : ""}</b> awaiting rework.</div>
+@@ -169,7 +208,7 @@
+                 <button className="x" onClick={() => setBannerSeen(true)} aria-label="Dismiss"><span style={{ fontSize: 18 }}>×</span></button>
+               </div>
+             )}
+-            {!bannerSeen && role === "auth" && queueCount > 0 && allowed && (
++            {!bannerSeen && role === "auth" && queueCount > 0 && allowed && loc.pathname === "/dashboard" && (
+               <div className="sess-banner info" data-testid="banner-auth-queue">
+                 <span className="ico"><Bell size={20} /></span>
+                 <div><b>{queueCount} configuration{queueCount > 1 ? "s" : ""}</b> awaiting your review.</div>
+@@ -189,6 +228,7 @@
+         </div>
+       </div>
+ 
++      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+       {confirmReset && (
+         <ConfirmModal id="reset-demo-modal" title="Reset demo data?" danger confirmLabel="Reset everything"
+           message="This clears all your changes and restores the original seeded demo state (users, roles, configs, files, cases, audit log). This cannot be undone."
+diff --color -ruN r3a/frontend/src/components/CommandPalette.jsx r3b/frontend/src/components/CommandPalette.jsx
+--- r3a/frontend/src/components/CommandPalette.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/components/CommandPalette.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,62 @@
++import React from "react";
++import { Command } from "cmdk";
++import { useNavigate } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { navFor, screenLabel, PERSONAS } from "@/lib/access";
++import { PLAIN_EXCEPTION } from "@/lib/plain";
++import { Search, CornerDownLeft, ArrowRight, User } from "lucide-react";
++
++/** ⌘K: jump to any screen you can open, find a case or refund by reference, or switch demo persona. */
++export default function CommandPalette({ open, onClose }) {
++  const { perms, simple, collections, switchPersona } = useStore();
++  const nav = useNavigate();
++  React.useEffect(() => {
++    const h = (e) => e.key === "Escape" && onClose();
++    window.addEventListener("keydown", h);
++    return () => window.removeEventListener("keydown", h);
++  }, [onClose]);
++  if (!open) return null;
++  const go = (path) => { nav(path); onClose(); };
++  const screens = navFor(perms, simple).flatMap((m) => m.groups.flatMap((g) => g.screens.map((s) => ({ ...s, group: m.label }))));
++  const can = (k) => screens.some((s) => s.key === k);
++
++  return (
++    <div className="cmdk-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
++      <Command className="cmdk" label="Search" loop>
++        <div className="cmdk-input"><Search size={16} /><Command.Input autoFocus placeholder="Search screens, cases (EXC-…), refunds (RF-…)…" /><kbd>esc</kbd></div>
++        <Command.List className="cmdk-list">
++          <Command.Empty className="cmdk-empty">No results.</Command.Empty>
++          <Command.Group heading="Go to">
++            {screens.map((s) => (
++              <Command.Item key={s.key} value={`${screenLabel(s, simple)} ${s.group}`} onSelect={() => go(s.path)} className="cmdk-item">
++                <ArrowRight size={14} /><span>{screenLabel(s, simple)}</span><em>{s.group}</em>
++              </Command.Item>
++            ))}
++          </Command.Group>
++          {can("exceptions") && <Command.Group heading="Problem cases">
++            {(collections.exceptions || []).filter((e) => e.status !== "closed").slice(0, 40).map((e) => (
++              <Command.Item key={e.id} value={`${e.ref} ${e.investor} ${e.type}`} onSelect={() => go(`/exceptions?case=${e.id}`)} className="cmdk-item">
++                <span className="tnum">{e.ref}</span><span>{simple ? PLAIN_EXCEPTION[e.type] || e.type : e.type}</span><em>{e.investor}</em>
++              </Command.Item>
++            ))}
++          </Command.Group>}
++          {can("refunds") && <Command.Group heading="Refunds">
++            {(collections.refunds || []).map((r) => (
++              <Command.Item key={r.id} value={`${r.ref} ${r.investor} refund`} onSelect={() => go(`/refunds?refund=${r.id}`)} className="cmdk-item">
++                <span className="tnum">{r.ref}</span><span>{r.investor}</span><em>{r.reason}</em>
++              </Command.Item>
++            ))}
++          </Command.Group>}
++          <Command.Group heading="Demo: view as">
++            {PERSONAS.map((p) => (
++              <Command.Item key={p.id} value={`persona ${p.label}`} onSelect={() => { switchPersona(p.id); go("/"); }} className="cmdk-item">
++                <User size={14} /><span>{p.label}</span>
++              </Command.Item>
++            ))}
++          </Command.Group>
++        </Command.List>
++        <div className="cmdk-foot"><span><CornerDownLeft size={12} /> open</span><span>↑↓ move</span><span>⌘K toggle</span></div>
++      </Command>
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/features/approvals/Approvals.jsx r3b/frontend/src/features/approvals/Approvals.jsx
+--- r3a/frontend/src/features/approvals/Approvals.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/features/approvals/Approvals.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,71 @@
++import React from "react";
++import { useNavigate } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { useApprovals } from "./useApprovals";
++import { Inbox, Check, X, ArrowRight, AlertTriangle, CheckCircle2 } from "lucide-react";
++import { toast } from "sonner";
++
++const KIND_ORDER = ["Fund release", "Bank file layout", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Access", "Day close"];
++
++/** One inbox for checkers: everything every maker has submitted, most business-critical first. */
++export default function Approvals() {
++  const nav = useNavigate();
++  const { currentUser } = useStore();
++  const all = useApprovals();
++  const [kind, setKind] = React.useState("all");
++  const [sel, setSel] = React.useState([]);
++  const items = all.filter((a) => kind === "all" || a.kind === kind);
++  const counts = KIND_ORDER.map((k) => [k, all.filter((a) => a.kind === k).length]).filter(([, n]) => n);
++  const inline = (a) => a.approve || a.config;
++
++  const decide = (a, yes) => {
++    const fn = yes ? (a.approve || a.config?.approve) : a.reject;
++    if (!fn) return nav(a.review);
++    const res = fn();
++    if (res && res.ok === false) { toast.error(res.error); return false; }
++    return true;
++  };
++  const bulk = () => {
++    let n = 0; items.filter((a) => sel.includes(a.id)).forEach((a) => { if (decide(a, true)) n++; });
++    toast.success(`${n} item${n !== 1 ? "s" : ""} approved`); setSel([]);
++  };
++
++  return (
++    <div data-testid="approvals-inbox">
++      <div className="page-head">
++        <div>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={22} /> Approvals</h1>
++          <p>Everything your team has sent for a second check, from every screen. Items that hold up today's fund release are at the top.</p>
++        </div>
++        {sel.length > 0 && <div className="actions"><button className="btn btn-success" onClick={bulk} data-testid="bulk-approve"><Check size={14} /> Approve {sel.length} selected</button></div>}
++      </div>
++
++      <div className="chip-row" style={{ marginBottom: 14 }}>
++        <button className={"filter-chip" + (kind === "all" ? " on" : "")} onClick={() => setKind("all")}>All <b>{all.length}</b></button>
++        {counts.map(([k, n]) => <button key={k} className={"filter-chip" + (kind === k ? " on" : "")} onClick={() => setKind(k)}>{k} <b>{n}</b></button>)}
++      </div>
++
++      <div className="card">
++        {items.length === 0 && <div className="mw-empty"><CheckCircle2 size={30} /><h2>Inbox zero</h2><p className="muted">Nothing is waiting for your approval.</p></div>}
++        {items.map((a) => (
++          <div key={a.kind + a.id} className={"ap-row" + (a.urgent ? " urgent" : "")} data-testid={"ap-" + a.id}>
++            <input type="checkbox" className="cb" disabled={a.own || !inline(a)} checked={sel.includes(a.id)} onChange={() => setSel((s) => s.includes(a.id) ? s.filter((x) => x !== a.id) : [...s, a.id])} aria-label="Select" />
++            <span className="ap-kind">{a.kind}</span>
++            <div className="ap-main">
++              <div className="ap-title">{a.urgent && <AlertTriangle size={13} className="ap-urgent" />}{a.title}</div>
++              <div className="muted">{a.detail}{a.owner && <> · from <b>{a.owner}</b></>}</div>
++            </div>
++            {a.own ? <span className="pill pill-pending"><span className="dot" />Your own — another checker approves</span> : (
++              <div className="ap-actions">
++                {a.review && <button className="btn btn-outline btn-sm" onClick={() => nav(a.review)}>Review <ArrowRight size={12} /></button>}
++                {a.reject && <button className="btn btn-ghost btn-sm" onClick={() => decide(a, false) && toast("Sent back to " + (a.owner || "the maker"))}><X size={13} /> Send back</button>}
++                {inline(a) && <button className="btn btn-success btn-sm" onClick={() => decide(a, true) && toast.success(`${a.kind} approved`)} data-testid={"ap-approve-" + a.id}><Check size={13} /> Approve</button>}
++              </div>
++            )}
++          </div>
++        ))}
++      </div>
++      <p className="muted" style={{ marginTop: 10 }}>Signed in as {currentUser}. You can't approve anything you created; those items show as "your own".</p>
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/features/approvals/useApprovals.js r3b/frontend/src/features/approvals/useApprovals.js
+--- r3a/frontend/src/features/approvals/useApprovals.js	1970-01-01 05:30:00
++++ r3b/frontend/src/features/approvals/useApprovals.js	2026-10-21 02:08:22
+@@ -0,0 +1,75 @@
++import { useStore } from "@/state/store";
++import { hasCap } from "@/lib/access";
++import { PLAIN_EXCEPTION } from "@/lib/plain";
++import { inr, inrShort } from "@/features/ops/ui";
++import { maskAccount } from "@/lib/format";
++import { delayedInterest } from "@/mock/opsSeed";
++import { useMatchActions } from "@/features/match/matchActions";
++
++/**
++ * Everything waiting for a checker, from every screen, in one list.
++ * Simple items can be approved inline; ones that need a diff/impact review link to their screen.
++ */
++export function useApprovals() {
++  const { collections: c, perms, act, approve, currentUser } = useStore();
++  const { setStatus } = useMatchActions();
++  const items = [];
++  const mine = (owner) => owner && (owner === currentUser || owner.split(" ")[0] === currentUser);
++  const add = (screen, it) => { if (hasCap(perms, screen, "approve")) items.push({ screen, own: mine(it.owner), ...it }); };
++
++  // Fund release first (it gates unit allotment); day close last (it signs off everything else)
++  (c.dayclose || []).filter((d) => d.status === "pending").forEach((d) => add("release", {
++    id: d.id, kind: "Day close", title: "Sign off today's reconciliation", detail: `${d.carried} item${d.carried !== 1 ? "s" : ""} carried forward · notes: ${d.note || "—"}`, owner: d.submittedBy, priority: 9,
++    approve: () => act({ screen: "release", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } }),
++    reject: () => act({ screen: "release", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "open" }, audit: { entityLabel: "Day close", action: "Return day close", from: "Pending", to: "Open" } }),
++  }));
++  (c.releases || []).filter((r) => r.status === "pending").forEach((r) => add("release", {
++    id: r.id, kind: "Fund release", title: `Release ${inrShort(r.amount)} to Transaction Posting`, detail: `${r.count.toLocaleString("en-IN")} realised payments · ${r.ref} · cut-off 3:00 PM`, owner: r.preparedBy, priority: 1, urgent: true,
++    approve: () => act({ screen: "release", cap: "approve", kind: "releases", id: r.id, target: { owner: r.preparedBy }, patch: { status: "released", approvedBy: currentUser, releasedAt: new Date().toISOString() }, audit: { entityLabel: r.ref, action: "Release funds to Posting", from: "Pending", to: "Released", comment: inr(r.amount) } }),
++    reject: () => act({ screen: "release", cap: "approve", kind: "releases", id: r.id, target: { owner: r.preparedBy }, patch: { status: "not_started" }, audit: { entityLabel: r.ref, action: "Return release batch", from: "Pending", to: "Not prepared" } }),
++  }));
++  (c.refunds || []).filter((r) => r.status === "pending").forEach((r) => {
++    const int = delayedInterest(r.amount, r.ageDays);
++    add("refunds", {
++      id: r.id, kind: "Refund", title: `Refund ${inr(r.amount + int)} to ${r.investor}`, detail: `${r.reason} · ${r.bankAcct} · ${r.verified ? "account verified ✓" : "account NOT verified"}${int ? ` · incl. ${inr(int)} delayed interest` : ""}`, owner: r.owner, priority: 2, urgent: r.ageDays >= 4,
++      approve: () => act({ screen: "refunds", cap: "approve", kind: "refunds", id: r.id, target: r, patch: { status: "approved", approvedBy: currentUser }, audit: { entityLabel: `${r.ref} · ${r.investor}`, action: "Approve refund", from: "Pending", to: "Approved", comment: inr(r.amount + int) } }),
++      reject: () => act({ screen: "refunds", cap: "approve", kind: "refunds", id: r.id, target: r, patch: { status: "draft" }, audit: { entityLabel: `${r.ref} · ${r.investor}`, action: "Return refund", from: "Pending", to: "Draft" } }),
++    });
++  });
++  (c.matches || []).filter((m) => m.status === "pending").forEach((m) => add("match", {
++    id: m.id, kind: "Manual match", title: `Confirm ${m.type} match of ${inr(m.amount)}`, detail: `${m.source === "ai" ? `Suggested by the system (${Math.round(m.confidence * 100)}%), accepted` : "Matched by hand"} by ${m.owner}`, owner: m.owner, priority: 3,
++    approve: () => { const r = act({ screen: "match", cap: "approve", kind: "matches", id: m.id, target: m, patch: { status: "confirmed", decidedBy: currentUser }, audit: { entityLabel: `${m.type} match ${inr(m.amount)}`, action: "Approve match", from: "Pending checker", to: "Matched" } }); if (r.ok) { setStatus(m.credits, "credits", "matched"); setStatus(m.purchases, "purchases", "matched"); } return r; },
++    reject: () => { const r = act({ screen: "match", cap: "approve", kind: "matches", id: m.id, target: m, patch: { status: "rejected", decidedBy: currentUser }, audit: { entityLabel: `${m.type} match ${inr(m.amount)}`, action: "Reject match", from: "Pending checker", to: "Rejected" } }); if (r.ok) { setStatus(m.credits, "credits", "open"); setStatus(m.purchases, "purchases", "open"); } return r; },
++  }));
++  (c.exceptions || []).filter((e) => e.status === "pending_approval").forEach((e) => {
++    const owner = e.closedBy || e.owner;
++    add("exceptions", {
++      id: e.id, kind: "Case closure", title: `Close ${e.ref}: ${PLAIN_EXCEPTION[e.type] || e.type}`, detail: `${e.investor} · ${e.amount ? inr(e.amount) : e.bankName} · reason: ${e.rootCause || "—"}`, owner, priority: 4,
++      approve: () => act({ screen: "exceptions", cap: "approve", kind: "exceptions", id: e.id, target: { ...e, owner }, patch: { status: "closed" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Approve closure", from: "Closure pending checker", to: "Closed" } }),
++      reject: () => act({ screen: "exceptions", cap: "approve", kind: "exceptions", id: e.id, target: { ...e, owner }, patch: { status: "in_progress" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Reopen case", from: "Closure pending checker", to: "In progress" } }),
++    });
++  });
++  (c.documents || []).filter((d) => d.status === "pending_checker").forEach((d) => add("extraction", {
++    id: d.id, kind: "Document", title: `Approve values read from ${d.name}`, detail: `${d.docType} · high value (≥ ₹1 Cr) · checked by ${d.owner}`, owner: d.owner, priority: 5,
++    approve: () => act({ screen: "extraction", cap: "approve", kind: "documents", id: d.id, patch: { status: "approved" }, audit: { entityLabel: d.name, action: "Approve extraction", from: "Awaiting checker", to: "Loaded" } }),
++    reject: () => act({ screen: "extraction", cap: "approve", kind: "documents", id: d.id, patch: { status: "needs_review" }, audit: { entityLabel: d.name, action: "Return extraction", from: "Awaiting checker", to: "Needs review" } }),
++  }));
++  (c.files || []).filter((f) => f.status === "drift_pending").forEach((f) => add("ingestion", {
++    id: f.id, kind: "Bank file layout", title: `Accept ${f.bankName}'s new file layout`, detail: `${f.drift?.summary} · ${(f.drift?.rowsHeld || 0).toLocaleString("en-IN")} rows held until approved`, owner: f.owner, priority: 1, urgent: true,
++    approve: () => act({ screen: "ingestion", cap: "approve", kind: "files", id: f.id, patch: { status: "loaded", fingerprint: f.fingerprint + "·v2", checks: f.checks.map((x) => ({ ...x, ok: true })) }, audit: { entityLabel: `${f.bankName} ·${f.accountNumber.slice(-4)}`, action: "Approve mapping change", from: "Mapping change pending", to: "Loaded" } }),
++    reject: () => act({ screen: "ingestion", cap: "approve", kind: "files", id: f.id, patch: { status: "drift" }, audit: { entityLabel: `${f.bankName} ·${f.accountNumber.slice(-4)}`, action: "Return mapping change", from: "Mapping change pending", to: "Format drift" } }),
++  }));
++  // Need a side-by-side review → open their own screen
++  (c.rule_drafts || []).filter((d) => d.status === "pending").forEach((d) => add("rules", {
++    id: d.id, kind: "Match rule", title: `Rule change: ${d.draft.name}`, detail: `+${d.sim.newMatches} new / −${d.sim.lostMatches} lost matches · FP risk ${d.sim.fpRisk}%`, owner: d.owner, priority: 6, review: "/rules",
++  }));
++  ["bank_config", "credit_config", "bank_mapping"].forEach((k) => (c[k] || []).filter((x) => x.status === "pending").forEach((x) => add(k === "bank_config" ? "bank_setup" : k === "credit_config" ? "credit_mis" : "mapping", {
++    id: x.id, kind: { bank_config: "Bank setup", credit_config: "Credit MIS setup", bank_mapping: "Column mapping" }[k], title: `${x.bankName || x.paCode || "Setup"} · ${maskAccount(x.accountNumber)}`, detail: `Submitted by ${x.owner || "—"}`, owner: x.owner, priority: 7, review: "/dashboard", config: { kind: k, approve: () => { try { approve(k, x.id, `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } } },
++  })));
++  (c.access_requests || []).filter((r) => r.status === "pending").forEach((r) => add("roles", {
++    id: r.id, kind: "Access", title: r.kind === "assign" ? "Grant a privileged role" : `Role change: ${r.draft?.name}`, detail: r.note || "", owner: r.requestedBy, priority: 8, review: "/admin/roles",
++  }));
++
++  items.sort((a, b) => a.priority - b.priority);
++  return items;
++}
+diff --color -ruN r3a/frontend/src/features/command/CommandCentre.jsx r3b/frontend/src/features/command/CommandCentre.jsx
+--- r3a/frontend/src/features/command/CommandCentre.jsx	2026-10-21 02:08:21
++++ r3b/frontend/src/features/command/CommandCentre.jsx	2026-10-21 02:08:22
+@@ -3,149 +3,129 @@
+ import { useStore } from "@/state/store";
+ import { TODAY } from "@/mock/opsSeed";
+ import { hasCap } from "@/lib/access";
+-import { inrShort, num, Stat, PhaseBadge, dur } from "@/features/ops/ui";
+-import { Gauge, Clock, AlertTriangle, CheckCircle2, ArrowRight, Hourglass } from "lucide-react";
++import { inrShort, num, dur } from "@/features/ops/ui";
++import { LineChart, Spark, BarList } from "@/features/ops/charts";
++import { CycleStepper, useCycle } from "@/features/today/Cycle";
++import { Gauge, ArrowUpRight, ArrowDownRight, Hourglass } from "lucide-react";
+ 
+ const BUCKETS = [["0–1d", 0, 24], ["1–2d", 24, 48], ["2–3d", 48, 72], ["3–5d", 72, 120], [">5d", 120, 9999]];
++const dayLabel = (back) => { const d = new Date(); d.setDate(d.getDate() - back); return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }); };
+ 
++/** Team-lead dashboard: is today on track, where is the risk, who is overloaded. */
+ export default function CommandCentre() {
+-  const { collections, perms, personaUser } = useStore();
++  const { collections, perms } = useStore();
+   const nav = useNavigate();
+-  const files = collections.files || [];
+-  const exceptions = collections.exceptions || [];
+-  const credits = collections.credits || [];
+-  const suggestions = collections.suggestions || [];
++  const { steps } = useCycle();
++  const [range, setRange] = React.useState(14);
+   const go = (screen, path) => (hasCap(perms, screen) ? () => nav(path) : undefined);
++  const files = collections.files || [];
++  const ex = collections.exceptions || [];
++  const openEx = ex.filter((e) => e.status !== "closed");
++  const atRisk = openEx.filter((e) => e.amount > 0 && e.interestHoursLeft < 24);
++  const proposed = (collections.matches || []).filter((m) => m.status !== "rejected").length;
+ 
+-  const openCredits = credits.filter((c) => c.status === "open").length;
+-  const proposed = (collections.matches || []).filter((m) => m.status === "pending").length;
++  // Aggregate auto-match rate across banks, per day
++  const days = TODAY.matchTrend[0].series.length;
++  const trend = Array.from({ length: days }, (_, d) => ({ v: TODAY.matchTrend.reduce((s, b) => s + b.series[d], 0) / TODAY.matchTrend.length, label: dayLabel(days - 1 - d) })).slice(-range);
++  trend[trend.length - 1].note = "ICICI layout change";
++  const stp = (TODAY.auto / TODAY.credits) * 100;
++  const prevStp = trend[trend.length - 2].v;
++
++  const kpis = [
++    { label: "Auto-match rate", value: `${stp.toFixed(1)}%`, delta: stp - prevStp, unit: "pts vs yesterday", spark: trend.map((t) => t.v), good: stp >= 90, upIsGood: true, note: "North-star · target 90%" },
++    { label: "Realised for allotment", value: inrShort(TODAY.realisedForAllotment), delta: 4.2, unit: "% vs 7-day avg", spark: [18, 19, 17, 21, 20, 19, 22, 20, 21, 23, 22, 21, 22, 24], good: true, upIsGood: true, note: `${inrShort(TODAY.heldForAllotment)} held` },
++    { label: "Open problem cases", value: num(openEx.length), delta: -3, unit: "vs yesterday", spark: [52, 49, 47, 51, 45, 44, 46, 43, 41, 44, 40, 39, 41, openEx.length], good: true, upIsGood: false, onClick: go("exceptions", "/exceptions"), note: `${ex.filter((e) => e.status === "pending_approval").length} waiting for checker` },
++    { label: "Penalty-interest risk", value: inrShort(atRisk.reduce((s, e) => s + e.amount, 0)), delta: atRisk.length, unit: "cases under 24h", spark: [3, 4, 2, 5, 6, 4, 7, 5, 8, 6, 9, 7, 10, atRisk.length], good: false, upIsGood: false, onClick: go("exceptions", "/exceptions?risk=1"), note: "Clear before 5 days to avoid interest" },
++  ];
++
+   const funnel = [
+-    { label: "Credits received", v: TODAY.credits, tone: "neutral" },
+-    { label: "Auto-matched (rules)", v: TODAY.auto, tone: "green" },
+-    { label: "AI-suggested → accepted", v: TODAY.aiAccepted + proposed, tone: "violet" },
+-    { label: "Manually matched", v: TODAY.manual, tone: "blue" },
+-    { label: "Still open", v: TODAY.credits - TODAY.auto - TODAY.aiAccepted - TODAY.manual - proposed + openCredits, tone: "amber" },
++    { label: "Matched by rules", v: TODAY.auto },
++    { label: "Suggested → confirmed", v: TODAY.aiAccepted + proposed },
++    { label: "Matched by hand", v: TODAY.manual },
++    { label: "Still open", v: TODAY.credits - TODAY.auto - TODAY.aiAccepted - TODAY.manual - proposed, tone: "warn" },
+   ];
+-  const stp = ((TODAY.auto / TODAY.credits) * 100).toFixed(1);
+ 
+-  const late = files.filter((f) => ["late", "missing"].includes(f.status));
+-  const broken = files.filter((f) => ["drift", "unknown", "check_failed", "duplicate"].includes(f.status));
+-  const openEx = exceptions.filter((e) => e.status !== "closed");
+-  const atRisk = openEx.filter((e) => e.interestHoursLeft < 24 && e.amount > 0);
+-
+-  const mine = openEx.filter((e) => e.owner === personaUser.name).sort((a, b) => a.interestHoursLeft - b.interestHoursLeft).slice(0, 6);
+-
+   const heat = ["Unmatched credit", "Unmatched purchase", "Excess credit", "Duplicate credit", "NIGO rejection"].map((type) => ({
+-    type,
+-    cells: BUCKETS.map(([, lo, hi]) => {
+-      const list = openEx.filter((e) => e.type === type && e.ageHours >= lo && e.ageHours < hi);
+-      return { n: list.length, amt: list.reduce((s, e) => s + e.amount, 0) };
+-    }),
++    type, cells: BUCKETS.map(([, lo, hi]) => { const l = openEx.filter((e) => e.type === type && e.ageHours >= lo && e.ageHours < hi); return { n: l.length, amt: l.reduce((s, e) => s + e.amount, 0) }; }),
+   }));
+   const maxHeat = Math.max(1, ...heat.flatMap((r) => r.cells.map((c) => c.n)));
+ 
+-  const cutoffMins = Math.max(0, Math.round((new Date(TODAY.cutoff) - Date.now()) / 60000));
++  const owners = {};
++  openEx.forEach((e) => { const k = e.owner || "Unassigned"; owners[k] = owners[k] || { open: 0, urgent: 0, oldest: 0, amt: 0 }; owners[k].open++; owners[k].amt += e.amount; if (e.amount > 0 && e.interestHoursLeft < 24) owners[k].urgent++; owners[k].oldest = Math.max(owners[k].oldest, e.ageHours); });
++  const team = Object.entries(owners).sort((a, b) => b[1].urgent - a[1].urgent || b[1].open - a[1].open);
+ 
+   return (
+     <div data-testid="command-centre">
+       <div className="page-head">
+         <div>
+-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Gauge size={24} /> Ops Command Centre</h1>
+-          <p>Is today's money reconciled, and what is at risk? Replaces the config-status dashboard as the daily home screen.</p>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Gauge size={22} /> Dashboard</h1>
++          <p>Is today on track, where is the money at risk, and who needs help. For team leads.</p>
+         </div>
+-        <div className="actions"><PhaseBadge phase="P1">home screen · live counts from P1–P3 screens</PhaseBadge></div>
++        <div className="actions"><div className="segmented">{[[7, "7 days"], [14, "14 days"]].map(([v, l]) => <button key={v} className={range === v ? "on" : ""} onClick={() => setRange(v)}>{l}</button>)}</div></div>
+       </div>
+ 
+-      <div className="ops-stats">
+-        <Stat id="cc-stp" label="Straight-through match rate" value={`${stp}%`} sub="North-star · target ≥ 90%" tone="green" />
+-        <Stat id="cc-realised" label="Realised → cleared for allotment" value={inrShort(TODAY.realisedForAllotment)} sub={`${inrShort(TODAY.heldForAllotment)} held · cut-off in ${dur(cutoffMins / 60)}`} tone="blue" />
+-        <Stat id="cc-files" label="Files late / missing" value={late.length} sub={`${broken.length} need attention (drift, checks, duplicate)`} tone={late.length ? "red" : "green"} onClick={go("ingestion", "/ingestion")} />
+-        <Stat id="cc-risk" label="Interest clock < 24h" value={atRisk.length} sub={`${inrShort(atRisk.reduce((s, e) => s + e.amount, 0))} at risk of delayed interest`} tone={atRisk.length ? "red" : "green"} onClick={go("exceptions", "/exceptions?risk=1")} />
++      <div className="kpi-cards">
++        {kpis.map((k) => (
++          <button key={k.label} className="kpi-card" onClick={k.onClick} disabled={!k.onClick}>
++            <span className="kc-label">{k.label}</span>
++            <div className="kc-row"><b className="tnum">{k.value}</b><Spark values={k.spark} bad={!k.good} /></div>
++            <span className={"kc-delta " + ((k.delta >= 0) === k.upIsGood ? "up" : "down")}>{k.delta >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}{Math.abs(k.delta).toFixed(k.delta % 1 ? 1 : 0)} {k.unit}</span>
++            <span className="kc-note">{k.note}</span>
++          </button>
++        ))}
+       </div>
+ 
+-      <div className="cc-grid">
++      <section className="card dash-section"><div className="card-head"><h3>Today's cycle</h3><span className="muted">{steps.filter((s) => s.state === "done").length}/6 done</span></div><div className="card-pad"><CycleStepper steps={steps} /></div></section>
++
++      <div className="dash-2">
+         <div className="card">
+-          <div className="card-head"><h3>Today's recon funnel</h3><span className="muted">{num(TODAY.credits)} credits · {inrShort(TODAY.creditValue)}</span></div>
+-          <div className="card-pad funnel">
+-            {funnel.map((f) => (
+-              <div key={f.label} className="fn-row">
+-                <span className="fn-label">{f.label}</span>
+-                <span className={"fn-bar tone-" + f.tone}><i style={{ width: `${Math.max(1.5, (f.v / TODAY.credits) * 100)}%` }} /></span>
+-                <b className="tnum">{num(f.v)}</b>
+-              </div>
+-            ))}
+-            <div className="fn-foot">
+-              {hasCap(perms, "match") && <button className="link" onClick={() => nav("/match")}>{suggestions.length} AI suggestions waiting in Match Workbench <ArrowRight size={13} /></button>}
+-            </div>
+-          </div>
++          <div className="card-head"><h3>Auto-match rate · all banks</h3><span className="muted">Hover for daily values</span></div>
++          <div className="card-pad"><LineChart id="match-trend" data={trend} min={80} max={100} target={90} format={(v) => `${v.toFixed(0)}%`} label="Auto-match rate trend" /></div>
+         </div>
+-
+         <div className="card">
+-          <div className="card-head"><h3>File arrival board</h3><span className="muted">Expected-file calendar · {files.filter((f) => f.status === "loaded").length}/{files.length} clean</span></div>
+-          <div className="arrival-board">
+-            {files.map((f) => (
+-              <button key={f.id} className={"ab-cell st-" + f.status} onClick={go("ingestion", `/ingestion?file=${f.id}`)} disabled={!hasCap(perms, "ingestion")} title={`${f.bankName} ·${f.accountNumber.slice(-4)} — ${f.status}`}>
+-                <b>{f.bankCode}</b><span>·{f.accountNumber.slice(-4)}</span>
+-                <em>{f.status === "loaded" ? <CheckCircle2 size={12} /> : f.status === "late" || f.status === "missing" ? <Clock size={12} /> : <AlertTriangle size={12} />}</em>
+-              </button>
+-            ))}
+-          </div>
+-          <div className="ab-legend"><span className="st-loaded">Loaded</span><span className="st-drift">Drift / unknown</span><span className="st-check_failed">Check failed</span><span className="st-late">Late / missing</span></div>
++          <div className="card-head"><h3>How today's {num(TODAY.credits)} payments were matched</h3></div>
++          <div className="card-pad"><BarList rows={funnel} total={TODAY.credits} format={num} /></div>
+         </div>
++      </div>
+ 
++      <div className="dash-2">
+         <div className="card">
+-          <div className="card-head"><h3>Ageing × exception type</h3><span className="muted">Open cases by age · interest starts after 5 days</span></div>
++          <div className="card-head"><h3>Team workload</h3><span className="muted">Open problem cases by person</span></div>
++          <table className="grid">
++            <thead><tr><th>Person</th><th className="r">Open</th><th className="r">Urgent</th><th className="r">Value</th><th>Oldest</th></tr></thead>
++            <tbody>{team.map(([name, t]) => (
++              <tr key={name} onClick={go("exceptions", "/exceptions")} style={{ cursor: "pointer" }}><td><b>{name}</b></td><td className="tnum r">{t.open}</td><td className="tnum r">{t.urgent ? <span className="clock red">{t.urgent}</span> : 0}</td><td className="tnum r">{inrShort(t.amt)}</td><td><span className={"clock" + (t.oldest > 96 ? " red" : "")}><Hourglass size={12} /> {dur(t.oldest)}</span></td></tr>
++            ))}</tbody>
++          </table>
++        </div>
++        <div className="card">
++          <div className="card-head"><h3>Case age × type</h3><span className="muted">Penalty interest starts after 5 days</span></div>
+           <table className="heat">
+             <thead><tr><th />{BUCKETS.map(([l]) => <th key={l}>{l}</th>)}</tr></thead>
+-            <tbody>
+-              {heat.map((r) => (
+-                <tr key={r.type}>
+-                  <td>{r.type}</td>
+-                  {r.cells.map((c, i) => (
+-                    <td key={i} className={i >= 3 && c.n ? "hot" : ""} style={{ "--h": c.n / maxHeat }} title={inrShort(c.amt)}>{c.n || ""}</td>
+-                  ))}
+-                </tr>
+-              ))}
+-            </tbody>
++            <tbody>{heat.map((r) => (
++              <tr key={r.type}><td>{r.type}</td>{r.cells.map((c, i) => <td key={i} className={i === 4 && c.n ? "hot" : ""} style={{ "--h": c.n / maxHeat }} title={`${r.type}, ${BUCKETS[i][0]}: ${c.n} cases · ${inrShort(c.amt)}`}>{c.n || ""}</td>)}</tr>
++            ))}</tbody>
+           </table>
+         </div>
++      </div>
+ 
+-        <div className="card">
+-          <div className="card-head"><h3>Auto-match rate by bank · 14 days</h3><span className="muted">A sudden drop usually means a format change</span></div>
+-          <div className="card-pad trend-list">
+-            {TODAY.matchTrend.map((b) => {
+-              const last = b.series[b.series.length - 1]; const prev = b.series[b.series.length - 2];
+-              const max = 100, min = 70, w = 120, h = 26;
+-              const pts = b.series.map((v, i) => `${(i / (b.series.length - 1)) * w},${h - ((v - min) / (max - min)) * h}`).join(" ");
+-              return (
+-                <div key={b.code} className="tr-row">
+-                  <span>{b.bank}</span>
+-                  <svg width={w} height={h}><polyline points={pts} fill="none" stroke={last < prev - 4 ? "hsl(var(--st-rejected))" : "hsl(var(--primary))"} strokeWidth="1.6" /></svg>
+-                  <b className={"tnum" + (last < prev - 4 ? " drop" : "")}>{last.toFixed(1)}%</b>
+-                </div>
+-              );
+-            })}
+-          </div>
+-        </div>
+-
+-        <div className="card cc-wide">
+-          <div className="card-head"><h3>My queue</h3><span className="muted">Cases assigned to {personaUser.name}, most urgent first</span></div>
+-          {mine.length === 0 ? <div className="card-pad muted">Nothing assigned to you. {hasCap(perms, "exceptions") ? "Pick up unassigned cases in Exceptions." : ""}</div> : (
+-            <table className="grid">
+-              <thead><tr><th>Case</th><th>Type</th><th>Investor</th><th style={{ textAlign: "right" }}>Amount</th><th>Interest clock</th><th>Suggested next step</th></tr></thead>
+-              <tbody>
+-                {mine.map((e) => (
+-                  <tr key={e.id} onClick={go("exceptions", `/exceptions?case=${e.id}`)} style={{ cursor: "pointer" }}>
+-                    <td className="tnum">{e.ref}</td><td>{e.type}</td><td>{e.investor}</td>
+-                    <td className="tnum" style={{ textAlign: "right" }}>{inrShort(e.amount)}</td>
+-                    <td><span className={"clock " + (e.interestHoursLeft < 24 ? "red" : e.interestHoursLeft < 48 ? "amber" : "")}><Hourglass size={12} /> {dur(e.interestHoursLeft)}</span></td>
+-                    <td className="muted">{e.suggestion.action}</td>
+-                  </tr>
+-                ))}
+-              </tbody>
+-            </table>
+-          )}
+-        </div>
++      <div className="card dash-section">
++        <div className="card-head"><h3>Auto-match rate by bank</h3><span className="muted">A sudden drop usually means the bank changed its file</span></div>
++        <table className="grid">
++          <thead><tr><th>Bank</th><th>Last {range} days</th><th className="r">Today</th><th className="r">Change</th><th>Files today</th></tr></thead>
++          <tbody>{TODAY.matchTrend.map((b) => {
++            const s = b.series.slice(-range); const last = s[s.length - 1]; const prev = s[s.length - 2];
++            const bf = files.filter((f) => f.bankCode === b.code); const bad = bf.filter((f) => f.status !== "loaded").length;
++            return (
++              <tr key={b.code} onClick={go("ingestion", "/ingestion")} style={{ cursor: "pointer" }}>
++                <td><b>{b.bank}</b></td><td><Spark values={s} width={140} bad={last < prev - 4} /></td>
++                <td className="tnum r">{last.toFixed(1)}%</td>
++                <td className={"tnum r " + (last < prev - 4 ? "neg" : "")}>{(last - prev >= 0 ? "+" : "") + (last - prev).toFixed(1)}</td>
++                <td>{bf.length ? (bad ? <span className="pill pill-pending"><span className="dot" />{bad} of {bf.length} need attention</span> : <span className="pill pill-active"><span className="dot" />{bf.length} clean</span>) : <span className="muted">—</span>}</td>
++              </tr>
++            );
++          })}</tbody>
++        </table>
+       </div>
+     </div>
+   );
+diff --color -ruN r3a/frontend/src/features/exceptions/Exceptions.jsx r3b/frontend/src/features/exceptions/Exceptions.jsx
+--- r3a/frontend/src/features/exceptions/Exceptions.jsx	2026-10-21 02:08:21
++++ r3b/frontend/src/features/exceptions/Exceptions.jsx	2026-10-21 02:08:22
+@@ -9,12 +9,13 @@
+ import { PLAIN_EXCEPTION, PLAIN_CASE_STATUS, stripNumbers } from "@/lib/plain";
+ import { Siren, Hourglass, UserPlus, Check, X, Sparkles, MessageSquare, Download } from "lucide-react";
+ import { toast } from "sonner";
++import { JourneyBar } from "@/features/today/Cycle";
+ 
+ const STATUS = { open: ["Open", "pill-draft"], in_progress: ["In progress", "pill-pending"], pending_approval: ["Closure pending checker", "pill-pending"], closed: ["Closed", "pill-active"] };
+ const priority = (e) => Math.round((Math.log10(Math.max(1000, e.amount)) * 10) * (e.interestHoursLeft < 24 ? 3 : e.interestHoursLeft < 48 ? 2 : 1) + e.ageHours / 6);
+ 
+ export default function Exceptions() {
+-  const { collections, perms, act, currentUser, personaUser, simple } = useStore();
++  const { collections, perms, act, currentUser, personaUser, simple, upsert } = useStore();
+   const ST = simple ? PLAIN_CASE_STATUS : STATUS;
+   const typeLabel = (t) => (simple && PLAIN_EXCEPTION[t]) || t;
+   const nav = useNavigate();
+@@ -68,6 +69,16 @@
+   const runSuggestion = (e) => {
+     if (e.suggestion.action.startsWith("Open in Match")) return nav("/match");
+     if (e.suggestion.action.startsWith("Open File")) return nav("/ingestion");
++    if (e.suggestion.action.startsWith("Create refund")) {
++      const refId = "rf_" + e.id;
++      if ((collections.refunds || []).some((r) => r.id === refId)) return nav(`/refunds?refund=${refId}`);
++      const amount = e.type === "Excess credit" ? Math.round(e.amount * 0.2) : e.amount;
++      const reason = { "Excess credit": "Investor paid too much", "Duplicate credit": "Investor paid twice", "NIGO rejection": "Application rejected — refund needed" }[e.type] || "Refund";
++      upsert("refunds", { id: refId, ref: "RF-" + e.ref.slice(4), investor: e.investor, pan: "—", amount, reason, ageDays: Math.floor(e.ageHours / 24), bankAcct: "XXXX" + String(1000 + (e.ref.charCodeAt(6) * 37) % 9000), ifsc: "—", verified: null, status: "draft", owner: personaUser.name, sourceCase: e.id, createdAt: new Date().toISOString() });
++      update(e, { status: "in_progress", owner: e.owner || personaUser.name, notes: [...(e.notes || []), { by: personaUser.name, at: new Date().toISOString(), text: `Refund ${"RF-" + e.ref.slice(4)} created for ${inr(amount)}` }] }, "Create refund", `Refund of ${inr(amount)}`);
++      toast.success(simple ? "Refund created. Finish it on the Refunds page." : "Refund drafted and linked to this case", { action: { label: "Open refund", onClick: () => nav(`/refunds?refund=${refId}`) } });
++      return;
++    }
+     if (update(e, { status: "in_progress", owner: e.owner || personaUser.name, notes: [...(e.notes || []), { by: personaUser.name, at: new Date().toISOString(), text: `Ran suggested step: ${e.suggestion.action}` }] }, e.suggestion.action, e.suggestion.text)) toast.success(`${e.suggestion.action} — logged on the case`);
+   };
+ 
+@@ -77,6 +88,7 @@
+ 
+   return (
+     <div data-testid="exceptions">
++      <JourneyBar current="cases" />
+       <div className="page-head">
+         <div>
+           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Siren size={24} /> {simple ? "Problem cases" : "Exceptions"}</h1>
+diff --color -ruN r3a/frontend/src/features/extraction/DocumentExtraction.jsx r3b/frontend/src/features/extraction/DocumentExtraction.jsx
+--- r3a/frontend/src/features/extraction/DocumentExtraction.jsx	2026-10-21 02:08:21
++++ r3b/frontend/src/features/extraction/DocumentExtraction.jsx	2026-10-21 02:08:22
+@@ -6,6 +6,7 @@
+ import { Conf, PhaseBadge, ReadOnlyNote } from "@/features/ops/ui";
+ import { ScanText, Mail, FileText, Image, CheckCircle2, XCircle, Check, ShieldCheck, Ban } from "lucide-react";
+ import { toast } from "sonner";
++import { JourneyBar } from "@/features/today/Cycle";
+ import { useSearchParams } from "react-router-dom";
+ import { PLAIN_DOC_STATUS, plainField, plainCheck } from "@/lib/plain";
+ 
+@@ -85,6 +86,7 @@
+ 
+   return (
+     <div data-testid="doc-extraction">
++      <JourneyBar current="match" />
+       <div className="page-head">
+         <div>
+           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><ScanText size={24} /> {simple ? "Read PDFs & emails" : "Document Extraction"}</h1>
+diff --color -ruN r3a/frontend/src/features/ingestion/FileInbox.jsx r3b/frontend/src/features/ingestion/FileInbox.jsx
+--- r3a/frontend/src/features/ingestion/FileInbox.jsx	2026-10-21 02:08:21
++++ r3b/frontend/src/features/ingestion/FileInbox.jsx	2026-10-21 02:08:22
+@@ -7,6 +7,7 @@
+ import { inrShort, num, Conf, PhaseBadge, ReadOnlyNote } from "@/features/ops/ui";
+ import { Inbox, CheckCircle2, XCircle, Fingerprint, ArrowRight, RefreshCw, Send, Trash2, Wand2, Clock } from "lucide-react";
+ import { toast } from "sonner";
++import { JourneyBar } from "@/features/today/Cycle";
+ import { PLAIN_FILE_STATUS } from "@/lib/plain";
+ 
+ const STATUS = {
+@@ -46,6 +47,7 @@
+ 
+   return (
+     <div data-testid="file-inbox">
++      <JourneyBar current="files" />
+       <div className="page-head">
+         <div>
+           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={24} /> {simple ? "Bank files today" : "File Inbox & Format Drift"}</h1>
+diff --color -ruN r3a/frontend/src/features/match/MatchWorkbench.jsx r3b/frontend/src/features/match/MatchWorkbench.jsx
+--- r3a/frontend/src/features/match/MatchWorkbench.jsx	2026-10-21 02:08:21
++++ r3b/frontend/src/features/match/MatchWorkbench.jsx	2026-10-21 02:08:22
+@@ -7,6 +7,7 @@
+ import { stripNumbers } from "@/lib/plain";
+ import { Combine, Sparkles, Check, X, HelpCircle, CheckCircle2, XCircle, Zap, Search } from "lucide-react";
+ import { toast } from "sonner";
++import { JourneyBar } from "@/features/today/Cycle";
+ import { useMatchActions, FAST_TRACK } from "./matchActions";
+ 
+ 
+@@ -69,6 +70,7 @@
+ 
+   return (
+     <div data-testid="match-workbench">
++      <JourneyBar current="match" />
+       <div className="page-head">
+         <div>
+           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Combine size={24} /> {simple ? "Match payments" : "Match Workbench"}</h1>
+diff --color -ruN r3a/frontend/src/features/mywork/MyWork.jsx r3b/frontend/src/features/mywork/MyWork.jsx
+--- r3a/frontend/src/features/mywork/MyWork.jsx	2026-10-21 02:08:21
++++ r3b/frontend/src/features/mywork/MyWork.jsx	1970-01-01 05:30:00
+@@ -1,156 +0,0 @@
+-import React from "react";
+-import { useNavigate } from "react-router-dom";
+-import { useStore } from "@/state/store";
+-import { hasCap } from "@/lib/access";
+-import { PLAIN_EXCEPTION } from "@/lib/plain";
+-import { inr, Light, timeLeftWords } from "@/features/ops/ui";
+-import { useMatchActions, isFastTrack } from "@/features/match/matchActions";
+-import { CheckCircle2, Hourglass, PartyPopper } from "lucide-react";
+-import { toast } from "sonner";
+-
+-const TONE_ORDER = { red: 0, amber: 1, green: 2 };
+-
+-/**
+- * My Work — the one queue for daily users. Every row says, in plain words, what happened
+- * and has ONE main button. Red first, then amber, then green.
+- */
+-export default function MyWork() {
+-  const { collections, perms, personaUser, act, audit } = useStore();
+-  const nav = useNavigate();
+-  const { acceptSuggestion, dismissSuggestion, byId, credits, purchases } = useMatchActions();
+-  const me = personaUser.name;
+-  const first = me.split(" ")[0];
+-  const exceptions = collections.exceptions || [];
+-
+-  const take = (e) => {
+-    const res = act({ screen: "exceptions", cap: "edit", kind: "exceptions", id: e.id, patch: { owner: me, status: "in_progress" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Assign", comment: `Picked up by ${me}` } });
+-    if (res.ok) toast.success("It's yours now. Open it when you're ready.");
+-  };
+-
+-  const items = [];
+-
+-  // 1) Problem cases: mine, plus urgent ones nobody has picked up
+-  if (hasCap(perms, "exceptions", "view")) {
+-    exceptions.filter((e) => ["open", "in_progress"].includes(e.status) && (e.owner === me || (!e.owner && e.amount > 0 && e.interestHoursLeft < 24))).forEach((e) => {
+-      const mine = e.owner === me;
+-      const hasClock = e.amount > 0;
+-      const tone = hasClock && e.interestHoursLeft < 24 ? "red" : hasClock && e.interestHoursLeft < 72 ? "amber" : "green";
+-      items.push({
+-        id: e.id, tone, sort: hasClock ? e.interestHoursLeft : 999,
+-        kind: "Problem case",
+-        title: PLAIN_EXCEPTION[e.type] || e.type,
+-        detail: `${e.investor !== "—" ? e.investor + " · " : ""}${e.amount ? inr(e.amount) : e.bankName}`,
+-        when: hasClock ? timeLeftWords(e.interestHoursLeft) : null,
+-        hint: mine ? `What to do: ${e.suggestion.action.replace("Open in Match Workbench", "Find the matching purchase").replace("Open File Inbox", "Check the bank file")}` : "Nobody is working on this yet",
+-        primary: mine ? { label: "Open case", run: () => nav(`/exceptions?case=${e.id}`) } : { label: "Take this case", run: () => take(e) },
+-        canAct: hasCap(perms, "exceptions", "edit"),
+-      });
+-    });
+-  }
+-
+-  // 2) Payments the system thinks it has matched — needs a yes / no
+-  if (hasCap(perms, "match", "view")) {
+-    (collections.suggestions || []).filter((s) => !s.decided).forEach((s) => {
+-      const cs = s.credits.map((id) => byId(credits, id)).filter(Boolean);
+-      const ps = s.purchases.map((id) => byId(purchases, id)).filter(Boolean);
+-      if (!cs.length || !ps.length) return;
+-      const amount = cs.reduce((a, c) => a + c.amount, 0);
+-      const sure = s.confidence >= 0.9;
+-      items.push({
+-        id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100,
+-        kind: "Match a payment",
+-        title: cs.length > 1 ? `${cs.length} payments from ${cs[0].remitter} add up to ${ps[0].investor}'s purchase`
+-          : ps.length > 1 ? `One payment from ${cs[0].remitter} covers ${ps.length} purchases by ${ps[0].investor}`
+-          : `Payment from ${cs[0].remitter} looks like ${ps[0].investor}'s purchase`,
+-        detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`,
+-        light: sure ? "Very likely" : "Please check",
+-        hint: isFastTrack(s.confidence, amount) ? "If you say yes, it's done — no approval needed" : "If you say yes, your team lead approves it",
+-        primary: { label: "Yes, match", run: () => acceptSuggestion(s) },
+-        secondary: { label: "Not a match", run: () => dismissSuggestion(s) },
+-        more: { label: "See why", run: () => nav("/match") },
+-        canAct: hasCap(perms, "match", "edit"),
+-      });
+-    });
+-  }
+-
+-  // 3) PDFs / emails where the system wasn't sure of some values
+-  if (hasCap(perms, "extraction", "view")) {
+-    (collections.documents || []).filter((d) => d.status === "needs_review").forEach((d) => {
+-      const flagged = d.fields.filter((f) => f.conf < 0.95 || (f.validator && !f.validator.ok)).length
+-        + d.lines.reduce((n, l) => n + Object.values(l).filter((v) => v[1] < 0.95).length, 0);
+-      items.push({
+-        id: d.id, tone: "amber", sort: 600,
+-        kind: "Check a document",
+-        title: `Check ${flagged} value${flagged !== 1 ? "s" : ""} the system wasn't sure about`,
+-        detail: `${d.docType} · ${d.name}`,
+-        hint: "Everything else on it was read correctly",
+-        primary: { label: "Check values", run: () => nav(`/extraction?doc=${d.id}`) },
+-        canAct: hasCap(perms, "extraction", "edit"),
+-      });
+-    });
+-  }
+-
+-  items.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || a.sort - b.sort);
+-
+-  const waiting = [
+-    ...(collections.matches || []).filter((m) => m.status === "pending" && m.owner === first).map((m) => `Match of ${inr(m.amount)}`),
+-    ...exceptions.filter((e) => e.status === "pending_approval" && (e.closedBy === first || e.owner === me)).map((e) => `${PLAIN_EXCEPTION[e.type] || e.type} (${e.ref})`),
+-    ...(collections.documents || []).filter((d) => d.status === "pending_checker" && d.owner === first).map((d) => d.name),
+-  ];
+-
+-  const today = new Date().toDateString();
+-  const doneToday = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === today && /match|closure|extraction|Assign|Ran|Create refund|Mark/i.test(a.action)).length;
+-  const hour = new Date().getHours();
+-  const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+-  const reds = items.filter((i) => i.tone === "red").length;
+-
+-  return (
+-    <div className="my-work" data-testid="my-work">
+-      <div className="mw-hero">
+-        <div>
+-          <h1>{greet}, {first}</h1>
+-          <p>{items.length === 0 ? "You're all caught up." : <>You have <b>{items.length} thing{items.length !== 1 ? "s" : ""} to do</b>{reds ? <>. Start with the <span className="mw-red">{reds} red one{reds !== 1 ? "s" : ""}</span> at the top</> : ""}.</>}</p>
+-        </div>
+-        <div className="mw-done"><CheckCircle2 size={18} /> <b>{doneToday}</b> done today</div>
+-      </div>
+-
+-      <div className="mw-key">
+-        <Light tone="red">Urgent — do first</Light>
+-        <Light tone="amber">Please check</Light>
+-        <Light tone="green">Quick — usually just say yes</Light>
+-      </div>
+-
+-      <div className="mw-list">
+-        {items.map((it, i) => (
+-          <div key={it.id} className={"mw-item tone-" + it.tone} data-testid={"mw-item-" + it.id}>
+-            <span className="mw-num">{i + 1}</span>
+-            <div className="mw-body">
+-              <div className="mw-kind">{it.kind}{it.light && <Light tone={it.tone}>{it.light}</Light>}</div>
+-              <div className="mw-title">{it.title}</div>
+-              <div className="mw-detail">{it.detail}</div>
+-              <div className="mw-hint">{it.when && <span className={"mw-when " + it.tone}><Hourglass size={13} /> {it.when}</span>}{it.hint}</div>
+-            </div>
+-            {it.canAct ? (
+-              <div className="mw-actions">
+-                <button className="btn btn-primary mw-btn" onClick={it.primary.run} data-testid={"mw-do-" + it.id}>{it.primary.label}</button>
+-                {it.secondary && <button className="btn btn-outline mw-btn-2" onClick={it.secondary.run} data-testid={"mw-no-" + it.id}>{it.secondary.label}</button>}
+-                {it.more && <button className="link" onClick={it.more.run}>{it.more.label}</button>}
+-              </div>
+-            ) : <span className="muted">View only</span>}
+-          </div>
+-        ))}
+-        {items.length === 0 && (
+-          <div className="mw-empty"><PartyPopper size={32} /><h2>Nothing left to do</h2><p className="muted">New work appears here automatically.</p></div>
+-        )}
+-      </div>
+-
+-      {waiting.length > 0 && (
+-        <div className="mw-waiting">
+-          <h3>Waiting for your team lead ({waiting.length})</h3>
+-          <p className="muted">You've done your part. These need approval. Nothing to do here.</p>
+-          <ul>{waiting.map((w, i) => <li key={i}>{w}</li>)}</ul>
+-        </div>
+-      )}
+-    </div>
+-  );
+-}
+diff --color -ruN r3a/frontend/src/features/ops/charts.jsx r3b/frontend/src/features/ops/charts.jsx
+--- r3a/frontend/src/features/ops/charts.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/features/ops/charts.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,70 @@
++import React from "react";
++
++/**
++ * Single-series line chart with crosshair + tooltip and an optional dashed target line.
++ * Thin 2px line, recessive grid, values in text ink (dataviz method: one hue, one axis).
++ */
++export function LineChart({ data, height = 200, min, max, target, format = (v) => v, label = "", id }) {
++  const ref = React.useRef(null);
++  const [w, setW] = React.useState(600);
++  const [hover, setHover] = React.useState(null);
++  React.useEffect(() => {
++    const ro = new ResizeObserver(([e]) => setW(Math.max(260, e.contentRect.width)));
++    if (ref.current) ro.observe(ref.current);
++    return () => ro.disconnect();
++  }, []);
++  const pad = { l: 40, r: 12, t: 12, b: 26 };
++  const lo = min ?? Math.min(...data.map((d) => d.v)); const hi = max ?? Math.max(...data.map((d) => d.v));
++  const x = (i) => pad.l + (i / (data.length - 1)) * (w - pad.l - pad.r);
++  const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (height - pad.t - pad.b);
++  const path = data.map((d, i) => `${i ? "L" : "M"}${x(i)},${y(d.v)}`).join(" ");
++  const area = `${path} L${x(data.length - 1)},${height - pad.b} L${x(0)},${height - pad.b} Z`;
++  const ticks = 4; const tv = Array.from({ length: ticks + 1 }, (_, i) => lo + ((hi - lo) * i) / ticks);
++  const onMove = (e) => {
++    const r = ref.current.getBoundingClientRect(); const px = e.clientX - r.left;
++    const i = Math.round(((px - pad.l) / (w - pad.l - pad.r)) * (data.length - 1));
++    setHover(Math.max(0, Math.min(data.length - 1, i)));
++  };
++  return (
++    <div className="lc" ref={ref} onPointerMove={onMove} onPointerLeave={() => setHover(null)} data-testid={id} role="img" aria-label={label}>
++      <svg width={w} height={height}>
++        {tv.map((v) => <g key={v}><line x1={pad.l} x2={w - pad.r} y1={y(v)} y2={y(v)} className="lc-grid" /><text x={pad.l - 8} y={y(v) + 4} className="lc-axis" textAnchor="end">{format(v)}</text></g>)}
++        {data.map((d, i) => (i % Math.ceil(data.length / 7) === 0 || i === data.length - 1) && <text key={i} x={x(i)} y={height - 8} className="lc-axis" textAnchor="middle">{d.label}</text>)}
++        {target != null && <g><line x1={pad.l} x2={w - pad.r} y1={y(target)} y2={y(target)} className="lc-target" /><text x={w - pad.r} y={y(target) - 5} textAnchor="end" className="lc-target-label">Target {format(target)}</text></g>}
++        <path d={area} className="lc-area" />
++        <path d={path} className="lc-line" />
++        <circle cx={x(data.length - 1)} cy={y(data[data.length - 1].v)} r="4" className="lc-dot" />
++        {hover != null && <g><line x1={x(hover)} x2={x(hover)} y1={pad.t} y2={height - pad.b} className="lc-cross" /><circle cx={x(hover)} cy={y(data[hover].v)} r="5" className="lc-dot hover" /></g>}
++      </svg>
++      {hover != null && (
++        <div className="lc-tip" style={{ left: Math.min(w - 140, Math.max(0, x(hover) - 60)), top: Math.max(0, y(data[hover].v) - 58) }}>
++          <b>{format(data[hover].v)}</b><span>{data[hover].label}{data[hover].note ? ` · ${data[hover].note}` : ""}</span>
++        </div>
++      )}
++    </div>
++  );
++}
++
++/** Tiny trend line for KPI tiles and table rows (no axes; the number beside it carries the value). */
++export function Spark({ values, width = 90, height = 28, bad }) {
++  const lo = Math.min(...values); const hi = Math.max(...values) || 1;
++  const pts = values.map((v, i) => `${(i / (values.length - 1)) * width},${height - 2 - ((v - lo) / (hi - lo || 1)) * (height - 4)}`).join(" ");
++  return <svg width={width} height={height} className={"spark-svg" + (bad ? " bad" : "")} aria-hidden="true"><polyline points={pts} /></svg>;
++}
++
++/** Horizontal bars with per-bar hover (value + share). One hue: magnitude, not identity. */
++export function BarList({ rows, total, format = (v) => v }) {
++  const max = Math.max(...rows.map((r) => r.v), 1);
++  return (
++    <div className="barlist">
++      {rows.map((r) => (
++        <div key={r.label} className={"bl-row" + (r.tone ? " " + r.tone : "")} title={`${r.label}: ${format(r.v)}${total ? ` (${((r.v / total) * 100).toFixed(1)}%)` : ""}`}>
++          <span className="bl-label">{r.label}</span>
++          <span className="bl-track"><i style={{ width: `${Math.max(1, (r.v / max) * 100)}%` }} /></span>
++          <b className="tnum">{format(r.v)}</b>
++          {total && <span className="bl-pct tnum">{((r.v / total) * 100).toFixed(1)}%</span>}
++        </div>
++      ))}
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/features/refunds/Refunds.jsx r3b/frontend/src/features/refunds/Refunds.jsx
+--- r3a/frontend/src/features/refunds/Refunds.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/features/refunds/Refunds.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,112 @@
++import React from "react";
++import { useNavigate, useSearchParams } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { Drawer } from "@/components/Drawer";
++import { hasCap } from "@/lib/access";
++import { delayedInterest, REFUND_SLA_DAYS } from "@/mock/opsSeed";
++import { inr, inrShort, ReadOnlyNote } from "@/features/ops/ui";
++import { JourneyBar } from "@/features/today/Cycle";
++import { downloadCsv } from "@/features/reports/csv";
++import { Undo2, BadgeCheck, Send, Check, Landmark, ArrowRight, AlertTriangle, FileDown } from "lucide-react";
++import { toast } from "sonner";
++
++const STATUS = { draft: ["To prepare", "pill-draft"], pending: ["Waiting for approval", "pill-pending"], approved: ["Approved — ready to pay", "pill-active"], batched: ["In payment batch", "pill-active"], paid: ["Paid", "pill-active"] };
++const VIEWS = [["todo", "To do", (r) => ["draft", "pending"].includes(r.status)], ["ready", "Ready to pay", (r) => r.status === "approved"], ["done", "Sent", (r) => ["batched", "paid"].includes(r.status)], ["all", "All", () => true]];
++
++/** Stage 6 — refunds with 5-day SLA, bank-account verification, delayed interest and NEFT batch. */
++export default function Refunds() {
++  const { collections, perms, act, currentUser, simple } = useStore();
++  const nav = useNavigate();
++  const [sp] = useSearchParams();
++  const all = collections.refunds || [];
++  const canEdit = hasCap(perms, "refunds", "edit");
++  const canApprove = hasCap(perms, "refunds", "approve");
++  const [view, setView] = React.useState(canApprove && !canEdit ? "todo" : "todo");
++  const [openId, setOpenId] = React.useState(sp.get("refund"));
++  const rows = all.filter(VIEWS.find((v) => v[0] === view)[2]).sort((a, b) => b.ageDays - a.ageDays);
++  const open = all.find((r) => r.id === openId);
++  const totalOut = all.filter((r) => ["draft", "pending", "approved"].includes(r.status)).reduce((s, r) => s + r.amount + delayedInterest(r.amount, r.ageDays), 0);
++  const interestPaid = all.reduce((s, r) => s + delayedInterest(r.amount, r.ageDays), 0);
++
++  const upd = (r, patch, action, cap = "edit") => {
++    const res = act({ screen: "refunds", cap, kind: "refunds", id: r.id, target: r, patch, audit: { entityLabel: `${r.ref} · ${r.investor}`, action, from: STATUS[r.status][0], to: STATUS[patch.status || r.status]?.[0] } });
++    if (!res.ok) toast.error(res.error);
++    return res.ok;
++  };
++  const verify = (r) => { if (upd(r, { verified: true }, "Verify bank account (penny drop)")) toast.success(`₹1 test credit succeeded. Name at bank matches ${r.investor}.`); };
++  const submit = (r) => { if (!r.verified) { toast.error("Verify the bank account first"); return; } if (upd(r, { status: "pending", owner: currentUser }, "Submit refund")) toast.success(simple ? "Sent to your checker." : "Refund sent for approval"); };
++  const approve = (r) => { if (upd(r, { status: "approved", approvedBy: currentUser }, "Approve refund", "approve")) toast.success("Refund approved"); };
++  const batch = () => {
++    const ready = all.filter((r) => r.status === "approved");
++    ready.forEach((r) => upd(r, { status: "batched", batchRef: "NEFT-" + Date.now().toString().slice(-6) }, "Add to NEFT batch"));
++    downloadCsv(`neft_refund_batch_${new Date().toISOString().slice(0, 10)}.csv`, ["Ref", "Beneficiary", "Account", "IFSC", "Amount", "Interest", "Total"], ready.map((r) => { const i = delayedInterest(r.amount, r.ageDays); return [r.ref, r.investor, r.bankAcct, r.ifsc, r.amount, i, r.amount + i]; }));
++    toast.success(`${ready.length} refund${ready.length !== 1 ? "s" : ""} added to today's NEFT batch file`);
++  };
++  const ready = all.filter((r) => r.status === "approved");
++
++  return (
++    <div data-testid="refunds">
++      <JourneyBar current="refunds" />
++      <div className="page-head">
++        <div>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Undo2 size={22} /> Refunds</h1>
++          <p>{simple ? "Send money back to investors who paid twice, paid too much, or whose application was rejected. After 5 days CAMS has to add interest." : `Duplicate, excess and NIGO refunds. ${REFUND_SLA_DAYS}-day SLA from value date; after that delayed interest (15% p.a.) is added automatically. Accounts are verified by penny drop before payout.`}</p>
++        </div>
++        {canEdit && ready.length > 0 && <div className="actions"><button className="btn btn-primary" onClick={batch} data-testid="make-batch"><FileDown size={14} /> Create NEFT batch ({ready.length})</button></div>}
++      </div>
++      {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
++
++      <div className="ops-stats">
++        <div className="ops-stat"><span className="os-label">To prepare</span><span className="os-value tnum">{all.filter((r) => r.status === "draft").length}</span></div>
++        <div className="ops-stat tone-amber"><span className="os-label">Waiting for approval</span><span className="os-value tnum">{all.filter((r) => r.status === "pending").length}</span></div>
++        <div className="ops-stat tone-blue"><span className="os-label">Still to send</span><span className="os-value tnum">{inrShort(totalOut)}</span></div>
++        <div className="ops-stat tone-red"><span className="os-label">{simple ? "Interest CAMS is paying" : "Delayed interest accrued"}</span><span className="os-value tnum">{inr(interestPaid)}</span></div>
++      </div>
++
++      <div className="card">
++        <div className="toolbar"><div className="segmented">{VIEWS.map(([k, l]) => <button key={k} className={view === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>)}</div></div>
++        <table className="grid">
++          <thead><tr><th>Refund</th><th>Investor</th><th>Why</th><th style={{ textAlign: "right" }}>Amount</th><th>Time</th><th>Bank account</th><th>Status</th><th /></tr></thead>
++          <tbody>{rows.map((r) => {
++            const int = delayedInterest(r.amount, r.ageDays);
++            return (
++              <tr key={r.id} onClick={() => setOpenId(r.id)} style={{ cursor: "pointer" }} data-testid={"rf-row-" + r.id}>
++                <td className="tnum">{r.ref}</td><td><b>{r.investor}</b></td><td>{r.reason}</td>
++                <td className="tnum r">{inr(r.amount)}{int > 0 && <div className="int-add">+ {inr(int)} interest</div>}</td>
++                <td>{r.ageDays >= REFUND_SLA_DAYS ? <span className="clock red"><AlertTriangle size={12} /> {r.ageDays - REFUND_SLA_DAYS}d late</span> : <span className={"clock" + (r.ageDays >= 4 ? " amber" : "")}>{REFUND_SLA_DAYS - r.ageDays}d left</span>}</td>
++                <td><span className="tnum">{r.bankAcct}</span> {r.verified ? <span className="ok-check"><BadgeCheck size={13} /> verified</span> : <span className="muted">not verified</span>}</td>
++                <td><span className={"pill " + STATUS[r.status][1]}><span className="dot" />{STATUS[r.status][0]}</span></td>
++                <td><ArrowRight size={14} className="muted" /></td>
++              </tr>
++            );
++          })}
++          {rows.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 28 }}>Nothing here.</td></tr>}</tbody>
++        </table>
++      </div>
++
++      {open && (() => {
++        const int = delayedInterest(open.amount, open.ageDays);
++        return (
++          <Drawer id="refund-drawer" title={`${open.ref} — ${open.investor}`} subtitle={open.reason} onClose={() => setOpenId(null)}>
++            <div className="kv-line"><span>Refund amount</span><b className="tnum">{inr(open.amount)}</b></div>
++            <div className="kv-line"><span>{simple ? "Interest CAMS must add" : "Delayed interest"}</span><span className="tnum">{int ? `${inr(int)} (${open.ageDays - REFUND_SLA_DAYS} days late × 15% p.a.)` : `None — ${REFUND_SLA_DAYS - open.ageDays} day(s) left`}</span></div>
++            <div className="kv-line"><span>Total to pay</span><b className="tnum">{inr(open.amount + int)}</b></div>
++            <div className="fd-section">
++              <h4><Landmark size={14} /> Pay to</h4>
++              <div className="kv-line"><span>Account</span><span className="tnum">{open.bankAcct} · {open.ifsc}</span></div>
++              <div className="kv-line"><span>PAN</span><span className="tnum">{open.pan}</span></div>
++              <div className="kv-line"><span>Verified</span>{open.verified ? <span className="ok-check"><BadgeCheck size={13} /> Yes — penny drop name match</span> : <span className="bad-check">Not yet</span>}</div>
++            </div>
++            <div className="fd-actions">
++              {open.status === "draft" && canEdit && !open.verified && <button className="btn btn-outline" onClick={() => verify(open)} data-testid="verify-account"><BadgeCheck size={14} /> Verify bank account</button>}
++              {open.status === "draft" && canEdit && <button className="btn btn-primary" disabled={!open.verified} onClick={() => submit(open)} data-testid="submit-refund"><Send size={14} /> Send for approval</button>}
++              {open.status === "pending" && (canApprove && open.owner !== currentUser && !(open.owner || "").startsWith(currentUser) ? <button className="btn btn-success" onClick={() => approve(open)} data-testid="approve-refund"><Check size={14} /> Approve refund</button> : <span className="muted">Waiting for a checker.</span>)}
++              {open.status === "approved" && <span className="muted">Approved. It goes out in the next NEFT batch.</span>}
++            </div>
++          </Drawer>
++        );
++      })()}
++      {all.every((r) => !["draft", "pending"].includes(r.status)) && <div className="next-strip"><span>All refunds are handled.</span><button className="btn btn-primary btn-sm" onClick={() => nav("/today#close")}>Next: Close the day <ArrowRight size={13} /></button></div>}
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/features/release/FundRelease.jsx r3b/frontend/src/features/release/FundRelease.jsx
+--- r3a/frontend/src/features/release/FundRelease.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/features/release/FundRelease.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,85 @@
++import React from "react";
++import { useNavigate } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { hasCap } from "@/lib/access";
++import { TODAY, AMC_BREAKDOWN, RELEASE_CUTOFF } from "@/mock/opsSeed";
++import { inr, inrShort, num, ReadOnlyNote } from "@/features/ops/ui";
++import { JourneyBar } from "@/features/today/Cycle";
++import { downloadCsv } from "@/features/reports/csv";
++import { Banknote, Send, Check, Clock, ArrowRight, Download, ShieldCheck, Lock } from "lucide-react";
++import { toast } from "sonner";
++
++/** Stage 5 — release realised money to Transaction Posting so units can be allotted (SEBI). */
++export default function FundRelease() {
++  const { collections, perms, act, currentUser, simple } = useStore();
++  const nav = useNavigate();
++  const canEdit = hasCap(perms, "release", "edit");
++  const canApprove = hasCap(perms, "release", "approve");
++  const rel = (collections.releases || [])[0];
++  const extra = (collections.matches || []).filter((m) => m.status === "confirmed").reduce((s, m) => s + m.amount, 0);
++  const ready = TODAY.realisedForAllotment + extra;
++  const readyCount = TODAY.auto + TODAY.aiAccepted + TODAY.manual + (collections.matches || []).filter((m) => m.status === "confirmed").length;
++  const held = TODAY.heldForAllotment - extra;
++  const openCases = (collections.exceptions || []).filter((e) => e.status !== "closed" && e.amount > 0).length;
++  const pendingMatches = (collections.matches || []).filter((m) => m.status === "pending");
++  const mins = Math.round((new Date(RELEASE_CUTOFF) - Date.now()) / 60000);
++
++  const prepare = () => {
++    const res = act({ screen: "release", cap: "edit", kind: "releases", id: rel.id, patch: { status: "pending", amount: ready, count: readyCount, preparedBy: currentUser, preparedAt: new Date().toISOString() }, audit: { entityLabel: rel.ref, action: "Prepare fund release", from: "Not prepared", to: "Pending", comment: inr(ready) } });
++    if (res.ok) toast.success(simple ? "Prepared. Your checker will release it." : "Release batch prepared and sent to checker"); else toast.error(res.error);
++  };
++  const release = () => {
++    const res = act({ screen: "release", cap: "approve", kind: "releases", id: rel.id, target: { owner: rel.preparedBy }, patch: { status: "released", approvedBy: currentUser, releasedAt: new Date().toISOString() }, audit: { entityLabel: rel.ref, action: "Release funds to Posting", from: "Pending", to: "Released", comment: inr(rel.amount) } });
++    if (res.ok) toast.success("Released to Transaction Posting. Units can now be allotted."); else toast.error(res.error);
++  };
++  const report = () => downloadCsv(`fund_utilisation_${new Date().toISOString().slice(0, 10)}.csv`, ["AMC", "Schemes", "Payments", "Amount (INR)"], AMC_BREAKDOWN.map((a) => [a.amc, a.schemes, a.count, Math.round(ready * a.share)]));
++
++  const steps = [
++    { k: "prepare", label: "Maker prepares the batch", done: rel.status !== "not_started", who: rel.preparedBy },
++    { k: "approve", label: "Checker releases it", done: rel.status === "released", who: rel.approvedBy },
++    { k: "posting", label: "Transaction Posting allots units", done: rel.status === "released", who: "Posting team" },
++  ];
++
++  return (
++    <div data-testid="fund-release">
++      <JourneyBar current="release" />
++      <div className="page-head">
++        <div>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Banknote size={22} /> {simple ? "Release money" : "Fund release"}</h1>
++          <p>{simple ? "Send the money that has arrived to the team that allots units. Must be done by 3:00 PM." : "SEBI requires units to be allotted only after funds are realised. Release matched, realised money to Transaction Posting before the 3:00 PM cut-off; unmatched money stays held."}</p>
++        </div>
++        <div className="actions"><span className={"cutoff-chip" + (mins < 60 ? " hot" : "")}><Clock size={13} /> Cut-off {mins > 0 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : "passed"}</span></div>
++      </div>
++      {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
++
++      <div className="release-hero card">
++        <div className="rh-amounts">
++          <div><span>{simple ? "Ready to release" : "Realised & matched"}</span><b>{inrShort(ready)}</b><small>{num(readyCount)} payments</small></div>
++          <div className="held"><span>{simple ? "Held back (not matched yet)" : "Held — not yet matched"}</span><b>{inrShort(held)}</b><small><button className="link" onClick={() => nav("/exceptions")}>{openCases} problem cases</button> · <button className="link" onClick={() => nav("/match")}>{pendingMatches.length} matches awaiting checker</button></small></div>
++        </div>
++        <ol className="rh-steps">
++          {steps.map((s, i) => <li key={s.k} className={s.done ? "done" : ""}><span>{s.done ? <Check size={13} /> : i + 1}</span><div><b>{s.label}</b>{s.who && s.done && <small>{s.who}</small>}</div></li>)}
++        </ol>
++        <div className="rh-action">
++          {rel.status === "not_started" && (canEdit ? <button className="btn btn-primary btn-lg" onClick={prepare} data-testid="prepare-release"><Send size={15} /> Prepare release of {inrShort(ready)}</button> : <span className="muted">Waiting for a maker to prepare the batch.</span>)}
++          {rel.status === "pending" && (canApprove && rel.preparedBy !== currentUser ? <button className="btn btn-success btn-lg" onClick={release} data-testid="approve-release"><ShieldCheck size={15} /> Release {inrShort(rel.amount)} to Posting</button> : <span className="pill pill-pending"><span className="dot" />Prepared by {rel.preparedBy} — waiting for checker</span>)}
++          {rel.status === "released" && <span className="pill pill-active"><span className="dot" />Released at {new Date(rel.releasedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · {rel.ref}</span>}
++          <button className="btn btn-outline btn-sm" onClick={report}><Download size={13} /> Fund utilisation report</button>
++        </div>
++      </div>
++
++      <div className="card">
++        <div className="card-head"><h3>By AMC</h3><span className="muted">Each AMC receives its fund utilisation report when the batch is released</span></div>
++        <table className="grid">
++          <thead><tr><th>AMC</th><th style={{ textAlign: "right" }}>Schemes</th><th style={{ textAlign: "right" }}>Payments</th><th style={{ textAlign: "right" }}>Amount</th><th style={{ width: 200 }}>Share</th><th>Status</th></tr></thead>
++          <tbody>{AMC_BREAKDOWN.map((a) => (
++            <tr key={a.amc}><td><b>{a.amc}</b></td><td className="tnum r">{a.schemes}</td><td className="tnum r">{num(a.count)}</td><td className="tnum r">{inrShort(ready * a.share)}</td>
++              <td><span className="share-bar"><i style={{ width: `${a.share * 100 / 0.3}%` }} /></span></td>
++              <td>{rel.status === "released" ? <span className="pill pill-active"><span className="dot" />Released</span> : <span className="pill pill-draft"><Lock size={10} /> Held until release</span>}</td></tr>
++          ))}</tbody>
++        </table>
++      </div>
++      {rel.status === "released" && <div className="next-strip"><span>Fund release done.</span><button className="btn btn-primary btn-sm" onClick={() => nav("/refunds")}>Next: Send refunds <ArrowRight size={13} /></button></div>}
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/features/reports/Reports.jsx r3b/frontend/src/features/reports/Reports.jsx
+--- r3a/frontend/src/features/reports/Reports.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/features/reports/Reports.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,55 @@
++import React from "react";
++import { useStore } from "@/state/store";
++import { hasCap } from "@/lib/access";
++import { AMC_BREAKDOWN, TODAY, delayedInterest } from "@/mock/opsSeed";
++import { downloadCsv } from "./csv";
++import { FileBarChart, Download, CalendarClock } from "lucide-react";
++import { toast } from "sonner";
++
++/** Standard reports from Recon PRD v1 §4–§6, generated from live data. */
++export default function Reports() {
++  const { collections: c, perms, audit } = useStore();
++  const canExport = hasCap(perms, "reports", "export");
++  const [scheduled, setScheduled] = React.useState({ day: true, fund: true });
++  const d = new Date().toISOString().slice(0, 10);
++  const credits = c.credits || []; const purchases = c.purchases || []; const ex = c.exceptions || [];
++
++  const REPORTS = [
++    { group: "Daily", key: "day", name: "Day summary", ref: "Day close", desc: "What was done today and what carries forward. Sent to AMCs at day close.", run: () => downloadCsv(`day_summary_${d}.csv`, ["Measure", "Value"], [["Credits received", TODAY.credits], ["Auto-matched", TODAY.auto], ["Manually matched", TODAY.manual], ["Open problem cases", ex.filter((e) => e.status !== "closed").length], ["Fund release", (c.releases || [])[0]?.status]]) },
++    { group: "Daily", key: "fund", name: "Fund utilisation report", ref: "PRD v1 §2.6 · v4 Stage 5", desc: "Realised money by AMC and scheme. Gates unit allotment.", run: () => downloadCsv(`fund_utilisation_${d}.csv`, ["AMC", "Schemes", "Payments", "Amount"], AMC_BREAKDOWN.map((a) => [a.amc, a.schemes, a.count, Math.round(TODAY.realisedForAllotment * a.share)])) },
++    { group: "Reconciliation", key: "ucr", name: "Unreconciled — credit side", ref: "PRD v1 §4.1", desc: "Money received with no matching purchase.", run: () => downloadCsv(`unreconciled_credit_${d}.csv`, ["Ref", "Bank", "Value date", "Amount", "Remitter", "Narration"], credits.filter((x) => x.status === "open").map((x) => [x.ref, x.bankName, x.valueDate.slice(0, 10), x.amount, x.remitter, x.narration])) },
++    { group: "Reconciliation", key: "upu", name: "Unreconciled — purchase side", ref: "PRD v1 §4.2", desc: "Purchases with no money received yet.", run: () => downloadCsv(`unreconciled_purchase_${d}.csv`, ["App no", "Investor", "PAN", "Scheme", "Channel", "Amount"], purchases.filter((x) => x.status === "open").map((x) => [x.appNo, x.investor, x.pan, x.scheme, x.channel, x.amount])) },
++    { group: "Reconciliation", key: "bs", name: "Bank statement report", ref: "PRD v1 §4.3", desc: "Every statement received today with load status and checks.", run: () => downloadCsv(`bank_statements_${d}.csv`, ["Bank", "Account", "Channel", "Status", "Rows"], (c.files || []).map((f) => [f.bankName, f.accountNumber, f.channel, f.status, f.rows])) },
++    { group: "Reconciliation", key: "mis", name: "Credit MIS report", ref: "PRD v1 §4.4", desc: "Payment aggregator settlements and their match status.", run: () => downloadCsv(`credit_mis_${d}.csv`, ["Document", "Type", "Status"], (c.documents || []).map((x) => [x.name, x.docType, x.status])) },
++    { group: "Reconciliation", key: "cb", name: "Cheque bounce — posted / unposted", ref: "PRD v1 §4.5–4.6", desc: "Returned cheques on the Credit MIS and purchase sides.", run: () => downloadCsv(`cheque_bounce_${d}.csv`, ["Ref", "Status"], [["—", "No bounces today"]]) },
++    { group: "Reconciliation", key: "cc", name: "Cross collection", ref: "PRD v1 §4.7", desc: "Money that arrived in a CAMS account but belongs to another AMC.", run: () => downloadCsv(`cross_collection_${d}.csv`, ["Case", "Investor", "Amount", "Status"], ex.filter((e) => e.type === "Cross collection").map((e) => [e.ref, e.investor, e.amount, e.status])) },
++    { group: "Refunds", key: "rf", name: "Refund process report", ref: "PRD v1 §4.8 · v4 Stage 6", desc: "All refunds with SLA, delayed interest and payment status.", run: () => downloadCsv(`refunds_${d}.csv`, ["Ref", "Investor", "Reason", "Amount", "Interest", "Status"], (c.refunds || []).map((r) => [r.ref, r.investor, r.reason, r.amount, delayedInterest(r.amount, r.ageDays), r.status])) },
++    { group: "Regulatory & finance", key: "pr", name: "Purchase register", ref: "PRD v1 §4.9", desc: "All purchase applications with realisation status.", run: () => downloadCsv(`purchase_register_${d}.csv`, ["App no", "Investor", "Amount", "Status"], purchases.map((x) => [x.appNo, x.investor, x.amount, x.status])) },
++    { group: "Regulatory & finance", key: "brs", name: "Bank reconciliation statement (BRS)", ref: "PRD v1 §6", desc: "Book vs bank balance per collection account, with reconciling items.", run: () => downloadCsv(`brs_${d}.csv`, ["Account", "Bank balance", "Book balance", "Difference"], (c.files || []).slice(0, 8).map((f) => [f.accountNumber, f.creditAmount, f.creditAmount, 0])) },
++    { group: "Regulatory & finance", key: "audit", name: "Audit trail export", ref: "PRD v4 §6", desc: "Every action, by whom and when, including denied attempts.", run: () => downloadCsv(`audit_${d}.csv`, ["Time", "User", "Action", "Entity", "From", "To"], (audit || []).map((a) => [a.ts, a.user, a.action, a.entityLabel, a.from, a.to])) },
++  ];
++  const groups = [...new Set(REPORTS.map((r) => r.group))];
++
++  return (
++    <div data-testid="reports">
++      <div className="page-head">
++        <div>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><FileBarChart size={22} /> Reports</h1>
++          <p>The standard reports from the recon PRD, built from today's live data. Download any of them, or have them emailed automatically.</p>
++        </div>
++      </div>
++      {groups.map((g) => (
++        <div key={g} className="card report-group">
++          <div className="card-head"><h3>{g}</h3></div>
++          {REPORTS.filter((r) => r.group === g).map((r) => (
++            <div key={r.key} className="report-row" data-testid={"report-" + r.key}>
++              <div className="rr-main"><b>{r.name}</b><span className="rr-ref">{r.ref}</span><div className="muted">{r.desc}</div></div>
++              {["day", "fund"].includes(r.key) && <label className="rr-sched" title="Email automatically"><input type="checkbox" className="cb" checked={!!scheduled[r.key]} onChange={(e) => { setScheduled((s) => ({ ...s, [r.key]: e.target.checked })); toast.success(e.target.checked ? "Will be emailed to AMCs daily at day close" : "Daily email turned off"); }} /> <CalendarClock size={13} /> Email daily</label>}
++              <button className="btn btn-outline btn-sm" disabled={!canExport} onClick={r.run}><Download size={13} /> CSV</button>
++            </div>
++          ))}
++        </div>
++      ))}
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/features/reports/csv.js r3b/frontend/src/features/reports/csv.js
+--- r3a/frontend/src/features/reports/csv.js	1970-01-01 05:30:00
++++ r3b/frontend/src/features/reports/csv.js	2026-10-21 02:08:22
+@@ -0,0 +1,10 @@
++/** Download rows as a CSV file in the browser. */
++export function downloadCsv(filename, headers, rows) {
++  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
++  const body = [headers.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
++  const url = URL.createObjectURL(new Blob([body], { type: "text/csv;charset=utf-8" }));
++  const a = document.createElement("a");
++  a.href = url; a.download = filename;
++  document.body.appendChild(a); a.click(); a.remove();
++  setTimeout(() => URL.revokeObjectURL(url), 1000);
++}
+diff --color -ruN r3a/frontend/src/features/today/Cycle.jsx r3b/frontend/src/features/today/Cycle.jsx
+--- r3a/frontend/src/features/today/Cycle.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/features/today/Cycle.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,60 @@
++import React from "react";
++import { Link } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { dailyCycle, nextStepFor } from "@/lib/journey";
++import { hasCap } from "@/lib/access";
++import { Check, Clock, Hourglass, ArrowRight, AlertTriangle } from "lucide-react";
++
++export function useCycle() {
++  const { collections, perms } = useStore();
++  const steps = dailyCycle(collections);
++  return { steps, next: nextStepFor(steps, perms) };
++}
++
++function StateIcon({ s }) {
++  if (s.state === "done") return <span className="cy-ico done"><Check size={14} strokeWidth={3} /></span>;
++  if (s.state === "waiting") return <span className="cy-ico waiting"><Hourglass size={13} /></span>;
++  return <span className={"cy-ico " + s.state}>{s.n}</span>;
++}
++
++/** Full stepper used on Today. */
++export function CycleStepper({ steps, mine }) {
++  const { perms } = useStore();
++  return (
++    <ol className="cycle" data-testid="daily-cycle">
++      {steps.map((s) => (
++        <li key={s.key} className={"cy-step " + s.state + (s.late ? " late" : "")} data-testid={"cycle-" + s.key}>
++          <div className="cy-top"><StateIcon s={s} />{mine === s.key && <span className="cy-mine">You're here</span>}<span className="cy-by">{s.late ? <><AlertTriangle size={11} /> was due {s.by}</> : <><Clock size={11} /> by {s.by}</>}</span></div>
++          <div className="cy-title">{s.title}</div>
++          <div className="cy-sum">{s.summary}</div>
++          {s.state !== "done" && hasCap(perms, s.screen) && <Link className="cy-link" to={s.cta.path}>{s.cta.label} <ArrowRight size={12} /></Link>}
++        </li>
++      ))}
++    </ol>
++  );
++}
++
++const SHORT = { files: "Bank files", match: "Match payments", cases: "Problem cases", release: "Release money", refunds: "Send refunds", close: "Close the day" };
++
++/** Compact "where am I in the day" bar shown at the top of every daily-cycle screen. */
++export function JourneyBar({ current }) {
++  const { steps } = useCycle();
++  const { perms } = useStore();
++  const idx = steps.findIndex((s) => s.key === current);
++  const after = steps.slice(idx + 1).find((s) => s.state !== "done" && hasCap(perms, s.screen));
++  const cur = steps[idx];
++  return (
++    <div className="journey-bar" data-testid="journey-bar">
++      <span className="jb-label">Today's cycle</span>
++      <div className="jb-steps">
++        {steps.map((s) => (
++          <Link key={s.key} to={s.cta.path} className={"jb-step " + s.state + (s.key === current ? " current" : "")} title={`${s.title} — ${s.summary}`}>
++            <StateIcon s={s} /><span>{SHORT[s.key]}</span>
++          </Link>
++        ))}
++      </div>
++      {cur && cur.state === "done" && after && <Link className="btn btn-primary btn-sm jb-next" to={after.cta.path}>Next: {after.title} <ArrowRight size={13} /></Link>}
++      {cur && cur.state !== "done" && <span className="jb-status">{cur.summary}</span>}
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/features/today/Today.jsx r3b/frontend/src/features/today/Today.jsx
+--- r3a/frontend/src/features/today/Today.jsx	1970-01-01 05:30:00
++++ r3b/frontend/src/features/today/Today.jsx	2026-10-21 02:08:22
+@@ -0,0 +1,230 @@
++import React from "react";
++import { useNavigate, Link, useLocation } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { hasCap } from "@/lib/access";
++import { PLAIN_EXCEPTION } from "@/lib/plain";
++import { maskAccount } from "@/lib/format";
++import { inr, inrShort, Light, timeLeftWords } from "@/features/ops/ui";
++import { useMatchActions, isFastTrack } from "@/features/match/matchActions";
++import { useApprovals } from "@/features/approvals/useApprovals";
++import { RELEASE_CUTOFF } from "@/mock/opsSeed";
++import { CycleStepper, useCycle } from "./Cycle";
++import { downloadCsv } from "@/features/reports/csv";
++import { ArrowRight, CheckCircle2, Hourglass, PartyPopper, Clock, Sun, ShieldCheck, Download, Flag } from "lucide-react";
++import { toast } from "sonner";
++
++const TONE_ORDER = { red: 0, amber: 1, green: 2 };
++
++function useWorkItems() {
++  const { collections, perms, personaUser, act, currentUser } = useStore();
++  const nav = useNavigate();
++  const { acceptSuggestion, dismissSuggestion, byId, credits, purchases } = useMatchActions();
++  const me = personaUser.name;
++  const items = [];
++
++  const take = (e) => {
++    const res = act({ screen: "exceptions", cap: "edit", kind: "exceptions", id: e.id, patch: { owner: me, status: "in_progress" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Assign", comment: `Picked up by ${me}` } });
++    if (res.ok) toast.success("It's yours now. Open it when you're ready.");
++  };
++
++  if (hasCap(perms, "exceptions", "edit")) {
++    (collections.exceptions || []).filter((e) => ["open", "in_progress"].includes(e.status) && (e.owner === me || (!e.owner && e.amount > 0 && e.interestHoursLeft < 24))).forEach((e) => {
++      const mine = e.owner === me; const clock = e.amount > 0;
++      items.push({
++        id: e.id, tone: clock && e.interestHoursLeft < 24 ? "red" : clock && e.interestHoursLeft < 72 ? "amber" : "green", sort: clock ? e.interestHoursLeft : 999,
++        kind: "Problem case", step: 3, title: PLAIN_EXCEPTION[e.type] || e.type,
++        detail: `${e.investor !== "—" ? e.investor + " · " : ""}${e.amount ? inr(e.amount) : e.bankName}`,
++        when: clock ? timeLeftWords(e.interestHoursLeft) : null,
++        hint: mine ? `What to do: ${e.suggestion.action.replace("Open in Match Workbench", "Find the matching purchase").replace("Open File Inbox", "Check the bank file")}` : "Nobody is working on this yet",
++        primary: mine ? { label: "Open case", run: () => nav(`/exceptions?case=${e.id}`) } : { label: "Take this case", run: () => take(e) },
++      });
++    });
++  }
++  if (hasCap(perms, "match", "edit")) {
++    (collections.suggestions || []).filter((s) => !s.decided).forEach((s) => {
++      const cs = s.credits.map((id) => byId(credits, id)).filter(Boolean);
++      const ps = s.purchases.map((id) => byId(purchases, id)).filter(Boolean);
++      if (!cs.length || !ps.length) return;
++      const amount = cs.reduce((a, c) => a + c.amount, 0); const sure = s.confidence >= 0.9;
++      items.push({
++        id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100, kind: "Match a payment", step: 2,
++        title: cs.length > 1 ? `${cs.length} payments from ${cs[0].remitter} add up to ${ps[0].investor}'s purchase` : ps.length > 1 ? `One payment from ${cs[0].remitter} covers ${ps.length} purchases by ${ps[0].investor}` : `Payment from ${cs[0].remitter} looks like ${ps[0].investor}'s purchase`,
++        detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`, light: sure ? "Very likely" : "Please check",
++        hint: isFastTrack(s.confidence, amount) ? "Say yes and it's done — no approval needed" : "Say yes and your checker approves it",
++        primary: { label: "Yes, match", run: () => acceptSuggestion(s) }, secondary: { label: "Not a match", run: () => dismissSuggestion(s) }, more: { label: "See why", run: () => nav("/match") },
++      });
++    });
++  }
++  if (hasCap(perms, "extraction", "edit")) {
++    (collections.documents || []).filter((d) => d.status === "needs_review").forEach((d) => {
++      const n = d.fields.filter((f) => f.conf < 0.95 || (f.validator && !f.validator.ok)).length + d.lines.reduce((k, l) => k + Object.values(l).filter((v) => v[1] < 0.95).length, 0);
++      items.push({ id: d.id, tone: "amber", sort: 600, kind: "Check a document", step: 2, title: `Check ${n} value${n !== 1 ? "s" : ""} the system wasn't sure about`, detail: `${d.docType} · ${d.name}`, hint: "Everything else on it was read correctly", primary: { label: "Check values", run: () => nav(`/extraction?doc=${d.id}`) } });
++    });
++  }
++  if (hasCap(perms, "refunds", "edit")) {
++    (collections.refunds || []).filter((r) => r.status === "draft").forEach((r) => items.push({
++      id: r.id, tone: r.ageDays >= 4 ? "red" : "amber", sort: 300 - r.ageDays, kind: "Refund", step: 5, title: `Refund ${inr(r.amount)} to ${r.investor}`, detail: `${r.reason} · to ${r.bankAcct}`,
++      when: r.ageDays >= 5 ? "Late — interest is being added" : `${5 - r.ageDays} day${5 - r.ageDays !== 1 ? "s" : ""} before interest applies`,
++      hint: r.verified ? "Bank account already verified" : "Verify the bank account first", primary: { label: "Prepare refund", run: () => nav(`/refunds?refund=${r.id}`) },
++    }));
++  }
++  if (hasCap(perms, "ingestion", "edit")) {
++    (collections.files || []).filter((f) => ["drift", "unknown", "check_failed", "late", "missing"].includes(f.status)).forEach((f) => items.push({
++      id: f.id, tone: ["late", "missing"].includes(f.status) ? "red" : "amber", sort: 100, kind: "Bank file", step: 1,
++      title: { drift: `${f.bankName} changed its file layout`, unknown: `${f.bankName} sent a file we don't recognise`, check_failed: `${f.bankName} statement balances don't add up`, late: `${f.bankName} statement is late`, missing: `${f.bankName} statement not received` }[f.status],
++      detail: `Account ·${f.accountNumber.slice(-4)} · ${f.channel}`, hint: f.status === "drift" ? "The system has proposed the new mapping — confirm it" : "Retry or chase the bank",
++      primary: { label: f.status === "drift" ? "Review new layout" : "Open file", run: () => nav(`/ingestion?file=${f.id}`) },
++    }));
++  }
++  if (hasCap(perms, "bank_setup", "edit")) {
++    (collections.bank_config || []).filter((x) => x.status === "rejected" && x.owner === currentUser).forEach((x) => items.push({
++      id: x.id, tone: "amber", sort: 200, kind: "Rejected setup", title: `Fix ${x.bankName} ${maskAccount(x.accountNumber)} — sent back by checker`, detail: x.rejection?.comment || "", hint: "Make the change and resubmit",
++      primary: { label: "Fix setup", run: () => nav(`/bank-setup/edit/${x.id}`) },
++    }));
++  }
++  items.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || a.sort - b.sort);
++  return items;
++}
++
++function CutoffChip() {
++  const mins = Math.round((new Date(RELEASE_CUTOFF) - Date.now()) / 60000);
++  return <span className={"cutoff-chip" + (mins < 60 ? " hot" : "")}><Clock size={13} /> Fund release cut-off {mins > 0 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : "passed"}</span>;
++}
++
++export default function Today() {
++  const { collections, perms, personaUser, act, audit, simple, currentUser } = useStore();
++  const nav = useNavigate();
++  const loc = useLocation();
++  const { steps, next } = useCycle();
++  const work = useWorkItems();
++  const approvals = useApprovals().filter((a) => !a.own);
++  const isChecker = hasCap(perms, "inbox", "approve");
++  const [note, setNote] = React.useState("");
++  const closeRef = React.useRef(null);
++  React.useEffect(() => { if (loc.hash === "#close") setTimeout(() => closeRef.current?.scrollIntoView({ behavior: "smooth" }), 200); }, [loc.hash]);
++
++  const first = personaUser.name.split(" ")[0];
++  const hour = new Date().getHours();
++  const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
++  const todayStr = new Date().toDateString();
++  const doneToday = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === todayStr).length;
++  const reds = work.filter((i) => i.tone === "red").length;
++  const waitingMine = audit.length && [
++    ...(collections.matches || []).filter((m) => m.status === "pending" && m.owner === first),
++    ...(collections.exceptions || []).filter((e) => e.status === "pending_approval" && (e.closedBy === first)),
++    ...(collections.refunds || []).filter((r) => r.status === "pending" && (r.owner || "").startsWith(first)),
++    ...(collections.documents || []).filter((d) => d.status === "pending_checker" && d.owner === first),
++  ].length;
++
++  // The single next action for this person
++  const hero = isChecker && approvals.length
++    ? { eyebrow: "Do this first", title: `Approve ${approvals.length} item${approvals.length > 1 ? "s" : ""} your team sent you`, why: approvals.some((a) => a.urgent) ? "Some of them block today's fund release or hold bank file rows. Those are at the top." : "Makers can't finish their steps until you approve.", cta: { label: "Open approvals", path: "/approvals" } }
++    : next ? { eyebrow: `Step ${next.n} of 6 · by ${next.by}`, title: next.title, why: next.why, summary: next.summary, cta: next.cta, late: next.late }
++    : work.length ? { eyebrow: "Do this first", title: work[0].title, why: work[0].hint, cta: { label: work[0].primary.label, run: work[0].primary.run } }
++    : { eyebrow: "All clear", title: "Nothing is waiting for you right now", why: "New work appears here automatically. You can review today's dashboard or reports." };
++
++  const close = (collections.dayclose || [])[0] || { status: "open" };
++  const canSubmitClose = hasCap(perms, "match", "edit") || hasCap(perms, "release", "edit");
++  const canSignClose = hasCap(perms, "release", "approve");
++  const carried = (collections.exceptions || []).filter((e) => e.status !== "closed").length;
++  const submitClose = () => {
++    const res = act({ screen: "release", cap: "edit", kind: "dayclose", id: "day_today", patch: { status: "pending", submittedBy: currentUser, carried, note: note.trim(), submittedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Submit day close", from: "Open", to: "Pending", comment: `${carried} items carried forward` } });
++    if (res.ok) toast.success(simple ? "Sent to your checker to sign off the day." : "Day close submitted for sign-off"); else toast.error(res.error);
++  };
++  const signClose = () => {
++    const res = act({ screen: "release", cap: "approve", kind: "dayclose", id: "day_today", target: { owner: close.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } });
++    if (res.ok) toast.success("Day signed off. Summary sent to AMCs."); else toast.error(res.error);
++  };
++  const daySummary = () => downloadCsv(`day_summary_${new Date().toISOString().slice(0, 10)}.csv`, ["Step", "Status", "Detail"], steps.map((s) => [s.title, s.state, s.summary]));
++
++  const list = isChecker ? approvals.slice(0, 6).map((a) => ({ id: a.id, tone: a.urgent ? "red" : "amber", kind: a.kind, title: a.title, detail: a.detail, hint: `From ${a.owner || "—"}`, primary: { label: a.review ? "Review" : "Review & approve", run: () => nav(a.review || "/approvals") } })) : work;
++
++  return (
++    <div className="today" data-testid="today">
++      <div className="today-head">
++        <div>
++          <div className="eyebrow-sm"><Sun size={13} /> {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</div>
++          <h1>{greet}, {first}</h1>
++        </div>
++        <CutoffChip />
++      </div>
++
++      {/* 1. The ONE thing to do next */}
++      <div className={"next-card" + (hero.late ? " late" : "")} data-testid="next-action">
++        <div className="nc-body">
++          <div className="nc-eyebrow">{hero.eyebrow}{hero.late && <span className="nc-late">Running late</span>}</div>
++          <h2>{hero.title}</h2>
++          <p>{hero.why}</p>
++          {hero.summary && <div className="nc-sum">{hero.summary}</div>}
++        </div>
++        {hero.cta && <button className="btn btn-primary btn-lg" onClick={() => (hero.cta.run ? hero.cta.run() : nav(hero.cta.path))} data-testid="next-action-btn">{hero.cta.label} <ArrowRight size={16} /></button>}
++      </div>
++
++      {/* 2. Where the day stands */}
++      <section className="today-section">
++        <div className="ts-head"><h3>Today's reconciliation cycle</h3><span className="muted">{steps.filter((s) => s.state === "done").length} of 6 steps done · the whole team works through these in order · blue = where the team is now</span></div>
++        <CycleStepper steps={steps} mine={isChecker && approvals.length ? null : next?.key} />
++      </section>
++
++      {/* 3. Personal numbers */}
++      <div className="kpi-row">
++        <div className="kpi"><span>Done today</span><b>{doneToday}</b><small>actions by you</small></div>
++        <div className="kpi"><span>{isChecker ? "Waiting for you" : "On your list"}</span><b>{list.length}</b><small>{reds && !isChecker ? `${reds} urgent` : "—"}</small></div>
++        <div className="kpi"><span>Waiting for approval</span><b>{waitingMine || 0}</b><small>you've done your part</small></div>
++        <div className="kpi"><span>Realised today</span><b>{inrShort((collections.releases || [])[0]?.amount || 19874410000)}</b><small>ready for unit allotment</small></div>
++      </div>
++
++      {/* 4. The list */}
++      <section className="today-section">
++        <div className="ts-head"><h3>{isChecker ? "Waiting for your approval" : "Your list"}</h3>
++          <span className="muted">{isChecker ? <Link to="/approvals">See all {approvals.length} →</Link> : "Red first, then amber, then green"}</span></div>
++        {!simple || isChecker ? null : <div className="mw-key"><Light tone="red">Urgent — do first</Light><Light tone="amber">Please check</Light><Light tone="green">Quick — usually just say yes</Light></div>}
++        <div className="mw-list">
++          {list.map((it, i) => (
++            <div key={it.id} className={"mw-item tone-" + it.tone} data-testid={"mw-item-" + it.id}>
++              <span className="mw-num">{i + 1}</span>
++              <div className="mw-body">
++                <div className="mw-kind">{it.step && <span className="step-chip">Step {it.step}</span>}{it.kind}{it.light && <Light tone={it.tone}>{it.light}</Light>}</div>
++                <div className="mw-title">{it.title}</div>
++                <div className="mw-detail">{it.detail}</div>
++                <div className="mw-hint">{it.when && <span className={"mw-when " + it.tone}><Hourglass size={13} /> {it.when}</span>}{it.hint}</div>
++              </div>
++              <div className="mw-actions">
++                <button className="btn btn-primary mw-btn" onClick={it.primary.run} data-testid={"mw-do-" + it.id}>{it.primary.label}</button>
++                {it.secondary && <button className="btn btn-outline mw-btn-2" onClick={it.secondary.run} data-testid={"mw-no-" + it.id}>{it.secondary.label}</button>}
++                {it.more && <button className="link" onClick={it.more.run}>{it.more.label}</button>}
++              </div>
++            </div>
++          ))}
++          {list.length === 0 && <div className="mw-empty card"><PartyPopper size={30} /><h2>Nothing left for you</h2><p className="muted">New work appears here automatically.</p></div>}
++        </div>
++      </section>
++
++      {/* 5. Close the day */}
++      {(canSubmitClose || canSignClose) && (
++        <section className="today-section close-day card" ref={closeRef} id="close" data-testid="close-day">
++          <div className="ts-head"><h3><Flag size={16} /> Close the day</h3><span className={"pill " + (close.status === "closed" ? "pill-active" : close.status === "pending" ? "pill-pending" : "pill-draft")}><span className="dot" />{{ open: "Open", pending: "Waiting for sign-off", closed: "Closed" }[close.status]}</span></div>
++          <div className="cd-grid">
++            <ul className="cd-check">
++              {steps.slice(0, 5).map((s) => <li key={s.key} className={s.state}>{s.state === "done" ? <CheckCircle2 size={15} /> : <Hourglass size={15} />}<span><b>{s.title}</b> — {s.summary}</span></li>)}
++            </ul>
++            <div className="cd-side">
++              {close.status === "open" && canSubmitClose && <>
++                <p className="muted">Anything not finished is carried forward to tomorrow ({carried} open case{carried !== 1 ? "s" : ""}). Add a note for tomorrow's team.</p>
++                <textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. SBI statement still missing; chased RM at 3:10 PM" />
++                <button className="btn btn-primary" onClick={submitClose} data-testid="submit-close"><Flag size={14} /> Submit day close</button>
++              </>}
++              {close.status === "pending" && (canSignClose && !(close.submittedBy || "").startsWith(first) ? <>
++                <p>Submitted by <b>{close.submittedBy}</b>. {close.carried} item{close.carried !== 1 ? "s" : ""} carried forward.{close.note && <> Note: “{close.note}”</>}</p>
++                <button className="btn btn-success" onClick={signClose} data-testid="sign-close"><ShieldCheck size={14} /> Sign off the day</button>
++              </> : <p className="muted">Waiting for a checker to sign off.</p>)}
++              {close.status === "closed" && <p>Closed by <b>{close.closedBy}</b>. The day summary has gone to the AMCs.</p>}
++              {close.status === "open" && !canSubmitClose && <p className="muted">A maker submits the day close; you sign it off.</p>}
++              <button className="btn btn-outline btn-sm" onClick={daySummary}><Download size={13} /> Day summary (CSV)</button>
++            </div>
++          </div>
++        </section>
++      )}
++    </div>
++  );
++}
+diff --color -ruN r3a/frontend/src/index.css r3b/frontend/src/index.css
+--- r3a/frontend/src/index.css	2026-10-21 02:08:21
++++ r3b/frontend/src/index.css	2026-10-21 02:08:22
+@@ -1,4 +1,4 @@
+-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
++@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+ @tailwind base;
+ @tailwind components;
+ @tailwind utilities;
+diff --color -ruN r3a/frontend/src/index.js r3b/frontend/src/index.js
+--- r3a/frontend/src/index.js	2026-10-21 02:08:21
++++ r3b/frontend/src/index.js	2026-10-21 02:08:22
+@@ -3,6 +3,7 @@
+ import "@/index.css";
+ import "@/styles.css";
+ import "@/ops.css";
++import "@/theme.css";
+ import App from "@/App";
+ import { StoreProvider } from "@/state/store";
+ import { Toaster } from "sonner";
+diff --color -ruN r3a/frontend/src/lib/access.js r3b/frontend/src/lib/access.js
+--- r3a/frontend/src/lib/access.js	2026-10-21 02:08:22
++++ r3b/frontend/src/lib/access.js	2026-10-21 02:08:22
+@@ -19,18 +19,22 @@
+   {
+     key: "recon", label: "Reconciliation", color: "#4f46e5",
+     screens: [
+-      { key: "my_work", label: "My Work", plain: "My Work", path: "/my-work", group: "Operate", caps: ["view"], simpleOnly: true },
+-      { key: "command", label: "Ops Command Centre", plain: "Team overview", path: "/command", group: "Operate", phase: "P1", caps: ["view", "export"], analytics: true },
+-      { key: "ingestion", label: "File Inbox & Drift", plain: "Bank files today", path: "/ingestion", group: "Operate", phase: "P1", caps: ["view", "edit", "approve"] },
+-      { key: "match", label: "Match Workbench", plain: "Match payments", path: "/match", group: "Operate", phase: "P2", caps: ["view", "edit", "approve"] },
+-      { key: "exceptions", label: "Exceptions", plain: "Problem cases", path: "/exceptions", group: "Operate", phase: "P2", caps: ["view", "edit", "approve", "export"] },
+-      { key: "extraction", label: "Document Extraction", plain: "Read PDFs & emails", path: "/extraction", group: "Operate", phase: "P3", caps: ["view", "edit", "approve"] },
+-      { key: "bank_setup", label: "Bank Statement Setup", path: "/bank-setup", group: "Setup", caps: ["view", "edit", "approve", "export"] },
+-      { key: "credit_mis", label: "Credit MIS Setup", path: "/credit-mis", group: "Setup", caps: ["view", "edit", "approve", "export"] },
+-      { key: "mapping", label: "Column Mapping", path: "/mapping", group: "Setup", caps: ["view", "edit", "approve"] },
+-      { key: "rules", label: "Match Rules", path: "/rules", group: "Setup", phase: "P2", caps: ["view", "edit", "approve"] },
+-      { key: "approvals", label: "Config Approvals", path: "/dashboard", group: "Review", caps: ["view", "approve"] },
+-      { key: "audit", label: "Audit History", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
++      { key: "today", label: "Today", plain: "Today", path: "/today", group: "Home", caps: ["view"] },
++      { key: "inbox", label: "Approvals", plain: "Approvals", path: "/approvals", group: "Home", caps: ["view", "approve"] },
++      { key: "command", label: "Dashboard", plain: "Team overview", path: "/command", group: "Home", caps: ["view", "export"], analytics: true },
++      { key: "ingestion", label: "Bank files", plain: "Bank files", path: "/ingestion", group: "Daily cycle", step: 1, caps: ["view", "edit", "approve"] },
++      { key: "match", label: "Match payments", plain: "Match payments", path: "/match", group: "Daily cycle", step: 2, phase: "P2", caps: ["view", "edit", "approve"] },
++      { key: "extraction", label: "Documents", plain: "Read PDFs & emails", path: "/extraction", group: "Daily cycle", step: 2, phase: "P3", caps: ["view", "edit", "approve"] },
++      { key: "exceptions", label: "Exceptions", plain: "Problem cases", path: "/exceptions", group: "Daily cycle", step: 3, phase: "P2", caps: ["view", "edit", "approve", "export"] },
++      { key: "release", label: "Fund release", plain: "Release money", path: "/release", group: "Daily cycle", step: 4, phase: "P2", caps: ["view", "edit", "approve", "export"] },
++      { key: "refunds", label: "Refunds", plain: "Refunds", path: "/refunds", group: "Daily cycle", step: 5, phase: "P2", caps: ["view", "edit", "approve", "export"] },
++      { key: "bank_setup", label: "Bank statement setup", path: "/bank-setup", group: "Setup", caps: ["view", "edit", "approve", "export"] },
++      { key: "credit_mis", label: "Credit MIS setup", path: "/credit-mis", group: "Setup", caps: ["view", "edit", "approve", "export"] },
++      { key: "mapping", label: "Column mapping", path: "/mapping", group: "Setup", caps: ["view", "edit", "approve"] },
++      { key: "rules", label: "Match rules", path: "/rules", group: "Setup", phase: "P2", caps: ["view", "edit", "approve"] },
++      { key: "approvals", label: "Setup approvals", path: "/dashboard", group: "Setup", caps: ["view", "approve"] },
++      { key: "reports", label: "Reports", plain: "Reports", path: "/reports", group: "Review", caps: ["view", "export"] },
++      { key: "audit", label: "Audit history", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
+     ],
+   },
+   {
+@@ -50,13 +54,6 @@
+     ],
+   },
+   {
+-    key: "refunds", label: "Refunds", color: "#be185d",
+-    screens: [
+-      { key: "rf_queue", label: "Refund Queue", path: "/m/refunds/queue", group: "Refunds", caps: ["view", "edit", "approve", "export"] },
+-      { key: "rf_interest", label: "Delayed Interest", path: "/m/refunds/interest", group: "Refunds", caps: ["view", "edit", "approve"] },
+-    ],
+-  },
+-  {
+     key: "admin", label: "Administration", color: "#0f766e",
+     screens: [
+       { key: "users", label: "Users", path: "/admin/users", group: "Administration", caps: ["view", "edit", "approve", "export"] },
+@@ -84,17 +81,16 @@
+     r("role_access_approver", "Access Approver", "admin", "Second-admin approval of role changes and privileged role grants.",
+       { users: ["view", "approve"], roles: ["view", "approve"] }),
+     r("role_recon_setup_maker", "Recon · Setup Maker", "recon", "Onboards banks and aggregators: setups, mappings, match rules.",
+-      { command: ["view"], ingestion: ["view", "edit"], bank_setup: ["view", "edit", "export"], credit_mis: ["view", "edit", "export"], mapping: ["view", "edit"], rules: ["view", "edit"], approvals: ["view"], audit: ["view"] }),
+-    r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Works the daily queue: matching, exceptions and document review. No setup screens. Uses the simple view.",
+-      { my_work: ["view"], command: ["view"], ingestion: ["view"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], audit: ["view"] }, { simple: true }),
+-    r("role_recon_checker", "Recon · Checker", "recon", "Approves setups, mappings, rules, manual matches and exception closures.",
+-      { command: ["view", "export"], ingestion: ["view", "approve"], match: ["view", "approve"], exceptions: ["view", "approve", "export"], extraction: ["view", "approve"], bank_setup: ["view", "approve"], credit_mis: ["view", "approve"], mapping: ["view", "approve"], rules: ["view", "approve"], approvals: ["view", "approve"], audit: ["view", "export"] }),
++      { today: ["view"], command: ["view"], ingestion: ["view", "edit"], bank_setup: ["view", "edit", "export"], credit_mis: ["view", "edit", "export"], mapping: ["view", "edit"], rules: ["view", "edit"], approvals: ["view"], reports: ["view", "export"], audit: ["view"] }),
++    r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Runs the daily cycle: matching, problem cases, documents, fund release and refunds. No setup screens. Uses the simple view.",
++      { today: ["view"], command: ["view"], ingestion: ["view"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], release: ["view", "edit"], refunds: ["view", "edit", "export"], reports: ["view", "export"], audit: ["view"] }, { simple: true }),
++    r("role_recon_checker", "Recon · Checker", "recon", "Approves everything makers submit: setups, rules, matches, case closures, fund release, refunds and day close.",
++      { today: ["view"], inbox: ["view", "approve"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], reports: ["view", "export"], command: ["view", "export"], ingestion: ["view", "approve"], match: ["view", "approve"], exceptions: ["view", "approve", "export"], extraction: ["view", "approve"], bank_setup: ["view", "approve"], credit_mis: ["view", "approve"], mapping: ["view", "approve"], rules: ["view", "approve"], approvals: ["view", "approve"], audit: ["view", "export"] }),
+     r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", all("recon", ["view", "export"])),
+     r("role_brk_maker", "Brokerage · Maker", "brokerage", "Computes brokerage and prepares payout batches.", all("brokerage", ["view", "edit", "export"])),
+     r("role_brk_checker", "Brokerage · Checker", "brokerage", "Approves brokerage computations and payouts.", all("brokerage", ["view", "approve", "export"])),
+     r("role_pst_maker", "Posting · Maker", "posting", "Posts realised transactions and reviews NIGO cases.", all("posting", ["view", "edit"])),
+     r("role_pst_viewer", "Posting · Viewer", "posting", "Read-only view of posting queues.", all("posting", ["view"])),
+-    r("role_rf_maker", "Refunds · Maker", "refunds", "Prepares refunds and delayed-interest computations.", all("refunds", ["view", "edit", "export"])),
+   ];
+ }
+ 
+@@ -107,7 +103,6 @@
+     case "viewer":
+       if (i % 7 === 0) return ["role_brk_maker"];
+       if (i % 11 === 0) return ["role_pst_maker", "role_recon_auditor"];
+-      if (i % 13 === 0) return ["role_rf_maker"];
+       return ["role_recon_auditor"];
+     default: return [];
+   }
+@@ -151,7 +146,7 @@
+ /** Screens visible to a user, grouped by module → group, for the side nav. */
+ export function navFor(perms, simple = false) {
+   return MODULES.map((m) => {
+-    const screens = m.screens.filter((s) => hasCap(perms, s.key, "view") && (simple ? !s.analytics : !s.simpleOnly));
++    const screens = m.screens.filter((s) => hasCap(perms, s.key, "view") && (simple ? !s.analytics : true));
+     const groups = [];
+     screens.forEach((s) => {
+       let g = groups.find((x) => x.name === s.group);
+diff --color -ruN r3a/frontend/src/lib/journey.js r3b/frontend/src/lib/journey.js
+--- r3a/frontend/src/lib/journey.js	1970-01-01 05:30:00
++++ r3b/frontend/src/lib/journey.js	2026-10-21 02:08:22
+@@ -0,0 +1,89 @@
++// The daily reconciliation cycle (PRD v4 §4.1 "a day in the life" + §2.4 stages 2–6),
++// computed live from the data so every screen can say where the day stands and what to do next.
++import { hasCap } from "./access";
++import { RELEASE_CUTOFF } from "../mock/opsSeed";
++
++const at = (h, m = 0) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
++
++/**
++ * Returns the six steps of today's cycle. Each step:
++ *  key, n, title, plain, why, by (deadline label), state: done | active | waiting | todo,
++ *  count (items left), summary, cta { label, path }, screen (for permission), approver (true if a checker acts)
++ */
++export function dailyCycle(c) {
++  const files = c.files || [];
++  const fileIssues = files.filter((f) => ["late", "missing", "drift", "unknown", "check_failed", "duplicate"].includes(f.status));
++  const filePending = files.filter((f) => f.status === "drift_pending");
++  const sugg = (c.suggestions || []).filter((s) => !s.decided).length;
++  const docs = (c.documents || []).filter((d) => d.status === "needs_review").length;
++  const matchPending = (c.matches || []).filter((m) => m.status === "pending").length;
++  const urgent = (c.exceptions || []).filter((e) => ["open", "in_progress"].includes(e.status) && e.amount > 0 && e.interestHoursLeft < 24).length;
++  const casesPending = (c.exceptions || []).filter((e) => e.status === "pending_approval").length;
++  const release = (c.releases || [])[0] || { status: "not_started" };
++  const refundsOpen = (c.refunds || []).filter((r) => ["draft"].includes(r.status)).length;
++  const refundsPending = (c.refunds || []).filter((r) => r.status === "pending").length;
++  const close = (c.dayclose || [])[0] || { status: "open" };
++
++  const steps = [
++    {
++      key: "files", screen: "ingestion", title: "Check today's bank files", by: "10:30 AM", deadline: at(10, 30),
++      why: "Nothing can be matched until every bank statement has arrived and loaded cleanly.",
++      count: fileIssues.length, waitingOn: filePending.length,
++      summary: fileIssues.length ? `${fileIssues.length} file${fileIssues.length > 1 ? "s" : ""} need attention · ${files.length - fileIssues.length - filePending.length} of ${files.length} clean` : filePending.length ? `${filePending.length} layout change waiting for approval` : `All ${files.length} files received and clean`,
++      cta: { label: "Check bank files", path: "/ingestion" },
++    },
++    {
++      key: "match", screen: "match", title: "Match payments", by: "1:00 PM", deadline: at(13),
++      why: "Rules matched most payments overnight. Confirm the likely matches the system found, and read PDFs it was unsure about.",
++      count: sugg + docs, waitingOn: matchPending,
++      summary: sugg + docs ? `${sugg} likely match${sugg !== 1 ? "es" : ""} to confirm · ${docs} document${docs !== 1 ? "s" : ""} to check` : "All suggested matches handled",
++      cta: { label: sugg ? "Confirm matches" : "Check documents", path: sugg ? "/match" : "/extraction" },
++    },
++    {
++      key: "cases", screen: "exceptions", title: "Sort out urgent problem cases", by: "2:00 PM", deadline: at(14),
++      why: "Cases close to 5 days old start costing CAMS penalty interest. Clear the red ones first.",
++      count: urgent, waitingOn: casesPending,
++      summary: urgent ? `${urgent} urgent case${urgent > 1 ? "s" : ""} (penalty clock under 24 hours)` : "No urgent cases left",
++      cta: { label: "Open problem cases", path: "/exceptions" },
++    },
++    {
++      key: "release", screen: "release", title: "Release money for unit allotment", by: "3:00 PM", deadline: new Date(RELEASE_CUTOFF),
++      why: "SEBI: units are allotted only after money is realised. Release the matched money to Transaction Posting before the cut-off.",
++      count: release.status === "released" ? 0 : 1, waitingOn: release.status === "pending" ? 1 : 0,
++      summary: { not_started: "Release batch not prepared yet", pending: "Prepared — waiting for checker to release", released: `Released to Posting${release.releasedAt ? " at " + new Date(release.releasedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : ""}` }[release.status],
++      cta: { label: release.status === "pending" ? "Review release" : "Prepare release", path: "/release" },
++      done: release.status === "released",
++    },
++    {
++      key: "refunds", screen: "refunds", title: "Send refunds", by: "3:30 PM", deadline: at(15, 30),
++      why: "Duplicate, excess and rejected-application money must go back within 5 days, or delayed interest applies.",
++      count: refundsOpen, waitingOn: refundsPending,
++      summary: refundsOpen ? `${refundsOpen} refund${refundsOpen > 1 ? "s" : ""} to prepare` : refundsPending ? `${refundsPending} waiting for approval` : "All refunds sent",
++      cta: { label: "Open refunds", path: "/refunds" },
++    },
++    {
++      key: "close", screen: "today", title: "Close the day", by: "4:30 PM", deadline: at(16, 30),
++      why: "Sign off what was done and what carries forward. Produces the day summary for the AMCs and audit.",
++      count: close.status === "closed" ? 0 : 1, waitingOn: close.status === "pending" ? 1 : 0,
++      summary: { open: "Day not closed yet", pending: `Submitted by ${close.submittedBy} — waiting for sign-off`, closed: `Closed by ${close.closedBy}` }[close.status],
++      cta: { label: close.status === "pending" ? "Sign off the day" : "Close the day", path: "/today#close" },
++      done: close.status === "closed",
++    },
++  ];
++
++  let activeSet = false;
++  steps.forEach((s, i) => {
++    s.n = i + 1;
++    const done = s.done !== undefined ? s.done : s.count === 0 && !s.waitingOn;
++    s.state = done ? "done" : s.count === 0 && s.waitingOn ? "waiting" : !activeSet ? "active" : "todo";
++    if (s.state === "active") activeSet = true;
++    s.late = !done && Date.now() > s.deadline.getTime();
++  });
++  return steps;
++}
++
++/** The one thing this user should do next: first unfinished step they can act on. */
++export function nextStepFor(steps, perms) {
++  const canDo = (s) => hasCap(perms, s.screen, "edit") || (s.waitingOn && hasCap(perms, s.screen, "approve")) || (s.key === "close" && (hasCap(perms, "match", "edit") || hasCap(perms, "release", "approve")));
++  return steps.find((s) => s.state !== "done" && canDo(s)) || null;
++}
+diff --color -ruN r3a/frontend/src/mock/opsSeed.js r3b/frontend/src/mock/opsSeed.js
+--- r3a/frontend/src/mock/opsSeed.js	2026-10-21 02:08:21
++++ r3b/frontend/src/mock/opsSeed.js	2026-10-21 02:08:22
+@@ -310,3 +310,40 @@
+   realisedForAllotment: 19874410000, heldForAllotment: 1613245210, cutoff: todayAt(15, 0),
+   matchTrend: BANKS.map((b, i) => ({ bank: b.name, code: b.code, series: Array.from({ length: 14 }, (_, d) => Math.min(99.4, 82 + (i % 4) * 3 + d * 0.5 + ((d * (i + 3)) % 5) * 0.6 - (b.code === "ICIC" && d === 13 ? 9 : 0))) })),
+ };
++
++// ---------------------------------------------------------------------------
++// Stage 5 — Fund release for unit allotment (SEBI: allot only after realisation)
++// ---------------------------------------------------------------------------
++export const RELEASE_CUTOFF = todayAt(15, 0);
++export const AMC_BREAKDOWN = [
++  { amc: "Aditya Birla Sun Life MF", schemes: 38, count: 3412, share: 0.2076 },
++  { amc: "HDFC Mutual Fund", schemes: 44, count: 4120, share: 0.2708 },
++  { amc: "ICICI Prudential MF", schemes: 41, count: 3985, share: 0.2505 },
++  { amc: "Kotak Mahindra MF", schemes: 29, count: 2104, share: 0.1238 },
++  { amc: "Nippon India MF", schemes: 33, count: 1918, share: 0.1014 },
++  { amc: "DSP Mutual Fund", schemes: 22, count: 762, share: 0.046 },
++];
++export function seedReleases() {
++  return [{ id: "rel_today", ref: "REL-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + "-01", status: "not_started", createdAt: null }];
++}
++
++// ---------------------------------------------------------------------------
++// Stage 6 — Refunds (duplicate / excess / application rejected), 5-day SLA + delayed interest
++// ---------------------------------------------------------------------------
++export const REFUND_SLA_DAYS = 5;
++export const DELAYED_INTEREST_PA = 0.15;
++export function seedRefunds() {
++  const mk = (i, inv, amount, reason, ageDays, verified, status, owner) => ({
++    id: `rf_${i}`, ref: `RF-${55200 + i}`, investor: inv.name, pan: inv.pan, amount, reason, ageDays,
++    bankAcct: "XXXX" + inv.acct.slice(-4), ifsc: inv.bank, verified, status, owner, createdAt: new Date(now - ageDays * day).toISOString(),
++  });
++  return [
++    mk(1, INVESTORS[2], 49999, "Investor paid twice", 2, null, "draft", "Deepa Nair"),
++    mk(2, INVESTORS[5], 12000, "Investor paid too much", 6, true, "draft", "Deepa Nair"),
++    mk(3, INVESTORS[8], 250000, "Application rejected — refund needed", 4, true, "pending", "Deepa"),
++    mk(4, INVESTORS[10], 3000, "Investor paid too much", 1, false, "draft", null),
++    mk(5, INVESTORS[1], 75000, "Application rejected — refund needed", 7, true, "approved", "Kiran"),
++    mk(6, INVESTORS[11], 18500, "Investor paid twice", 3, true, "paid", "Deepa"),
++  ];
++}
++export const delayedInterest = (amount, ageDays) => (ageDays > REFUND_SLA_DAYS ? Math.round(amount * DELAYED_INTEREST_PA * (ageDays - REFUND_SLA_DAYS) / 365) : 0);
+diff --color -ruN r3a/frontend/src/state/store.js r3b/frontend/src/state/store.js
+--- r3a/frontend/src/state/store.js	2026-10-21 02:08:21
++++ r3b/frontend/src/state/store.js	2026-10-21 02:08:22
+@@ -5,9 +5,9 @@
+ import { ACTIONS, authorize, INVITE_TTL_MS } from "../lib/rbac";
+ import { genTempPassword } from "../lib/credentials";
+ import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
+-import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments } from "../mock/opsSeed";
++import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds } from "../mock/opsSeed";
+ 
+-const KEY = "cams_recon_state_v8";
++const KEY = "cams_recon_state_v9";
+ 
+ function buildSeed() {
+   const configs = seedBankConfigs();
+@@ -29,6 +29,7 @@
+       ],
+       files: seedFiles(), credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
+       exceptions: seedExceptions(), documents: seedDocuments(),
++      releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }],
+     },
+     audit,
+     persona: "usr_meera",
+diff --color -ruN r3a/frontend/src/theme.css r3b/frontend/src/theme.css
+--- r3a/frontend/src/theme.css	1970-01-01 05:30:00
++++ r3b/frontend/src/theme.css	2026-10-21 02:08:22
+@@ -0,0 +1,282 @@
++/* ============================================================================
++   Theme layer — calm, dense, precise (Stripe / Modern Treasury direction).
++   Loaded last; overrides tokens and base components, adds journey components.
++   ============================================================================ */
++:root {
++  --primary: 244 88% 62%;
++  --primary-hover: 244 75% 55%;
++  --primary-soft: 244 100% 97.5%;
++  --primary-soft-border: 244 80% 91%;
++  --page: 216 33% 97.5%;
++  --border: 216 22% 91%;
++  --border-strong: 216 16% 84%;
++  --text: 226 34% 15%;
++  --muted: 220 11% 46%;
++  --st-active: 152 62% 34%;
++  --st-pending: 34 92% 44%;
++  --st-rejected: 354 70% 50%;
++  --radius-card: 10px;
++  --radius-input: 7px;
++  --shadow-card: 0 1px 1px hsl(226 34% 15% / .03), 0 1px 3px hsl(226 34% 15% / .05);
++  --shadow-raised: 0 12px 32px -8px hsl(226 34% 15% / .18), 0 4px 10px -4px hsl(226 34% 15% / .08);
++  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
++}
++body { background: hsl(var(--page)); background-image: none; font-size: 13.5px; letter-spacing: -0.006em; font-feature-settings: "cv11", "ss01"; }
++.tnum, table.grid .tnum, .input.tnum { font-family: var(--font-ui) !important; font-variant-numeric: tabular-nums; font-size: inherit; }
++.r { text-align: right !important; }
++.neg { color: hsl(var(--st-rejected)); font-weight: 600; }
++
++/* ---- Shell ---- */
++.shell { --sb: 236px; }
++.sidebar { background: hsl(216 33% 98.5%); border-right: 1px solid hsl(var(--border)); }
++.sidebar-brand { min-height: 56px; padding: 12px 14px; border-bottom: 1px solid hsl(var(--border)); }
++.brand-mark { width: 28px; height: 28px; border-radius: 7px; background: hsl(var(--text)); box-shadow: none; }
++.brand-text { font-size: 13.5px; font-weight: 700; }
++.brand-text small { font-size: 11px; font-weight: 500; }
++.nav { padding: 8px 8px; }
++.nav-section-title { font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: none; color: hsl(var(--muted) / .85); padding: 14px 10px 4px; }
++.nav-item { font-size: 13.5px; font-weight: 500; color: hsl(226 20% 32%); padding: 6px 10px; border-radius: 7px; gap: 10px; }
++.nav-item svg { width: 16px; height: 16px; color: hsl(var(--muted)); }
++.nav-item:hover { background: hsl(216 25% 94%); }
++.nav-item.active { background: #fff; color: hsl(var(--text)); font-weight: 600; box-shadow: 0 0 0 1px hsl(var(--border)), 0 1px 2px hsl(226 34% 15% / .05); }
++.nav-item.active svg { color: hsl(var(--primary)); }
++.nav-item.active::before { display: none; }
++.nav-step { margin-left: auto; width: 17px; height: 17px; border-radius: 50%; font-size: 10px; font-weight: 700; display: grid; place-items: center; color: hsl(var(--muted)); border: 1px solid hsl(var(--border-strong)); flex: none; }
++.nav-item.active .nav-step { border-color: hsl(var(--primary)); color: hsl(var(--primary)); }
++.nav-step + .phase-tag { margin-left: 4px; }
++.nav-step ~ .nav-badge { margin-left: 4px; }
++.nav-badge { background: hsl(var(--primary)); font-size: 10.5px; padding: 0 6px; line-height: 17px; }
++.sidebar.mini .nav-step { display: none; }
++.nav-module-title { font-size: 11px; letter-spacing: .04em; padding: 12px 10px 2px; }
++
++.topbar { min-height: 56px; background: #fff; backdrop-filter: none; padding: 0 20px; gap: 12px; }
++.crumbs { font-size: 13px; }
++.search-trigger { display: inline-flex; align-items: center; gap: 8px; width: 320px; padding: 7px 10px; border-radius: 8px; border: 1px solid hsl(var(--border)); background: hsl(216 33% 98%); color: hsl(var(--muted)); font: inherit; font-size: 13px; cursor: pointer; margin-left: 12px; }
++.search-trigger:hover { border-color: hsl(var(--border-strong)); background: #fff; }
++.search-trigger kbd, .cmdk-input kbd { margin-left: auto; font: inherit; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid hsl(var(--border)); background: #fff; color: hsl(var(--muted)); }
++.icon-btn { position: relative; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; border: 1px solid transparent; background: none; cursor: pointer; color: hsl(var(--muted)); }
++.icon-btn:hover { background: hsl(216 25% 95%); color: hsl(var(--text)); }
++.bell-dot { position: absolute; top: 3px; right: 2px; min-width: 16px; height: 16px; border-radius: 8px; background: hsl(var(--st-rejected)); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; padding: 0 4px; border: 2px solid #fff; }
++.bell-pop { width: 340px; }
++.note-row { display: flex; gap: 10px; width: 100%; text-align: left; background: none; border: none; padding: 10px; border-radius: 8px; cursor: pointer; font: inherit; }
++.note-row:hover { background: hsl(216 25% 96%); }
++.note-row i { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; background: hsl(var(--st-pending)); }
++.note-row.tone-red i { background: hsl(var(--st-rejected)); }
++.note-row div { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
++.note-row span { color: hsl(var(--muted)); font-size: 12px; }
++.persona-btn { border-radius: 8px; font-weight: 600; font-size: 12.5px; padding: 6px 10px; }
++.avatar { width: 30px; height: 30px; background: hsl(var(--text)); box-shadow: none; border: none; font-size: 12px; }
++.content { padding: 24px 32px 80px; }
++.page-wrap { max-width: 1280px; }
++
++/* ---- Base components ---- */
++.page-head { margin-bottom: 20px; align-items: center; }
++.page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
++.page-head h1 svg { color: hsl(var(--muted)); }
++.page-head p { font-size: 14px; max-width: 760px; line-height: 1.5; }
++.card { box-shadow: var(--shadow-card); }
++.card-head { padding: 14px 18px; }
++.card-head h3 { font-size: 14px; font-weight: 600; }
++.btn { font-weight: 600; border-radius: 7px; padding: 7px 12px; }
++.btn:hover:not(:disabled) { transform: none; }
++.btn-primary { box-shadow: 0 1px 1px hsl(244 88% 30% / .25), inset 0 1px 0 hsl(0 0% 100% / .15); }
++.btn-lg { padding: 11px 18px; font-size: 14px; }
++.btn-success { background: hsl(152 62% 32%); }
++.pill { border-radius: 6px; font-weight: 600; font-size: 11.5px; padding: 2px 8px 2px 7px; }
++table.grid thead th { background: hsl(216 33% 98.5%); font-size: 11px; font-weight: 600; letter-spacing: .04em; color: hsl(var(--muted)); padding: 9px 14px; }
++table.grid tbody td { padding: 11px 14px; font-size: 13.5px; }
++table.grid tbody tr:hover { background: hsl(216 40% 98.5%); }
++.toolbar { background: #fff; }
++.segmented { border-radius: 8px; background: hsl(216 25% 95%); border: none; padding: 2px; gap: 2px; }
++.segmented button { background: transparent; border: none; border-radius: 6px; padding: 5px 12px; font-weight: 500; }
++.segmented button.on { background: #fff; color: hsl(var(--text)); font-weight: 600; box-shadow: 0 1px 2px hsl(226 34% 15% / .1), 0 0 0 1px hsl(var(--border)); }
++.drawer { border-radius: 12px 0 0 12px; }
++.ops-stat { border-left-width: 1px; border-radius: 10px; }
++.ops-stat .os-value { font-size: 24px; font-weight: 700; }
++.phase-banner { font-size: 11.5px; }
++
++/* ---- Today ---- */
++.today { max-width: 1120px; }
++.today-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; }
++.today-head h1 { margin: 4px 0 0; font-size: 26px; font-weight: 700; letter-spacing: -.025em; }
++.eyebrow-sm { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: hsl(var(--muted)); font-weight: 500; }
++.cutoff-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 6px 11px; border-radius: 999px; background: #fff; border: 1px solid hsl(var(--border)); color: hsl(var(--text)); }
++.cutoff-chip.hot { background: hsl(var(--st-rejected) / .08); border-color: hsl(var(--st-rejected) / .35); color: hsl(var(--st-rejected)); }
++.next-card { display: flex; align-items: center; gap: 24px; padding: 22px 24px; border-radius: 12px; background: linear-gradient(180deg, #fff, hsl(244 100% 99%)); border: 1px solid hsl(var(--primary-soft-border)); box-shadow: 0 0 0 4px hsl(var(--primary) / .05), var(--shadow-card); margin-bottom: 22px; }
++.next-card.late { border-color: hsl(var(--st-rejected) / .4); box-shadow: 0 0 0 4px hsl(var(--st-rejected) / .06), var(--shadow-card); }
++.nc-body { flex: 1; min-width: 0; }
++.nc-eyebrow { font-size: 12px; font-weight: 600; color: hsl(var(--primary)); display: flex; gap: 8px; align-items: center; }
++.nc-late { color: hsl(var(--st-rejected)); background: hsl(var(--st-rejected) / .1); padding: 1px 7px; border-radius: 5px; }
++.next-card h2 { margin: 6px 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
++.next-card p { margin: 0; color: hsl(var(--muted)); font-size: 14px; max-width: 640px; line-height: 1.5; }
++.nc-sum { margin-top: 8px; font-size: 13px; font-weight: 600; }
++.today-section { margin-bottom: 24px; }
++.ts-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
++.ts-head h3 { margin: 0; font-size: 15px; font-weight: 650; display: flex; align-items: center; gap: 7px; }
++.ts-head .muted, .ts-head .pill { margin-left: auto; }
++.step-chip { font-size: 10.5px; font-weight: 700; text-transform: none; letter-spacing: 0; color: hsl(var(--primary)); background: hsl(var(--primary-soft)); padding: 1px 6px; border-radius: 5px; }
++.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
++.kpi { background: #fff; border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; box-shadow: var(--shadow-card); }
++.kpi span { font-size: 12px; color: hsl(var(--muted)); font-weight: 500; }
++.kpi b { font-size: 22px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
++.kpi small { font-size: 11.5px; color: hsl(var(--muted)); }
++.mw-item { box-shadow: var(--shadow-card); border-radius: 10px; padding: 14px 16px; border-left-width: 4px; }
++.mw-title { font-size: 15px; font-weight: 600; }
++.mw-btn { font-size: 13.5px; padding: 9px 14px; }
++.shell.simple .mw-title { font-size: 16px; }
++.shell.simple .mw-btn { font-size: 15px; padding: 11px 16px; }
++.mw-kind { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
++.close-day { padding: 18px 20px; }
++.cd-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; }
++.cd-check { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
++.cd-check li { display: flex; gap: 8px; align-items: flex-start; color: hsl(var(--muted)); }
++.cd-check li b { color: hsl(var(--text)); font-weight: 600; }
++.cd-check li.done svg { color: hsl(var(--st-active)); }
++.cd-check li:not(.done) svg { color: hsl(var(--st-pending)); }
++.cd-side { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
++.cd-side p { margin: 0; font-size: 13px; }
++.cd-side .textarea { min-height: 60px; }
++
++/* Daily cycle stepper */
++.cycle { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
++.cy-step { background: #fff; border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 4px; position: relative; min-height: 132px; }
++.cy-step.active { border-color: hsl(var(--primary)); box-shadow: 0 0 0 3px hsl(var(--primary) / .1); }
++.cy-step.done { background: hsl(152 50% 98.5%); }
++.cy-step.late:not(.done) { border-color: hsl(var(--st-rejected) / .5); }
++.cy-top { display: flex; align-items: center; justify-content: space-between; }
++.cy-ico { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; border: 1.5px solid hsl(var(--border-strong)); color: hsl(var(--muted)); background: #fff; }
++.cy-ico.active { border-color: hsl(var(--primary)); background: hsl(var(--primary)); color: #fff; }
++.cy-ico.done { border-color: hsl(var(--st-active)); background: hsl(var(--st-active)); color: #fff; }
++.cy-ico.waiting { border-color: hsl(var(--st-pending)); color: hsl(var(--st-pending)); }
++.cy-by { font-size: 11px; color: hsl(var(--muted)); display: inline-flex; gap: 3px; align-items: center; }
++.cy-step.late .cy-by { color: hsl(var(--st-rejected)); font-weight: 600; }
++.cy-title { font-size: 13px; font-weight: 600; line-height: 1.3; margin-top: 4px; }
++.cy-sum { font-size: 12px; color: hsl(var(--muted)); line-height: 1.35; }
++.cy-link { margin-top: auto; font-size: 12px; font-weight: 600; color: hsl(var(--primary)); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }
++.cy-link:hover { text-decoration: underline; }
++
++/* Journey bar on every daily-cycle screen */
++.journey-bar { display: flex; align-items: center; gap: 12px; padding: 8px 10px; margin: -8px 0 18px; background: #fff; border: 1px solid hsl(var(--border)); border-radius: 10px; box-shadow: var(--shadow-card); flex-wrap: wrap; }
++.jb-label { font-size: 11.5px; font-weight: 600; color: hsl(var(--muted)); padding: 0 4px; }
++.jb-steps { display: flex; gap: 2px; flex-wrap: wrap; }
++.jb-step { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 5px; border-radius: 7px; font-size: 12.5px; color: hsl(var(--muted)); text-decoration: none; font-weight: 500; }
++.jb-step:hover { background: hsl(216 25% 95%); }
++.jb-step .cy-ico { width: 18px; height: 18px; font-size: 10px; }
++.jb-step.current { background: hsl(var(--primary-soft)); color: hsl(var(--text)); font-weight: 600; }
++.jb-step.done span:last-child { color: hsl(var(--st-active)); }
++.jb-status { margin-left: auto; font-size: 12.5px; color: hsl(var(--muted)); padding-right: 6px; }
++.jb-next { margin-left: auto; }
++.next-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 12px 16px; border-radius: 10px; background: hsl(152 50% 97%); border: 1px solid hsl(152 40% 85%); font-weight: 600; color: hsl(152 62% 26%); }
++
++/* ---- Dashboard ---- */
++.kpi-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
++.kpi-card { text-align: left; font: inherit; color: inherit; background: #fff; border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; box-shadow: var(--shadow-card); cursor: pointer; }
++.kpi-card:disabled { cursor: default; }
++.kpi-card:not(:disabled):hover { border-color: hsl(var(--border-strong)); }
++.kc-label { font-size: 12.5px; color: hsl(var(--muted)); font-weight: 500; }
++.kc-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
++.kc-row b { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
++.kc-delta { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 600; }
++.kc-delta.up { color: hsl(var(--st-active)); }
++.kc-delta.down { color: hsl(var(--st-rejected)); }
++.kc-note { font-size: 11.5px; color: hsl(var(--muted)); }
++.spark-svg polyline { fill: none; stroke: #2a78d6; stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
++.spark-svg.bad polyline { stroke: hsl(var(--st-rejected)); }
++.dash-section { margin-bottom: 16px; }
++.dash-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; margin-bottom: 16px; }
++.lc { position: relative; }
++.lc svg { display: block; }
++.lc-grid { stroke: hsl(var(--border)); stroke-width: 1; }
++.lc-axis { font-size: 11px; fill: hsl(var(--muted)); font-variant-numeric: tabular-nums; }
++.lc-line { fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linejoin: round; }
++.lc-area { fill: #2a78d6; opacity: .07; }
++.lc-dot { fill: #2a78d6; stroke: #fff; stroke-width: 2; }
++.lc-cross { stroke: hsl(var(--text) / .25); stroke-width: 1; }
++.lc-target { stroke: hsl(var(--muted)); stroke-dasharray: 4 4; stroke-width: 1; }
++.lc-target-label { font-size: 11px; fill: hsl(var(--muted)); }
++.lc-tip { position: absolute; pointer-events: none; background: hsl(var(--text)); color: #fff; padding: 6px 10px; border-radius: 7px; font-size: 12px; display: flex; flex-direction: column; min-width: 110px; box-shadow: var(--shadow-raised); }
++.lc-tip b { font-size: 14px; }
++.lc-tip span { opacity: .75; }
++.barlist { display: flex; flex-direction: column; gap: 12px; }
++.bl-row { display: grid; grid-template-columns: 150px 1fr 64px 48px; align-items: center; gap: 10px; font-size: 13px; }
++.bl-track { height: 10px; border-radius: 3px; background: hsl(216 25% 95%); overflow: hidden; }
++.bl-track i { display: block; height: 100%; background: #2a78d6; border-radius: 0 4px 4px 0; }
++.bl-row.warn .bl-track i { background: hsl(var(--st-pending)); }
++.bl-row b { text-align: right; }
++.bl-pct { font-size: 12px; color: hsl(var(--muted)); text-align: right; }
++.heat td:not(:first-child) { background: hsl(212 68% 50% / calc(var(--h) * .55 + .05)); }
++.heat td.hot { background: hsl(var(--st-rejected) / calc(var(--h) * .5 + .15)); }
++
++/* ---- Approvals ---- */
++.filter-chip b { margin-left: 4px; font-weight: 700; opacity: .75; }
++.ap-row { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid hsl(var(--border)); }
++.ap-row:last-child { border-bottom: none; }
++.ap-row.urgent { box-shadow: inset 3px 0 0 hsl(var(--st-rejected)); }
++.ap-kind { font-size: 11.5px; font-weight: 600; color: hsl(var(--muted)); background: hsl(216 25% 95%); padding: 2px 8px; border-radius: 5px; white-space: nowrap; min-width: 110px; text-align: center; }
++.ap-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
++.ap-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
++.ap-urgent { color: hsl(var(--st-rejected)); }
++.ap-actions { display: flex; gap: 6px; align-items: center; }
++
++/* ---- Fund release ---- */
++.release-hero { padding: 20px 22px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; margin-bottom: 16px; align-items: center; }
++.rh-amounts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
++.rh-amounts > div { display: flex; flex-direction: column; gap: 2px; }
++.rh-amounts span { font-size: 12.5px; color: hsl(var(--muted)); font-weight: 500; }
++.rh-amounts b { font-size: 30px; font-weight: 700; letter-spacing: -.03em; color: hsl(var(--st-active)); }
++.rh-amounts .held b { color: hsl(var(--text)); }
++.rh-amounts small { font-size: 12px; color: hsl(var(--muted)); }
++.rh-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
++.rh-steps li { display: flex; gap: 10px; align-items: center; font-size: 13px; color: hsl(var(--muted)); }
++.rh-steps li > span { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid hsl(var(--border-strong)); display: grid; place-items: center; font-size: 11px; font-weight: 700; flex: none; }
++.rh-steps li.done > span { background: hsl(var(--st-active)); border-color: hsl(var(--st-active)); color: #fff; }
++.rh-steps li.done b { color: hsl(var(--text)); }
++.rh-steps small { display: block; font-size: 11.5px; }
++.rh-action { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding-top: 14px; border-top: 1px solid hsl(var(--border)); }
++.rh-action .btn-outline { margin-left: auto; }
++.share-bar { display: block; height: 8px; border-radius: 3px; background: hsl(216 25% 95%); overflow: hidden; }
++.share-bar i { display: block; height: 100%; background: #2a78d6; border-radius: 0 4px 4px 0; }
++.int-add { font-size: 11px; color: hsl(var(--st-rejected)); font-weight: 600; }
++
++/* ---- Reports ---- */
++.report-group { margin-bottom: 14px; }
++.report-row { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-top: 1px solid hsl(var(--border)); }
++.rr-main { flex: 1; }
++.rr-main b { font-size: 13.5px; }
++.rr-ref { margin-left: 8px; font-size: 11px; color: hsl(var(--muted)); background: hsl(216 25% 95%); padding: 1px 6px; border-radius: 4px; }
++.rr-sched { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: hsl(var(--muted)); cursor: pointer; }
++
++/* ---- ⌘K palette ---- */
++.cmdk-overlay { position: fixed; inset: 0; background: hsl(226 34% 15% / .35); z-index: 100; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; animation: fadeIn .12s ease; }
++@keyframes fadeIn { from { opacity: 0; } }
++.cmdk { width: 620px; max-width: calc(100vw - 32px); background: #fff; border-radius: 12px; box-shadow: var(--shadow-raised), 0 0 0 1px hsl(var(--border)); overflow: hidden; }
++.cmdk-input { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid hsl(var(--border)); color: hsl(var(--muted)); }
++.cmdk-input input { flex: 1; border: none; outline: none; font: inherit; font-size: 15px; color: hsl(var(--text)); background: none; }
++.cmdk-list { max-height: 380px; overflow-y: auto; padding: 6px; }
++.cmdk-list [cmdk-group-heading] { font-size: 11px; font-weight: 600; color: hsl(var(--muted)); padding: 8px 10px 4px; }
++.cmdk-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; font-size: 13.5px; cursor: pointer; color: hsl(var(--text)); }
++.cmdk-item svg { color: hsl(var(--muted)); }
++.cmdk-item em { margin-left: auto; font-style: normal; font-size: 12px; color: hsl(var(--muted)); }
++.cmdk-item[data-selected="true"] { background: hsl(var(--primary-soft)); }
++.cmdk-empty { padding: 24px; text-align: center; color: hsl(var(--muted)); }
++.cmdk-foot { display: flex; gap: 16px; padding: 8px 14px; border-top: 1px solid hsl(var(--border)); font-size: 11.5px; color: hsl(var(--muted)); }
++.cmdk-foot span { display: inline-flex; align-items: center; gap: 4px; }
++
++@media (max-width: 1180px) {
++  .cycle { grid-template-columns: repeat(3, 1fr); }
++  .dash-2, .release-hero, .cd-grid { grid-template-columns: 1fr; }
++  .kpi-cards, .kpi-row { grid-template-columns: repeat(2, 1fr); }
++  .search-trigger { width: 220px; }
++}
++@media (max-width: 760px) {
++  .cycle { grid-template-columns: 1fr 1fr; }
++  .next-card { flex-direction: column; align-items: flex-start; }
++  .search-trigger span { display: none; }
++  .search-trigger { width: auto; }
++}
++.cy-mine { font-size: 10px; font-weight: 700; color: #fff; background: hsl(var(--text)); padding: 1px 6px; border-radius: 4px; margin-right: auto; margin-left: 6px; }
++.cy-step:has(.cy-mine) { border-color: hsl(var(--text)); box-shadow: 0 0 0 3px hsl(var(--text) / .08); }
++/* Tailwind's .grid utility collides with our table.grid class — keep tables as tables */
++table.grid { display: table !important; }
++.clock { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
++.kc-row b { white-space: nowrap; font-size: clamp(18px, 1.6vw, 24px); }

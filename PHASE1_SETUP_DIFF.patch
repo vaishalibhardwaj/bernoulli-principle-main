@@ -1,0 +1,2006 @@
+diff --color -ruN a/frontend/src/App.js frontend/src/App.js
+--- a/frontend/src/App.js	2026-10-21 17:48:55
++++ b/frontend/src/App.js	2026-10-21 18:54:58
+@@ -10,6 +10,7 @@
+ import AuditHistory from "@/features/audit/AuditHistory";
+ import UserManagement from "@/features/admin/UserManagement";
+ import RolesAccess from "@/features/admin/RolesAccess";
++import StatusStandardisation from "@/features/admin/StatusStandardisation";
+ import CommandCentre from "@/features/command/CommandCentre";
+ import FileInbox from "@/features/ingestion/FileInbox";
+ import MatchRules from "@/features/rules/MatchRules";
+@@ -44,6 +45,7 @@
+           <Route path="/" element={<HomeRedirect />} />
+           <Route path="/admin/users" element={<UserManagement />} />
+           <Route path="/admin/roles" element={<RolesAccess />} />
++          <Route path="/admin/status-standardisation" element={<StatusStandardisation />} />
+           <Route path="/today" element={<Today />} />
+           <Route path="/my-work" element={<Navigate to="/today" replace />} />
+           <Route path="/approvals" element={<Approvals />} />
+diff --color -ruN a/frontend/src/features/admin/StatusStandardisation.jsx frontend/src/features/admin/StatusStandardisation.jsx
+--- a/frontend/src/features/admin/StatusStandardisation.jsx	1970-01-01 05:30:00
++++ b/frontend/src/features/admin/StatusStandardisation.jsx	2026-10-21 18:59:04
+@@ -0,0 +1,100 @@
++import React from "react";
++import { Scale, Plus, Check, Clock, Inbox } from "lucide-react";
++import { useStore } from "@/state/store";
++import { hasCap } from "@/lib/access";
++import { Note } from "@/components/bits";
++import { formatDate, uid } from "@/lib/format";
++import { toast } from "sonner";
++
++/**
++ * PRD v1 "Transaction Status Standardization" + PRD v4 §5.3 — admin-maintained table that converts
++ * bank-specific credit/debit indicators into the system values CREDIT / DEBIT.
++ * Admin only (not the recon team); every add/change waits for a second admin.
++ */
++export default function StatusStandardisation() {
++  const { collections, perms, act, currentUser } = useStore();
++  const rows = collections.status_map || [];
++  const canEdit = hasCap(perms, "status_std", "edit");
++  const canApprove = hasCap(perms, "status_std", "approve");
++  const decide = (r, yes) => {
++    const res = act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: yes ? { status: "active", approvedBy: currentUser } : { status: r.requestedBy ? "requested" : "rejected", owner: r.requestedBy || r.owner },
++      audit: { entityLabel: `Status “${r.source}” → ${r.system}`, action: yes ? "Approve status mapping" : "Reject status mapping", from: "Pending", to: yes ? "Active" : "Rejected", comment: yes ? "Applies to files loaded from now on" : undefined } });
++    if (!res.ok) toast.error(res.error); else toast.success(yes ? `“${r.source}” is now ${r.system}` : "Sent back");
++  };
++  const [draft, setDraft] = React.useState({ source: "", system: "CREDIT", seenAt: "", table: "RECON_BANK_TXN", column: "INSTRM_STATUS" });
++  const [answer, setAnswer] = React.useState({});
++
++  const active = rows.filter((r) => r.status === "active");
++  const pending = rows.filter((r) => r.status === "pending");
++  const requests = rows.filter((r) => r.status === "requested");
++
++  const save = (row, label) => {
++    const r = act({ screen: "status_std", cap: "edit", kind: "status_map", id: row.id, target: row, patch: () => row, audit: { entityLabel: `Status “${row.source}” → ${row.system}`, action: label, from: null, to: "Pending approval" } });
++    if (!r.ok) { toast.error(r.error); return false; }
++    toast.success("Sent to a second admin for approval");
++    return true;
++  };
++  const add = () => {
++    const src = draft.source.trim();
++    if (!src) { toast.error("Enter the value as it appears in the bank file"); return; }
++    if (rows.some((r) => r.source.toUpperCase() === src.toUpperCase() && r.status !== "requested")) { toast.error(`“${src}” is already in the table`); return; }
++    if (save({ ...draft, source: src, id: uid("sm"), status: "pending", owner: currentUser, createdAt: new Date().toISOString() }, "Add status mapping")) setDraft({ ...draft, source: "", seenAt: "" });
++  };
++  const fulfil = (req) => {
++    const system = answer[req.id];
++    if (!system) { toast.error("Pick CREDIT or DEBIT"); return; }
++    save({ ...req, system, status: "pending", owner: currentUser, requestedBy: req.owner }, "Add status mapping (maker request)");
++  };
++
++  return (
++    <div data-testid="status-std">
++      <div className="page-head"><div>
++        <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Scale size={22} /> Transaction status standardisation</h1>
++        <p>How each bank's credit/debit indicator is converted to the system value. Used when a statement is loaded; maintained by admins only.</p>
++      </div></div>
++
++      {!canEdit && <div style={{ marginBottom: 14 }}><Note kind="info">{canApprove ? "You are the second admin: approve or send back values another admin added. Approved values apply to files loaded from then on." : "Read-only for you. Only admins add or change these values; makers can ask for a missing value from Column mapping."}</Note></div>}
++
++      {canEdit && requests.length > 0 && (
++        <div className="card card-pad" style={{ marginBottom: 16 }} data-testid="std-requests">
++          <h3 style={{ display: "flex", gap: 8, alignItems: "center", margin: "0 0 10px" }}><Inbox size={16} /> Asked for by makers <span className="pill pill-pending">{requests.length}</span></h3>
++          <table className="grid"><thead><tr><th>Value in file</th><th>Seen at</th><th>Asked by</th><th>Convert to</th><th /></tr></thead>
++            <tbody>{requests.map((r) => (
++              <tr key={r.id}><td className="tnum"><b>{r.source}</b></td><td>{r.seenAt}</td><td>{r.owner} · {formatDate(r.createdAt)}</td>
++                <td><select className="select" style={{ maxWidth: 140 }} value={answer[r.id] || ""} onChange={(e) => setAnswer({ ...answer, [r.id]: e.target.value })} data-testid={"std-answer-" + r.source}><option value="">Select…</option><option>CREDIT</option><option>DEBIT</option></select></td>
++                <td><button className="btn btn-primary btn-sm" onClick={() => fulfil(r)} data-testid={"std-fulfil-" + r.source}>Send for approval</button></td></tr>
++            ))}</tbody></table>
++        </div>
++      )}
++
++      <div className="card">
++        <div className="grid-scroll">
++          <table className="grid">
++            <thead><tr><th>Value in bank file</th><th>System value</th><th>Seen at</th><th>DB table · column</th><th>Status</th><th>Added</th>{canApprove && <th />}</tr></thead>
++            <tbody>
++              {[...pending, ...active].map((r) => (
++                <tr key={r.id} data-testid={"std-row-" + r.source}>
++                  <td className="tnum"><b>{r.source}</b></td>
++                  <td><span className={"chip " + (r.system === "CREDIT" ? "chip-previous" : "chip-manual")}>{r.system}</span></td>
++                  <td>{r.seenAt || "—"}</td>
++                  <td className="tnum" style={{ fontSize: 12 }}>{r.table} · {r.column}</td>
++                  <td>{r.status === "active" ? <span className="pill pill-active"><span className="dot" /><Check size={11} /> Active</span> : <span className="pill pill-pending"><span className="dot" /><Clock size={11} /> Pending approval</span>}</td>
++                  <td>{r.owner} · {formatDate(r.createdAt)}</td>
++                  {canApprove && <td>{r.status === "pending" && (r.owner === currentUser ? <span className="muted">Your own</span> : <span style={{ display: "flex", gap: 6 }}><button className="btn btn-success btn-sm" onClick={() => decide(r, true)} data-testid={"std-approve-" + r.source}><Check size={13} /> Approve</button><button className="btn btn-outline btn-sm" onClick={() => decide(r, false)}>Send back</button></span>)}</td>}
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++        {canEdit && (
++          <div className="std-add" data-testid="std-add">
++            <input className="input tnum" placeholder="Value as in file, e.g. CR" value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })} data-testid="std-source" />
++            <select className="select" value={draft.system} onChange={(e) => setDraft({ ...draft, system: e.target.value })}><option>CREDIT</option><option>DEBIT</option></select>
++            <input className="input" placeholder="Bank (optional)" value={draft.seenAt} onChange={(e) => setDraft({ ...draft, seenAt: e.target.value })} />
++            <button className="btn btn-primary" onClick={add} data-testid="std-add-btn"><Plus size={15} /> Add — needs second admin</button>
++          </div>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --color -ruN a/frontend/src/features/approvals/Approvals.jsx frontend/src/features/approvals/Approvals.jsx
+--- a/frontend/src/features/approvals/Approvals.jsx	2026-10-21 17:48:55
++++ b/frontend/src/features/approvals/Approvals.jsx	2026-10-21 18:54:58
+@@ -8,7 +8,7 @@
+ import { Inbox, Check, X, ArrowRight, AlertTriangle, CheckCircle2, Keyboard, CheckCheck } from "lucide-react";
+ import { toast } from "sonner";
+ 
+-const KIND_ORDER = ["Fund release", "Bank file layout", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Access", "Day close"];
++const KIND_ORDER = ["Fund release", "Bank file layout", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Status mapping", "Access", "Day close"];
+ const WHY = {
+   "Fund release": "Units can't be allotted until this money is released to Transaction Posting. Cut-off 3:00 PM.",
+   "Bank file layout": "Rows from this bank are held until the new layout is accepted.",
+@@ -21,6 +21,7 @@
+   "Bank setup": "Controls how this account's statement is fetched and read. Once approved, it's live from the next file.",
+   "Credit MIS setup": "Controls how this payment aggregator's MIS is fetched and read. Live from the next file once approved.",
+   "Column mapping": "Decides which column in the bank file becomes which field. A wrong mapping mis-reads every row.",
++  "Status mapping": "Decides whether rows carrying this value are read as credits or debits, for every bank file loaded from now on.",
+ };
+ 
+ /**
+diff --color -ruN a/frontend/src/features/approvals/useApprovals.js frontend/src/features/approvals/useApprovals.js
+--- a/frontend/src/features/approvals/useApprovals.js	2026-10-21 17:48:55
++++ b/frontend/src/features/approvals/useApprovals.js	2026-10-21 18:54:58
+@@ -68,6 +68,11 @@
+     config: { kind: k, approve: () => { try { approve(k, x.id, `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } } },
+     reject: (comment) => { if (!comment || comment.trim().length < 10) return { ok: false, error: "A comment of at least 10 characters is required to send a setup back" }; try { reject(k, x.id, comment.trim(), `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } },
+   })));
++  (c.status_map || []).filter((r) => r.status === "pending").forEach((r) => add("status_std", {
++    id: r.id, kind: "Status mapping", title: `Treat “${r.source}” as ${r.system}`, detail: `${r.seenAt ? r.seenAt + " · " : ""}${r.table}.${r.column}${r.requestedBy ? ` · asked for by ${r.requestedBy}` : ""}`, owner: r.owner, priority: 8,
++    approve: () => act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: { status: "active", approvedBy: currentUser }, audit: { entityLabel: `Status “${r.source}” → ${r.system}`, action: "Approve status mapping", from: "Pending", to: "Active", comment: "Applies to files loaded from now on" } }),
++    reject: () => act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: { status: r.requestedBy ? "requested" : "rejected", owner: r.requestedBy || r.owner }, audit: { entityLabel: `Status “${r.source}”`, action: "Reject status mapping", from: "Pending", to: "Rejected" } }),
++  }));
+   (c.access_requests || []).filter((r) => r.status === "pending").forEach((r) => add("roles", {
+     id: r.id, kind: "Access", title: r.kind === "assign" ? "Grant a privileged role" : `Role change: ${r.draft?.name}`, detail: r.note || "", owner: r.requestedBy, priority: 8, review: "/admin/roles",
+   }));
+diff --color -ruN a/frontend/src/features/authQueue/AuthQueue.js frontend/src/features/authQueue/AuthQueue.js
+--- a/frontend/src/features/authQueue/AuthQueue.js	2026-10-21 17:48:55
++++ b/frontend/src/features/authQueue/AuthQueue.js	2026-10-21 18:55:21
+@@ -1,4 +1,6 @@
+ import React from "react";
++import { ChangesCard } from "@/features/setup/SetupBits";
++import { summarizeSetup } from "@/lib/setupSchema";
+ import { useStore } from "@/state/store";
+ import { KIND_LABELS } from "@/lib/constants";
+ import { Drawer } from "@/components/Drawer";
+@@ -150,33 +152,21 @@
+           {row("Type", KIND_LABELS[x._kind])}
+           {row("Mode / File", modeLabel)}
+           {row("Bank Name", x.bankName)}
+-          {row("Account Number", maskAccount(x.accountNumber))}
++          {row("Account Number", x.accountNumber ? maskAccount(x.accountNumber) : "From file (bulk)")}
+           {x.schemeCode && row("Scheme Code", x.schemeCode)}
+           {x.paCodes && row("PA Codes", x.paCodes.join(", "))}
+         </div>
+       </div>
+ 
+-      {x.connection && (
+-        <div className="rev-card" style={{ marginBottom: 16 }}>
+-          <div className="rc-head"><h4>Connection &amp; Credentials</h4></div>
+-          <div className="rc-body">
+-            {x.connection.url && row("URL", x.connection.url)}
+-            {x.connection.loginId && row("Login ID", x.connection.loginId)}
+-            <div className="rev-row"><span className="k">Credential</span><span className="v"><span className="chip chip-previous"><ShieldCheck size={11} /> {x.connection.passwordSet ? "Credential set" : "Credential replaced in this submission"}</span></span></div>
+-          </div>
+-        </div>
+-      )}
++      <div style={{ marginBottom: 16 }}><ChangesCard base={x.baseline ? { ...x.baseline, kind: x._kind } : null} cur={{ ...x, kind: x._kind }} /></div>
+ 
+-      {x.fileConfig && (
+-        <div className="rev-card" style={{ marginBottom: 16 }}>
+-          <div className="rc-head"><h4>File Configuration</h4></div>
+-          <div className="rc-body">
+-            {row("Sample File", x.fileConfig.sampleFileName || "—")}
+-            {row("Start Row", x.fileConfig.startRow, true)}
+-            {row("Start Column", x.fileConfig.startColumn)}
+-          </div>
++      <div className="rev-card" style={{ marginBottom: 16 }}>
++        <div className="rc-head"><h4>Full setup</h4></div>
++        <div className="rc-body">
++          {summarizeSetup({ ...x, kind: x._kind }).filter(([k]) => !["Bank", "Account", "Download mode", "Feed mode"].includes(k)).map(([k, v]) => <React.Fragment key={k}>{row(k, v)}</React.Fragment>)}
++          {x.connection && (x.connection.url || x.connection.loginId) && <div className="rev-row"><span className="k">Credential</span><span className="v"><span className="chip chip-previous"><ShieldCheck size={11} /> {x.connection.passwordSet ? "Set in vault" : "Replaced in this submission"}</span></span></div>}
+         </div>
+-      )}
++      </div>
+ 
+       <div className="rev-card">
+         <div className="rc-head"><h4>History</h4></div>
+diff --color -ruN a/frontend/src/features/bankConfig/BankConfigWizard.js frontend/src/features/bankConfig/BankConfigWizard.js
+--- a/frontend/src/features/bankConfig/BankConfigWizard.js	2026-10-21 17:48:55
++++ b/frontend/src/features/bankConfig/BankConfigWizard.js	2026-10-21 19:00:19
+@@ -1,17 +1,18 @@
+ import React from "react";
+ import { useNavigate, useParams } from "react-router-dom";
+-import { ArrowLeft, ArrowRight, Save, RotateCcw, Send, AlertTriangle, ShieldCheck, Pencil, Wand2, FileText, Check, Loader2, MoreHorizontal } from "lucide-react";
++import { ArrowLeft, ArrowRight, Save, RotateCcw, Send, AlertTriangle, ShieldCheck, Pencil, Wand2, FileText, Check, Loader2, MoreHorizontal, Sparkles, Mail, X } from "lucide-react";
+ import { useStore } from "@/state/store";
+ import { BANK_MODES, RECON_TYPES } from "@/lib/constants";
+ import { BANKS, accountsFor, accountMeta } from "@/mock/bankMaster";
+ import { af, mockValue, pick } from "@/lib/autofill";
+-import { DEMO_FILES } from "@/mock/sampleFiles";
+ import StepIndicator from "@/components/StepIndicator";
+ import FileDropZone from "@/components/FileDropZone";
+ import PreviewTable from "@/components/PreviewTable";
+-import { ConfirmModal } from "@/components/Modal";
++import { ConfirmModal, Modal } from "@/components/Modal";
+ import { Toggle, PasswordInput, Note, VaultNote } from "@/components/bits";
+ import { detectFor, buildPreview } from "@/mock/sampleFiles";
++import { FILE_TYPES, STANDARD_FORMATS, isStandard, isDelimited, SEPARATORS, sepLabel, attachmentTypesFor, CAMS_DOMAIN, exampleFileNames, exampleSubjects, extFor, defaultSchedule, scheduleText } from "@/lib/setupSchema";
++import { PatternTester, ScheduleField, TestConnection, ChangesCard } from "@/features/setup/SetupBits";
+ import { maskAccount, formatDate, uid } from "@/lib/format";
+ import { toast } from "sonner";
+ 
+@@ -30,9 +31,10 @@
+     bankName: "", bankCode: "", accountNumber: "", schemeOrCollection: "Scheme",
+     schemeCode: "", schemeName: "", assetClass: "", status: "new", owner: "Priya",
+     rejection: null, lastUpdated: null,
+-    connection: { url: "", path: "", corporateId: "", loginId: "", passwordSet: false, _newPassword: "", subjectPattern: "", sender: "", receiver: "" },
+-    fileConfig: { fileType: "", separator: "", startRow: "", startColumn: "", uploadPath: "", uploadUser: "", uploadPasswordSet: false, _uploadPassword: "", sampleFileName: null, detected: {}, edited: {} },
+-    processing: { isActive: true, bulkUpload: false, computeRunningBalance: true, validateRunningBalance: true, runningBalanceCleanup: false, directMatch: true, reconciliationType: "Both", descendingOrder: false },
++    maskedPattern: "",
++    connection: { url: "", path: "", corporateId: "", loginId: "", passwordSet: false, _newPassword: "", _confirmPassword: "", schedule: defaultSchedule(), tested: null, subjectPattern: "", sender: "", receiver: "", attachmentPattern: "", zipOption: "none", _zipPassword: "" },
++    fileConfig: { fileType: "", separator: "", startRow: "", startColumn: "", uploadPath: "", uploadUser: "", uploadPasswordSet: false, _uploadPassword: "", fileNamePattern: "", sampleFileName: null, detected: {}, edited: {} },
++    processing: { isActive: true, bulkUpload: false, computeRunningBalance: true, validateRunningBalance: true, runningBalanceCleanup: false, cleanupChars: "", directMatch: true, reconciliationType: "Subscription", descendingOrder: false },
+   };
+ }
+ 
+@@ -48,7 +50,9 @@
+       const rec = get("bank_config", id);
+       if (rec) {
+         const clone = JSON.parse(JSON.stringify(rec));
+-        if (mode === "copy") { clone.id = uid("bc"); clone.status = "new"; clone.rejection = null; clone.accountNumber = ""; clone.schemeCode = ""; clone.assetClass = ""; }
++        // R7 — editing a live setup: keep the live version so the review shows what changes.
++        if (mode === "edit" && ["active", "inactive"].includes(rec.status)) clone.baseline = JSON.parse(JSON.stringify(rec));
++        if (mode === "copy") { clone.id = uid("bc"); clone.status = "new"; clone.rejection = null; clone.accountNumber = ""; clone.schemeCode = ""; clone.assetClass = ""; clone.maskedPattern = ""; clone.baseline = null; clone.approved = false; }
+         return { ...base, ...clone, connection: { ...base.connection, ...clone.connection }, fileConfig: { ...base.fileConfig, ...clone.fileConfig }, processing: { ...base.processing, ...clone.processing } };
+       }
+     }
+@@ -109,11 +113,11 @@
+       if (!d) { setAnalysing(false); setShowPreview(false); toast.error("Could not analyse this file — please use one of the demo files"); return; }
+       setFile({
+         fileType: d.detect.fileType, separator: d.detect.separator || "",
+-        startRow: String(d.detect.startRow), startColumn: String(d.detect.startColumn),
+-        detected: { fileType: true, separator: !!d.detect.separator, startRow: true, startColumn: true }, edited: {},
++        startRow: d.standard ? "" : String(d.detect.startRow), startColumn: d.standard ? "" : String(d.detect.startColumn),
++        detected: d.standard ? { fileType: true } : { fileType: true, separator: !!d.detect.separator, startRow: true, startColumn: true }, edited: {},
+       });
+       setAnalysing(false); setShowPreview(true);
+-      toast.success("Sample analysed — file settings auto-filled");
++      toast.success(d.standard ? `Recognised as ${d.detect.fileType} — the pre-built parser reads it, no column mapping needed` : "Sample analysed — file type, separator, start row and column filled in");
+     }, 850);
+   };
+ 
+@@ -121,24 +125,41 @@
+     const e = {}; const es = {};
+     if (!form.bankName) { e.bankName = "Select a bank"; es[1] = true; }
+     if (!form.processing.bulkUpload && !form.accountNumber) { e.accountNumber = "Select an account"; es[1] = true; }
++    const c = form.connection, fc = form.fileConfig, p = form.processing;
++    if (form.maskedPattern && !/^[X*]+\d{2,}$/i.test(form.maskedPattern.trim())) { e.maskedPattern = "Masked pattern must look like XXXXXX1234 (X or * then the visible digits)"; es[1] = true; }
+     if (!isManual) {
+       if (form.downloadMode === "email") {
+-        if (!form.connection.sender) { e.sender = "Sender required"; es[2] = true; }
+-        if (!form.connection.receiver) { e.receiver = "Receiver required"; es[2] = true; }
++        if (!c.sender) { e.sender = "Sender required"; es[2] = true; }
++        if (!c.receiver) { e.receiver = "Receiver required"; es[2] = true; }
++        else if (!c.receiver.toLowerCase().endsWith(CAMS_DOMAIN)) { e.receiver = `Receiver must be a CAMS mailbox (${CAMS_DOMAIN})`; es[2] = true; }
++        if (!c.subjectPattern) { e.subjectPattern = "Subject pattern required"; es[2] = true; }
++        if (c.zipOption === "zippw" && !c._zipPassword && !c.zipPasswordSet) { e.zipPassword = "ZIP password required"; es[2] = true; }
+       } else {
+-        if (!form.connection.url) { e.url = "URL required"; es[2] = true; }
+-        if (!form.connection.loginId) { e.loginId = "Login ID required"; es[2] = true; }
+-        if (!form.connection.passwordSet && !form.connection._newPassword) { e.password = "Password required"; es[2] = true; }
++        if (!c.url) { e.url = "URL required"; es[2] = true; }
++        if (!c.corporateId) { e.corporateId = "Corporate ID required"; es[2] = true; }
++        if (!c.loginId) { e.loginId = "Login ID required"; es[2] = true; }
++        if (!c.passwordSet && !c._newPassword) { e.password = "Password required"; es[2] = true; }
++        else if (c._newPassword && c._newPassword !== c._confirmPassword) { e.password = "The Password and Re-enter Password fields do not match. Please enter matching values and try again."; es[2] = true; }
+       }
+     }
+-    if (!form.fileConfig.startRow) { e.startRow = "Start row required"; es[3] = true; }
+-    if (!form.fileConfig.startColumn) { e.startColumn = "Start column required"; es[3] = true; }
++    if (!fc.fileType) { e.fileType = "File type required"; es[3] = true; }
++    if (!isStandard(fc.fileType)) {
++      if (isDelimited(fc.fileType) && !fc.separator) { e.separator = "File separator required for delimited files"; es[3] = true; }
++      if (!(Number(fc.startRow) >= 1 && Number.isInteger(Number(fc.startRow)))) { e.startRow = "Start row must be a whole number ≥ 1"; es[3] = true; }
++      if (!(Number(fc.startColumn) >= 1 && Number.isInteger(Number(fc.startColumn)))) { e.startColumn = "Start column must be a whole number ≥ 1"; es[3] = true; }
++    }
++    if (!fc.uploadPath) { e.uploadPath = "File upload path required"; es[3] = true; }
++    if (fc.fileNamePattern && testRegex(fc.fileNamePattern) === false) { e.fileNamePattern = "File name pattern is not a valid pattern"; es[3] = true; }
++    if (p.runningBalanceCleanup && !p.cleanupChars.trim()) { e.cleanupChars = "Enter the character(s) to remove, or switch cleanup off"; es[4] = true; }
+     return { e, es };
+   };
+ 
+   const persist = (data) => {
+     const toStore = { ...data };
+     if (toStore.connection._newPassword) { toStore.connection = { ...toStore.connection, passwordSet: true, _newPassword: "", credentialUpdatedAt: new Date().toISOString(), credentialUpdatedBy: "Priya" }; }
++    if (toStore.connection._zipPassword) toStore.connection = { ...toStore.connection, zipPasswordSet: true };
++    if (toStore.fileConfig._uploadPassword) toStore.fileConfig = { ...toStore.fileConfig, uploadPasswordSet: true, _uploadPassword: "" };
++    toStore.connection = { ...toStore.connection, _confirmPassword: "", _zipPassword: "" };
+     delete toStore.connection._newPassword;
+     return toStore;
+   };
+@@ -167,17 +188,17 @@
+   const A = (key, value, apply) => af(key, value, apply, ctx);
+ 
+   const fillBank = () => { const b = pick(BANKS); const a = pick(accountsFor(b.name)); set({ bankName: b.name, bankCode: b.code, accountNumber: a.accountNumber, schemeCode: a.schemeCode, assetClass: a.assetClass, schemeName: a.schemeName }); return b.name; };
+-  const fillConn = (bn, dm) => { const c = { bankName: bn }; setConn(dm === "email"
++  const fillConn = (bn, dm) => { const c = { bankName: bn }; const pw = mockValue("password"); setConn(dm === "email"
+     ? { subjectPattern: mockValue("subjectPattern", c), sender: mockValue("sender", c), receiver: mockValue("receiver", c) }
+-    : { url: mockValue("url", c), path: mockValue("path", c), corporateId: mockValue("corporateId"), loginId: mockValue("loginId"), _newPassword: mockValue("password") }); setReplacingCred(true); };
+-  const fillFile = (bn) => { if (!form.fileConfig.sampleFileName) onPickFile(pick(Object.keys(DEMO_FILES))); setFile({ uploadPath: mockValue("uploadPath", { bankName: bn }), uploadUser: mockValue("uploadUser"), _uploadPassword: mockValue("uploadPassword") }); };
++    : { url: mockValue("url", c), path: mockValue("path", c), corporateId: mockValue("corporateId"), loginId: mockValue("loginId"), _newPassword: pw, _confirmPassword: pw }); setReplacingCred(true); };
++  const fillFile = (bn) => { if (!form.fileConfig.sampleFileName) onPickFile("idbi_statement_oct.csv"); const b = BANKS.find((x) => x.name === bn); setFile({ uploadPath: mockValue("uploadPath", { bankName: bn }), uploadUser: mockValue("uploadUser"), _uploadPassword: mockValue("uploadPassword"), fileNamePattern: `${b?.code || "BANK"}_${(form.accountNumber || "0000").slice(-4)}_\\d{8}\\.csv` }); };
+   const fillStep = () => {
+     const k = STEPS[step].key;
+     if (k === "mode") set({ downloadMode: pick(Object.keys(BANK_MODES)) });
+     else if (k === "bank") fillBank();
+     else if (k === "conn") fillConn(form.bankName, form.downloadMode);
+     else if (k === "file") fillFile(form.bankName);
+-    else if (k === "proc") setProc({ reconciliationType: pick(RECON_TYPES) });
++    else if (k === "proc") setProc({ reconciliationType: pick(RECON_TYPES), runningBalanceCleanup: true, cleanupChars: "Cr" });
+     else { const dm = form.downloadMode === "manual" ? "auto" : form.downloadMode; const bn = form.bankName || fillBank(); set({ downloadMode: dm }); if (dm !== "manual") fillConn(bn, dm); fillFile(bn); }
+     toast.success(k === "review" ? "All steps filled with sample data" : "Step filled with sample data");
+   };
+@@ -266,7 +287,13 @@
+                 </div>
+                 <div className="field"><label className="field-label">Scheme Code</label><input className="input tnum" readOnly value={form.schemeCode} placeholder="Auto-filled" data-testid="field-scheme-code" /></div>
+                 <div className="field"><label className="field-label">Asset Class</label><input className="input" readOnly value={form.assetClass} placeholder="Auto-filled" data-testid="field-asset-class" /></div>
+-                <div className="field full"><label className="field-label">Masked Account Preview</label><input className="input tnum" readOnly value={form.accountNumber ? maskAccount(form.accountNumber) : "—"} /></div>
++                <div className="field full">
++                  <label className="field-label">Masked Account Number <span className="muted">(optional)</span></label>
++                  <input className={"input tnum" + (errors.maskedPattern ? " invalid" : "")} value={form.maskedPattern} disabled={isView} placeholder="Type it exactly as the bank prints it, e.g. XXXXXX4512" data-testid="field-masked"
++                    onChange={(e) => set({ maskedPattern: e.target.value.toUpperCase() })} />
++                  <MaskedCheck pattern={form.maskedPattern} account={form.accountNumber} />
++                  {errors.maskedPattern && <span className="field-error">{errors.maskedPattern}</span>}
++                </div>
+               </div>
+               {form.processing.bulkUpload && <div style={{ marginTop: 16 }}><Note kind="info">Bulk Upload is ON — Account Number is optional and will be <b>derived from file</b>.</Note></div>}
+             </>
+@@ -276,34 +303,36 @@
+           {STEPS[step].key === "conn" && (
+             <>
+               <div className="step-title">Connection Details</div>
+-              <p className="step-desc">{BANK_MODES[form.downloadMode].label} connection settings.</p>
+-              {form.connection.passwordSet && !replacingCred ? (
+-                <div style={{ maxWidth: 760 }}>
+-                  <Note kind="vault" icon={ShieldCheck}>
+-                    Credential set ✓ — last updated {formatDate(form.connection.credentialUpdatedAt || Date.now())} by {form.connection.credentialUpdatedBy || "Priya"}.
+-                    {!isView && <> <button className="link" style={{ marginLeft: 8 }} onClick={() => setReplacingCred(true)} data-testid="btn-replace-cred">Replace</button></>}
+-                  </Note>
+-                  <div className="form-grid" style={{ marginTop: 16 }}>
+-                    <div className="field"><label className="field-label">URL</label><input className="input" value={form.connection.url} disabled={isView} onChange={(e) => setConn({ url: e.target.value })} data-testid="field-url" /></div>
+-                    <div className="field"><label className="field-label">Login ID</label><input className="input" value={form.connection.loginId} disabled={isView} onChange={(e) => setConn({ loginId: e.target.value })} data-testid="field-login" /></div>
+-                  </div>
+-                </div>
+-              ) : form.downloadMode === "email" ? (
+-                <div className="form-grid">
+-                  <div className="field full"><label className="field-label">Email Subject Pattern</label><input className={"input" + (errors.subjectPattern ? " invalid" : "")} value={form.connection.subjectPattern} disabled={isView} onChange={(e) => setConn({ subjectPattern: e.target.value })} placeholder="Statement_*_MIS" data-testid="field-subject" {...A("subjectPattern", form.connection.subjectPattern, (v) => setConn({ subjectPattern: v }))} /></div>
+-                  <div className="field"><label className="field-label">Sender Email</label><input className={"input" + (errors.sender ? " invalid" : "")} value={form.connection.sender} disabled={isView} onChange={(e) => setConn({ sender: e.target.value })} data-testid="field-sender" {...A("sender", form.connection.sender, (v) => setConn({ sender: v }))} />{errors.sender && <span className="field-error">{errors.sender}</span>}</div>
+-                  <div className="field"><label className="field-label">Receiver Email</label><input className={"input" + (errors.receiver ? " invalid" : "")} value={form.connection.receiver} disabled={isView} onChange={(e) => setConn({ receiver: e.target.value })} data-testid="field-receiver" {...A("receiver", form.connection.receiver, (v) => setConn({ receiver: v }))} />{errors.receiver && <span className="field-error">{errors.receiver}</span>}</div>
+-                </div>
++              <p className="step-desc">{BANK_MODES[form.downloadMode].label} — {form.downloadMode === "email" ? "which emails to pick up and what to do with the rest." : "how to reach the bank, and when to pull."}</p>
++              {form.downloadMode === "email" ? (
++                <EmailRules form={form} setConn={setConn} errors={errors} isView={isView} A={A} />
+               ) : (
+                 <>
+                   <div className="form-grid">
+                     <div className="field"><label className="field-label">URL</label><input className={"input" + (errors.url ? " invalid" : "")} value={form.connection.url} disabled={isView} onChange={(e) => setConn({ url: e.target.value })} placeholder="https://portal.bank.com/…" data-testid="field-url" {...A("url", form.connection.url, (v) => setConn({ url: v }))} />{errors.url && <span className="field-error">{errors.url}</span>}</div>
+                     <div className="field"><label className="field-label">File Download Path</label><input className="input" value={form.connection.path} disabled={isView} onChange={(e) => setConn({ path: e.target.value })} data-testid="field-path" {...A("path", form.connection.path, (v) => setConn({ path: v }))} /></div>
+-                    <div className="field"><label className="field-label">Corporate ID</label><input className="input tnum" value={form.connection.corporateId} disabled={isView} onChange={(e) => setConn({ corporateId: e.target.value })} data-testid="field-corp-id" {...A("corporateId", form.connection.corporateId, (v) => setConn({ corporateId: v }))} /></div>
++                    <div className="field"><label className="field-label">Corporate ID</label><input className={"input tnum" + (errors.corporateId ? " invalid" : "")} value={form.connection.corporateId} disabled={isView} onChange={(e) => setConn({ corporateId: e.target.value })} data-testid="field-corp-id" {...A("corporateId", form.connection.corporateId, (v) => setConn({ corporateId: v }))} />{errors.corporateId && <span className="field-error">{errors.corporateId}</span>}</div>
+                     <div className="field"><label className="field-label">Login ID</label><input className={"input" + (errors.loginId ? " invalid" : "")} value={form.connection.loginId} disabled={isView} onChange={(e) => setConn({ loginId: e.target.value })} data-testid="field-login" {...A("loginId", form.connection.loginId, (v) => setConn({ loginId: v }))} />{errors.loginId && <span className="field-error">{errors.loginId}</span>}</div>
+-                    <div className="field full"><label className="field-label">Password</label><PasswordInput value={form.connection._newPassword} onChange={(v) => setConn({ _newPassword: v })} id="field-password" onFocus={() => { if (!form.connection._newPassword) setConn({ _newPassword: mockValue("password") }); }} />{errors.password && <span className="field-error">{errors.password}</span>}</div>
++                    {form.connection.passwordSet && !replacingCred ? (
++                      <div className="field full">
++                        <Note kind="vault" icon={ShieldCheck}>
++                          Password set ✓ — last updated {formatDate(form.connection.credentialUpdatedAt || Date.now())} by {form.connection.credentialUpdatedBy || "Priya"}.
++                          {!isView && <> <button className="link" style={{ marginLeft: 8 }} onClick={() => setReplacingCred(true)} data-testid="btn-replace-cred">Replace</button></>}
++                        </Note>
++                      </div>
++                    ) : (
++                      <>
++                        <div className="field"><label className="field-label">Password</label><PasswordInput value={form.connection._newPassword} onChange={(v) => setConn({ _newPassword: v })} id="field-password" onFocus={() => { if (!form.connection._newPassword) { const pw = mockValue("password"); setConn({ _newPassword: pw, _confirmPassword: pw }); } }} /></div>
++                        <div className="field"><label className="field-label">Re-enter Password</label><PasswordInput value={form.connection._confirmPassword} onChange={(v) => setConn({ _confirmPassword: v })} id="field-password-confirm" />
++                          {form.connection._confirmPassword && form.connection._confirmPassword === form.connection._newPassword && <span className="field-ok"><Check size={12} /> Passwords match</span>}</div>
++                        {errors.password && <span className="field-error full">{errors.password}</span>}
++                        <div className="field full"><VaultNote /></div>
++                      </>
++                    )}
++                    {!isView && <ScheduleField value={form.connection.schedule} onChange={(v) => setConn({ schedule: v })} />}
++                    {isView && <div className="field full"><label className="field-label">Pull schedule</label><span>{scheduleText(form.connection.schedule)}</span></div>}
+                   </div>
+-                  <div style={{ marginTop: 14 }}><VaultNote /></div>
++                  {!isView && <TestConnection conn={form.connection} mode={form.downloadMode} onResult={(r) => setConn({ tested: { ok: r.ok, at: new Date().toISOString() } })} />}
+                 </>
+               )}
+             </>
+@@ -311,39 +340,8 @@
+ 
+           {/* STEP 4 */}
+           {STEPS[step].key === "file" && (
+-            <>
+-              <div className="step-title">File Configuration</div>
+-              <p className="step-desc">Upload a sample statement to auto-detect the file layout.</p>
+-              <FileDropZone fileName={form.fileConfig.sampleFileName} onPick={onPickFile} onClear={() => { setFile({ sampleFileName: null, detected: {}, edited: {} }); setShowPreview(false); }} />
+-              {detectFor(form.fileConfig.sampleFileName)?.mismatch && showPreview && (
+-                <div style={{ marginTop: 14 }}><Note kind="warn">File extension says <b>XLS</b> but content looks like <b>HTML/CSV</b> — settings pre-filled from content.</Note></div>
+-              )}
+-              {analysing && (
+-                <div className="analysing" data-testid="analysing"><div className="spinner" /><div><b>Analysing file…</b><div style={{ fontSize: 12, color: "hsl(var(--muted))" }}>Detecting header row, separator and column layout</div></div></div>
+-              )}
+-              {showPreview && !analysing && (
+-                <>
+-                  <div className="form-grid" style={{ marginTop: 18 }}>
+-                    <div className="field">
+-                      <label className="field-label">Start Row</label>
+-                      <input className={"input tnum" + (errors.startRow ? " invalid" : "")} value={form.fileConfig.startRow} disabled={isView} data-testid="field-startrow" onChange={(e) => { setFile({ startRow: e.target.value }); markEdited("startRow"); }} />
+-                    </div>
+-                    <div className="field">
+-                      <label className="field-label">Start Column</label>
+-                      <input className={"input tnum" + (errors.startColumn ? " invalid" : "")} value={form.fileConfig.startColumn} disabled={isView} data-testid="field-startcol" onChange={(e) => { setFile({ startColumn: e.target.value }); markEdited("startColumn"); }} />
+-                    </div>
+-                  </div>
+-                  <PreviewTable {...buildPreview(form.fileConfig.sampleFileName)} startColumn={parseInt(form.fileConfig.startColumn, 10) || 1}
+-                    headerIdx={(parseInt(form.fileConfig.startRow, 10) || buildPreview(form.fileConfig.sampleFileName).headerIdx + 1) - 1} />
+-                  <div className="section-title">Upload Destination</div>
+-                  <div className="form-grid">
+-                    <div className="field"><label className="field-label">File Upload Path</label><input className="input" value={form.fileConfig.uploadPath} disabled={isView} onChange={(e) => setFile({ uploadPath: e.target.value })} data-testid="field-upload-path" {...A("uploadPath", form.fileConfig.uploadPath, (v) => setFile({ uploadPath: v }))} /></div>
+-                    <div className="field"><label className="field-label">Upload Username</label><input className="input" value={form.fileConfig.uploadUser} disabled={isView} onChange={(e) => setFile({ uploadUser: e.target.value })} data-testid="field-upload-user" {...A("uploadUser", form.fileConfig.uploadUser, (v) => setFile({ uploadUser: v }))} /></div>
+-                    <div className="field full"><label className="field-label">Upload Password</label><PasswordInput value={form.fileConfig._uploadPassword} onChange={(v) => setFile({ _uploadPassword: v })} id="field-upload-password" onFocus={() => { if (!form.fileConfig._uploadPassword) setFile({ _uploadPassword: mockValue("uploadPassword") }); }} /><div style={{ marginTop: 8 }}><VaultNote /></div></div>
+-                  </div>
+-                </>
+-              )}
+-            </>
++            <FileStep form={form} setFile={setFile} markEdited={markEdited} errors={errors} isView={isView} A={A}
++              analysing={analysing} showPreview={showPreview} onPickFile={onPickFile} onClear={() => { setFile({ sampleFileName: null, detected: {}, edited: {} }); setShowPreview(false); }} />
+           )}
+ 
+           {/* STEP 5 */}
+@@ -357,17 +355,27 @@
+                   ["bulkUpload", "Bulk Upload", "Allow multiple accounts in one file; account derived from file."],
+                   ["computeRunningBalance", "Compute Running Balance", "Derive running balance from debit/credit if absent."],
+                   ["validateRunningBalance", "Validate Running Balance", "Cross-check computed balance against the file."],
+-                  ["runningBalanceCleanup", "Running Balance Cleanup", "Normalise balance formatting and stray characters."],
+-                  ["directMatch", "Direct Match", "Attempt one-to-one match before fuzzy matching."],
+-                  ["descendingOrder", "Descending Order", "File rows are in newest-first order."],
++                  ["runningBalanceCleanup", "Running Balance Cleanup", "Remove set characters (prefix or suffix) from the closing balance before processing."],
++                  ["directMatch", "Direct Match", "Match statement rows to CDT records by UTR / instrument number automatically."],
++                  ["descendingOrder", "Descending Order", "File is newest-first; process and validate balances bottom-to-top."],
+                 ].map(([k, t, h]) => (
+-                  <div className="toggle-row" key={k}>
+-                    <div className="tr-txt"><b>{t}</b><span>{h}</span></div>
+-                    <div className="sw-wrap"><Toggle checked={form.processing[k]} disabled={isView} onChange={(v) => setProc({ [k]: v })} id={"toggle-" + k} /></div>
+-                  </div>
++                  <React.Fragment key={k}>
++                    <div className="toggle-row">
++                      <div className="tr-txt"><b>{t}</b><span>{h}</span></div>
++                      <div className="sw-wrap"><Toggle checked={form.processing[k]} disabled={isView} onChange={(v) => setProc({ [k]: v })} id={"toggle-" + k} /></div>
++                    </div>
++                    {k === "runningBalanceCleanup" && form.processing.runningBalanceCleanup && (
++                      <div className="toggle-sub" data-testid="cleanup-chars">
++                        <label className="field-label">Character(s) to remove from the start or end of the balance</label>
++                        <input className={"input tnum" + (errors.cleanupChars ? " invalid" : "")} style={{ maxWidth: 220 }} value={form.processing.cleanupChars} disabled={isView} placeholder="e.g. C, Cr, Dr" onChange={(e) => setProc({ cleanupChars: e.target.value })} data-testid="field-cleanup-chars" />
++                        <span className="muted">{form.processing.cleanupChars ? <>Example: <span className="tnum">{form.processing.cleanupChars.split(",")[0].trim()}12345</span> is read as <span className="tnum">12345</span></> : "Example: C12345 with “C” is read as 12345"}</span>
++                        {errors.cleanupChars && <span className="field-error">{errors.cleanupChars}</span>}
++                      </div>
++                    )}
++                  </React.Fragment>
+                 ))}
+                 <div className="toggle-row recon-row">
+-                  <div className="tr-txt"><b>Reconciliation Type</b><span>Which transaction flows this account handles.</span></div>
++                  <div className="tr-txt"><b>Reconciliation Type</b><span>Subscription collection or liability payments — decides the downstream tables.</span></div>
+                   <div className="sw-wrap segmented" data-testid="recon-type">
+                     {RECON_TYPES.map((t) => <button key={t} disabled={isView} className={form.processing.reconciliationType === t ? "on" : ""} onClick={() => setProc({ reconciliationType: t })}>{t}</button>)}
+                   </div>
+@@ -431,7 +439,7 @@
+           <button className="btn btn-success" onClick={start} data-testid="submit-modal-ok" autoFocus><Send size={15} /> Submit</button>
+         </>
+       ) : null}>
+-      {phase === "confirm" && <p>This configuration becomes <b>Active</b> on approval. Submit?</p>}
++      {phase === "confirm" && <p>This configuration becomes <b>Active</b> on approval. It applies from the next file received; files already loaded are not re-processed. Submit?</p>}
+       {phase === "loading" && <div className="submit-state" data-testid="submit-loading"><Loader2 className="spin" size={28} /><p>Submitting for approval…</p></div>}
+       {phase === "success" && <div className="submit-state" data-testid="submit-success"><div className="success-ring"><Check size={26} /></div><p>Submitted for approval</p></div>}
+     </Modal>
+@@ -470,20 +478,22 @@
+ function ReviewSummary({ form, onEdit, isManual, val }) {
+   const fc = form.fileConfig;
+   const p = form.processing;
+-  const fieldStep = { bankName: 1, accountNumber: 1, subjectPattern: 2, sender: 2, receiver: 2, url: 2, loginId: 2, password: 2, startRow: 3, startColumn: 3 };
++  const c = form.connection;
++  const fieldStep = { bankName: 1, accountNumber: 1, maskedPattern: 1, subjectPattern: 2, sender: 2, receiver: 2, zipPassword: 2, url: 2, corporateId: 2, loginId: 2, password: 2, fileType: 3, separator: 3, startRow: 3, startColumn: 3, uploadPath: 3, fileNamePattern: 3, cleanupChars: 4 };
+   const issues = Object.entries(val.e).map(([field, msg]) => ({ field, msg, step: fieldStep[field] ?? 1 }));
+   const hasIssues = issues.length > 0;
+   const msgsFor = (step) => issues.filter((i) => i.step === step).map((i) => i.msg);
+   const acct = form.accountNumber ? maskAccount(form.accountNumber) : "—";
++  const std = isStandard(fc.fileType);
+   return (
+     <div data-testid="review-summary">
+       <div className="step-title">Review &amp; Submit</div>
+-      <p className="step-desc">Verify every section. Use Edit to jump back to a step.</p>
++      <p className="step-desc">Setup summary. Use Edit to jump back to a step.</p>
+       <div className="review-single">
+         <div className="rev-strip" data-testid="review-strip">
+           <div className="rs-item"><span className="rs-k">Bank</span><span className="rs-v">{form.bankName || "—"}</span></div>
+-          <div className="rs-item"><span className="rs-k">Account</span><span className="rs-v tnum">{acct}</span></div>
+-          <div className="rs-item"><span className="rs-k">Scheme Code</span><span className="rs-v tnum">{form.schemeCode || "—"}</span></div>
++          <div className="rs-item"><span className="rs-k">Account</span><span className="rs-v tnum">{form.processing.bulkUpload && !form.accountNumber ? "From file (bulk)" : acct}</span></div>
++          <div className="rs-item"><span className="rs-k">File type</span><span className="rs-v">{fc.fileType || "—"}{std && " · no mapping needed"}</span></div>
+           <span className={"chip-stat rs-badge " + (hasIssues ? "missing" : "ready")} data-testid="review-status-badge">
+             {hasIssues ? <><AlertTriangle size={12} /> Missing fields</> : <><ShieldCheck size={12} /> Ready to Submit</>}
+           </span>
+@@ -500,36 +510,161 @@
+           </div>
+         )}
+ 
+-        <Section title="Connection" editStep={isManual ? 0 : 2} onEdit={onEdit} invalid={!!val.es[2]} warnMsgs={msgsFor(2)}>
++        <ChangesCard base={form.baseline} cur={form} />
++
++        <Section title="Processing mode & connection" editStep={isManual ? 0 : 2} onEdit={onEdit} invalid={!!val.es[2]} warnMsgs={msgsFor(2)}>
+           <KV k="Mode" v={BANK_MODES[form.downloadMode].label} />
+-          {!isManual && form.downloadMode === "email" && (<><KV k="Sender" v={form.connection.sender} /><KV k="Receiver" v={form.connection.receiver} /></>)}
+-          {!isManual && form.downloadMode !== "email" && (<><KV k="URL" v={form.connection.url} /><KV k="Login ID" v={form.connection.loginId} /><KV k="Credential" v={form.connection.passwordSet || form.connection._newPassword ? "Credential set ✓" : "Not set"} /></>)}
++          {form.downloadMode === "email" && (<><KV k="Sender" v={c.sender} /><KV k="Receiver" v={c.receiver} /><KV k="Subject pattern" v={c.subjectPattern} /><KV k="Attachment name" v={c.attachmentPattern || "Any name"} /><KV k="Accepted attachments" v={attachmentTypesFor(fc.fileType, c.zipOption).join(" ") || "—"} /><KV k="Not matching" v="Rejected and logged for review" /></>)}
++          {["auto", "api"].includes(form.downloadMode) && (<><KV k="URL" v={c.url} /><KV k="Corporate ID" v={c.corporateId} /><KV k="Login ID" v={c.loginId} /><KV k="Credential" v={c.passwordSet || c._newPassword ? "Set ✓ (vault)" : "Not set"} /><KV k="Schedule" v={scheduleText(c.schedule)} /><KV k="Connection test" v={c.tested ? (c.tested.ok ? "Passed ✓" : "Failed") : "Not run"} /></>)}
+         </Section>
+ 
+         <Section title="Bank Information" editStep={1} onEdit={onEdit} invalid={!!val.es[1]} warnMsgs={msgsFor(1)}>
+           <KV k="Bank Name" v={form.bankName} />
+           <KV k="Account Number" v={form.accountNumber ? acct : null} />
++          <KV k="Scheme / Collection" v={form.schemeOrCollection} />
+           <KV k="Scheme Code" v={form.schemeCode} />
+           <KV k="Asset Class" v={form.assetClass} />
++          <KV k="Masked pattern" v={form.maskedPattern} />
+         </Section>
+ 
+         <Section title="File Configuration" editStep={3} onEdit={onEdit} invalid={!!val.es[3]} warnMsgs={msgsFor(3)}>
+           <KV k="Sample File" v={<><FileText size={14} style={{ color: "hsl(var(--muted))" }} /> {fc.sampleFileName || "—"}</>} />
+-          <KV k="Start Row" v={fc.startRow} />
+-          <KV k="Start Column" v={fc.startColumn} />
++          <KV k="File Type" v={fc.fileType} />
++          {!std && <KV k="Separator" v={isDelimited(fc.fileType) ? sepLabel(fc.separator) : "n/a"} />}
++          {!std && <KV k="Start Row" v={fc.startRow} />}
++          {!std && <KV k="Start Column" v={fc.startColumn} />}
++          <KV k="File Upload Path" v={fc.uploadPath} />
++          <KV k="File name pattern" v={fc.fileNamePattern} />
+         </Section>
+ 
+-        <Section title="Processing Options" editStep={4} onEdit={onEdit}>
++        <Section title="Processing Options" editStep={4} onEdit={onEdit} invalid={!!val.es[4]} warnMsgs={msgsFor(4)}>
+           <KV k="Is Active" v={<Stat on={p.isActive} />} />
+           <KV k="Bulk Upload" v={<Stat on={p.bulkUpload} />} />
+           <KV k="Compute Running Balance" v={<Stat on={p.computeRunningBalance} />} />
+           <KV k="Validate Running Balance" v={<Stat on={p.validateRunningBalance} />} />
+-          <KV k="Running Balance Cleanup" v={<Stat on={p.runningBalanceCleanup} />} />
++          <KV k="Running Balance Cleanup" v={p.runningBalanceCleanup ? <span className="chip-stat on"><Check size={11} /> Remove “{p.cleanupChars}”</span> : <Stat on={false} />} />
+           <KV k="Direct Match" v={<Stat on={p.directMatch} />} />
+           <KV k="Descending Order" v={<Stat on={p.descendingOrder} />} />
+           <KV k="Reconciliation Type" v={<span className="chip-stat text">{p.reconciliationType}</span>} />
+         </Section>
+       </div>
+     </div>
++  );
++}
++
++const testRegex = (pat) => { try { new RegExp(pat); return true; } catch (e) { return false; } };
++
++/** PRD — masked account number pattern; shows whether it lines up with the selected account. */
++function MaskedCheck({ pattern, account }) {
++  if (!pattern) return <span className="muted" style={{ fontSize: 12 }}>Use when the statement prints the account partly hidden. Files carrying this value are linked to this account.</span>;
++  const digits = (pattern.match(/\d+$/) || [""])[0];
++  if (!account || !digits) return null;
++  const ok = account.endsWith(digits) && pattern.length === account.length;
++  return <span className={ok ? "field-ok" : "field-warn"} data-testid="masked-check">{ok ? <><Check size={12} /> Matches account ending {digits}</> : <><AlertTriangle size={12} /> Does not line up with the selected account ({maskAccount(account)}, {account.length} digits)</>}</span>;
++}
++
++/** R6 — email as a governed backup channel: which mails are picked up, what is accepted, what happens to the rest. */
++function EmailRules({ form, setConn, errors, isView, A }) {
++  const c = form.connection;
++  const types = attachmentTypesFor(form.fileConfig.fileType, c.zipOption);
++  return (
++    <>
++      <Note kind="info" icon={Mail}>Email is a backup channel. The file a bank emails is often laid out differently from its portal/API file, so the same account can have a separate email setup with its own file settings.</Note>
++      <div className="form-grid" style={{ marginTop: 14 }}>
++        <div className="field"><label className="field-label">Sender Email</label><input className={"input" + (errors.sender ? " invalid" : "")} value={c.sender} disabled={isView} onChange={(e) => setConn({ sender: e.target.value })} placeholder="statements@bank.com" data-testid="field-sender" {...A("sender", c.sender, (v) => setConn({ sender: v }))} />{errors.sender && <span className="field-error">{errors.sender}</span>}</div>
++        <div className="field"><label className="field-label">Receiver Email <span className="muted">(CAMS mailbox)</span></label><input className={"input" + (errors.receiver ? " invalid" : "")} value={c.receiver} disabled={isView} onChange={(e) => setConn({ receiver: e.target.value })} placeholder={"recon.ops" + CAMS_DOMAIN} data-testid="field-receiver" {...A("receiver", c.receiver, (v) => setConn({ receiver: v }))} />{errors.receiver && <span className="field-error">{errors.receiver}</span>}</div>
++        <div className="field full">
++          <label className="field-label">Email Subject Pattern <span className="muted">— use % for the part that changes daily (date, serial no.)</span></label>
++          <input className={"input" + (errors.subjectPattern ? " invalid" : "")} value={c.subjectPattern} disabled={isView} onChange={(e) => setConn({ subjectPattern: e.target.value })} placeholder="HDFC Bank Account Statement 4512%" data-testid="field-subject" {...A("subjectPattern", c.subjectPattern, (v) => setConn({ subjectPattern: v }))} />
++          {errors.subjectPattern && <span className="field-error">{errors.subjectPattern}</span>}
++          <PatternTester pattern={c.subjectPattern} kind="like" names={exampleSubjects(form.bankName || "Bank", form.accountNumber || "0000")} label="Recent subjects from this sender" />
++        </div>
++        <div className="field"><label className="field-label">Attachment file name pattern <span className="muted">(optional)</span></label><input className="input tnum" value={c.attachmentPattern} disabled={isView} onChange={(e) => setConn({ attachmentPattern: e.target.value })} placeholder="Leave blank to accept any name" data-testid="field-attach-pattern" /></div>
++        <div className="field"><label className="field-label">Attachment is ZIP?</label><select className="select" value={c.zipOption} disabled={isView} onChange={(e) => setConn({ zipOption: e.target.value })} data-testid="field-bank-zip"><option value="none">No ZIP</option><option value="zip">ZIP without password</option><option value="zippw">ZIP with password</option></select></div>
++        {c.zipOption === "zippw" && <div className="field"><label className="field-label">ZIP Password</label>{c.zipPasswordSet && !c._zipPassword ? <span className="field-ok"><ShieldCheck size={12} /> Set in vault</span> : <PasswordInput value={c._zipPassword} onChange={(v) => setConn({ _zipPassword: v })} id="field-bank-zip-password" onFocus={() => { if (!c._zipPassword) setConn({ _zipPassword: mockValue("password") }); }} />}{errors.zipPassword && <span className="field-error">{errors.zipPassword}</span>}</div>}
++        <div className="field full">
++          <label className="field-label">Accepted attachment types <span className="muted">— from the File Type in the next step</span></label>
++          <div className="chip-row">{types.length ? types.map((t) => <span key={t} className="chip chip-previous tnum">{t}</span>) : <span className="muted">Pick a File Type in File Configuration</span>}</div>
++        </div>
++      </div>
++      <div className="email-rules" data-testid="email-rules">
++        <b>What happens to each email</b>
++        <div><Check size={13} /> Sender, receiver and subject match, attachment type allowed → file is validated and loaded.</div>
++        <div><X size={13} /> Anything else → <b>rejected and logged</b> with the reason in Bank files → Email intake, where it can be assigned or reprocessed.</div>
++      </div>
++      {!isView && <div style={{ marginTop: 12 }}><VaultNote /></div>}
++    </>
++  );
++}
++
++/** R2 + R4 — file layout (standard format or sample-detected custom file) and the SFTP drop folder. */
++function FileStep({ form, setFile, markEdited, errors, isView, A, analysing, showPreview, onPickFile, onClear }) {
++  const fc = form.fileConfig;
++  const std = isStandard(fc.fileType);
++  const sample = detectFor(fc.sampleFileName);
++  const preview = buildPreview(fc.sampleFileName);
++  const bank = BANKS.find((b) => b.name === form.bankName);
++  const auto = (k) => fc.detected?.[k] && !fc.edited?.[k] ? <span className="chip chip-auto"><Sparkles size={10} /> Auto-detected</span> : null;
++  return (
++    <>
++      <div className="step-title">File Configuration</div>
++      <p className="step-desc">Drop one real statement. The system works out the layout; you check it. Standard bank formats need no mapping at all.</p>
++      <FileDropZone fileName={fc.sampleFileName} onPick={onPickFile} onClear={onClear} hint="Drop a sample statement — file type, separator, start row and column are filled in for you" />
++      {sample?.mismatch && showPreview && <div style={{ marginTop: 14 }}><Note kind="warn">File extension says <b>XLS</b> but content looks like <b>HTML/CSV</b> — settings pre-filled from content.</Note></div>}
++      {analysing && <div className="analysing" data-testid="analysing"><div className="spinner" /><div><b>Analysing file…</b><div style={{ fontSize: 12, color: "hsl(var(--muted))" }}>Checking for a standard format, then header row, separator and column layout</div></div></div>}
++
++      {!analysing && (
++        <div className="form-grid" style={{ marginTop: 18 }}>
++          <div className="field">
++            <label className="field-label">File Type {auto("fileType")}</label>
++            <select className={"select" + (errors.fileType ? " invalid" : "")} value={fc.fileType} disabled={isView} data-testid="field-file-type" onChange={(e) => { setFile({ fileType: e.target.value }); markEdited("fileType"); }}>
++              <option value="">Select format…</option>
++              <optgroup label="Bank standard formats — no column mapping needed">{Object.entries(STANDARD_FORMATS).map(([k, d]) => <option key={k} value={k}>{k} — {d.split(" — ")[1]}</option>)}</optgroup>
++              <optgroup label="Custom file — needs column mapping">{FILE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</optgroup>
++            </select>
++            {errors.fileType && <span className="field-error">{errors.fileType}</span>}
++          </div>
++          {!std && isDelimited(fc.fileType) && (
++            <div className="field">
++              <label className="field-label">File Separator {auto("separator")}</label>
++              <select className={"select" + (errors.separator ? " invalid" : "")} value={fc.separator} disabled={isView} data-testid="field-separator" onChange={(e) => { setFile({ separator: e.target.value }); markEdited("separator"); }}>
++                <option value="">Select…</option>{SEPARATORS.map(([v, l]) => <option key={l} value={v}>{l}</option>)}
++              </select>
++              {errors.separator && <span className="field-error">{errors.separator}</span>}
++            </div>
++          )}
++          {!std && <>
++            <div className="field"><label className="field-label">File Start Row {auto("startRow")}</label><input className={"input tnum" + (errors.startRow ? " invalid" : "")} value={fc.startRow} disabled={isView} data-testid="field-startrow" onChange={(e) => { setFile({ startRow: e.target.value }); markEdited("startRow"); }} />{errors.startRow && <span className="field-error">{errors.startRow}</span>}</div>
++            <div className="field"><label className="field-label">File Start Column {auto("startColumn")}</label><input className={"input tnum" + (errors.startColumn ? " invalid" : "")} value={fc.startColumn} disabled={isView} data-testid="field-startcol" onChange={(e) => { setFile({ startColumn: e.target.value }); markEdited("startColumn"); }} />{errors.startColumn && <span className="field-error">{errors.startColumn}</span>}</div>
++          </>}
++        </div>
++      )}
++
++      {std && !analysing && (
++        <div className="std-box" data-testid="standard-format">
++          <Note kind="info" icon={ShieldCheck}><b>{fc.fileType}</b> is a bank standard format. A pre-built parser reads the transaction tags (date, credit/debit mark, amount, reference, narration), so start row, start column and column mapping are not needed.</Note>
++          {sample?.parsed && <table className="tc-rows" style={{ marginTop: 10 }}><thead><tr>{sample.parsed[0].map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{sample.parsed.slice(1).map((r, i) => <tr key={i}>{r.map((x, j) => <td key={j} className="tnum">{x}</td>)}</tr>)}</tbody></table>}
++        </div>
++      )}
++      {!std && showPreview && !analysing && preview && (
++        <PreviewTable {...preview} startColumn={parseInt(fc.startColumn, 10) || 1} headerIdx={(parseInt(fc.startRow, 10) || preview.headerIdx + 1) - 1} />
++      )}
++
++      <div className="section-title">Upload Destination (SFTP)</div>
++      <div className="form-grid">
++        <div className="field"><label className="field-label">File Upload Path</label><input className={"input" + (errors.uploadPath ? " invalid" : "")} value={fc.uploadPath} disabled={isView} onChange={(e) => setFile({ uploadPath: e.target.value })} placeholder="/mnt/bank-uploads/statements/" data-testid="field-upload-path" {...A("uploadPath", fc.uploadPath, (v) => setFile({ uploadPath: v }))} />{errors.uploadPath && <span className="field-error">{errors.uploadPath}</span>}</div>
++        <div className="field"><label className="field-label">File Upload Username</label><input className="input" value={fc.uploadUser} disabled={isView} onChange={(e) => setFile({ uploadUser: e.target.value })} data-testid="field-upload-user" {...A("uploadUser", fc.uploadUser, (v) => setFile({ uploadUser: v }))} /></div>
++        <div className="field"><label className="field-label">File Upload Password</label>{fc.uploadPasswordSet && !fc._uploadPassword ? <span className="field-ok"><ShieldCheck size={12} /> Set in vault</span> : <PasswordInput value={fc._uploadPassword} onChange={(v) => setFile({ _uploadPassword: v })} id="field-upload-password" onFocus={() => { if (!fc._uploadPassword) setFile({ _uploadPassword: mockValue("uploadPassword") }); }} />}</div>
++        <div className="field">
++          <label className="field-label">File name pattern <span className="muted">(which files in this folder belong to this setup)</span></label>
++          <input className={"input tnum" + (errors.fileNamePattern ? " invalid" : "")} value={fc.fileNamePattern} disabled={isView} placeholder={`${bank?.code || "SBIN"}_${(form.accountNumber || "3313").slice(-4)}_\\d{8}\\.${extFor(fc.fileType)}`} onChange={(e) => setFile({ fileNamePattern: e.target.value })} data-testid="field-file-name-pattern" />
++          {errors.fileNamePattern && <span className="field-error">{errors.fileNamePattern}</span>}
++        </div>
++        <div className="field full">
++          <PatternTester pattern={fc.fileNamePattern} names={exampleFileNames(bank?.code || "BANK", form.accountNumber || "0000", extFor(fc.fileType))} label="Files seen in this folder" />
++          <span className="muted" style={{ fontSize: 12 }}>\d{8} = the 8-digit date. Files that match no setup are not loaded; they are logged for review.</span>
++        </div>
++      </div>
++    </>
+   );
+ }
+diff --color -ruN a/frontend/src/features/creditMis/CreditMisWizard.js frontend/src/features/creditMis/CreditMisWizard.js
+--- a/frontend/src/features/creditMis/CreditMisWizard.js	2026-10-21 17:48:55
++++ b/frontend/src/features/creditMis/CreditMisWizard.js	2026-10-21 19:00:19
+@@ -1,6 +1,6 @@
+ import React from "react";
+ import { useNavigate, useParams } from "react-router-dom";
+-import { ArrowLeft, ArrowRight, Save, RotateCcw, Send, X, Wand2 } from "lucide-react";
++import { ArrowLeft, ArrowRight, Save, RotateCcw, Send, X, Wand2, Check } from "lucide-react";
+ import { useStore } from "@/state/store";
+ import { CREDIT_MODES, RECON_TYPES, PA_CODES, PAY_MECHANISMS } from "@/lib/constants";
+ import { BANKS, accountsFor, accountMeta } from "@/mock/bankMaster";
+@@ -12,6 +12,8 @@
+ import { ConfirmModal } from "@/components/Modal";
+ import { Toggle, PasswordInput, Note, VaultNote } from "@/components/bits";
+ import { detectFor, buildPreview } from "@/mock/sampleFiles";
++import { FILE_TYPES, isDelimited, SEPARATORS, INSTRUMENT_STATUS, REVERSAL_CODES, LIABILITY_CATEGORIES, attachmentTypesFor, CAMS_DOMAIN, defaultSchedule } from "@/lib/setupSchema";
++import { PatternTester, ScheduleField, TestConnection, ChangesCard } from "@/features/setup/SetupBits";
+ import { maskAccount, uid } from "@/lib/format";
+ import { toast } from "sonner";
+ 
+@@ -26,9 +28,9 @@
+     id: uid("cm"), kind: "credit_config", sno: null, feedMode: "email",
+     bankName: "", bankCode: "", accountNumber: "", paCodes: [], payMechanism: "", accountCategory: "Pool",
+     schemeCode: "", assetClass: "", fileFormat: "", status: "new", owner: "Priya", rejection: null, lastUpdated: null,
+-    connection: { url: "", userId: "", _password: "", fromEmail: "", receiverEmail: "", subject: "", fileNamePattern: "", matchType: "Prefix", zipOption: "none", _zipPassword: "" },
+-    fileConfig: { fileFormat: "", separator: "", startRow: "", startColumn: "", instrumentStatus: "SUCCESS", failureReasonCode: "NA", sampleFileName: null, detected: {}, edited: {} },
+-    processing: { dateTimeUpdate: true, reconciliationType: "Subscription", isActive: true },
++    connection: { url: "", userId: "", _password: "", schedule: defaultSchedule(), fromEmail: "", receiverEmail: "", subject: "", fileNamePattern: "", matchType: "Prefix", zipOption: "none", _zipPassword: "" },
++    fileConfig: { fileFormat: "", separator: "", startRow: "", startColumn: "", instrumentStatus: "", failureReasonCode: "", sampleFileName: null, detected: {}, edited: {} },
++    processing: { dateTimeUpdate: true, reconciliationType: "Subscription", liabilityCategory: "", isActive: true },
+   };
+ }
+ 
+@@ -39,7 +41,7 @@
+ 
+   const initial = React.useMemo(() => {
+     const base = defaults();
+-    if (id) { const rec = get("credit_config", id); if (rec) { const c = JSON.parse(JSON.stringify(rec)); return { ...base, ...c, connection: { ...base.connection, ...c.connection }, fileConfig: { ...base.fileConfig, ...c.fileConfig }, processing: { ...base.processing, ...c.processing } }; } }
++    if (id) { const rec = get("credit_config", id); if (rec) { const c = JSON.parse(JSON.stringify(rec)); if (["active", "inactive"].includes(rec.status)) c.baseline = JSON.parse(JSON.stringify(rec)); return { ...base, ...c, connection: { ...base.connection, ...c.connection }, fileConfig: { ...base.fileConfig, ...c.fileConfig }, processing: { ...base.processing, ...c.processing } }; } }
+     return base;
+   }, [id, get]);
+ 
+@@ -93,11 +95,16 @@
+     if (form.paCodes.length === 0) { e.paCodes = "Select at least one aggregator"; es[1] = true; }
+     if (!form.fileConfig.fileFormat) { e.fileFormat = "File format required"; es[2] = true; }
+     if (!form.fileConfig.startRow) { e.startRow = "Header position required"; es[2] = true; }
+-    if (form.accountCategory === "Pool" && !form.schemeCode) { /* scheme optional at config for pool */ }
++    if (isDelimited(form.fileConfig.fileFormat) && !form.fileConfig.separator) { e.separator = "File separator required"; es[2] = true; }
++    if (form.feedMode === "email") {
++      if (form.connection.receiverEmail && !form.connection.receiverEmail.toLowerCase().endsWith(CAMS_DOMAIN)) { e.receiverEmail = `Receiver must be a CAMS mailbox (${CAMS_DOMAIN})`; es[3] = true; }
++      if (form.connection.zipOption === "zippw" && !form.connection._zipPassword && !form.connection.zipPasswordSet) { e.zipPassword = "ZIP password required"; es[3] = true; }
++    }
++    if (form.processing.reconciliationType === "Liability" && !form.processing.liabilityCategory) { e.liabilityCategory = "Pick the liability category"; es[4] = true; }
+     return { e, es };
+   };
+ 
+-  const persist = (d) => { const o = { ...d }; if (o.connection._password) o.connection = { ...o.connection, passwordSet: true, _password: "" }; return o; };
++  const persist = (d) => { const o = { ...d }; if (o.connection._password) o.connection = { ...o.connection, passwordSet: true, _password: "" }; if (o.connection._zipPassword) o.connection = { ...o.connection, zipPasswordSet: true, _zipPassword: "" }; return o; };
+ 
+   const doSaveDraft = () => { savedRef.current = saveDraft("credit_config", persist(form), label); toast.success("Saved as Draft"); nav("/credit-mis"); };
+   const doSubmit = () => {
+@@ -112,18 +119,18 @@
+ 
+   const fillAgg = () => { const b = pick(BANKS); const a = pick(accountsFor(b.name)); set({ bankName: b.name, bankCode: b.code, accountNumber: a.accountNumber, schemeCode: a.schemeCode, assetClass: a.assetClass, paCodes: form.paCodes.length ? form.paCodes : [pick(PA_CODES), pick(PA_CODES)].filter((v, i, s) => s.indexOf(v) === i), payMechanism: form.payMechanism || pick(PAY_MECHANISMS) }); };
+   const fillModeSpec = (fm) => {
+-    if (fm === "email") setConn({ fromEmail: mockValue("fromEmail"), receiverEmail: mockValue("receiverEmail"), subject: mockValue("subject"), fileNamePattern: mockValue("fileNamePattern"), zipOption: "zippw", _zipPassword: mockValue("password") });
++    if (fm === "email") setConn({ fromEmail: mockValue("fromEmail"), receiverEmail: mockValue("receiverEmail"), subject: mockValue("subject") + "%", fileNamePattern: mockValue("fileNamePattern"), zipOption: "zippw", _zipPassword: mockValue("password") });
+     else if (fm === "auto") setConn({ url: "https://dashboard.razorpay.com/app/settlements/export", userId: mockValue("userId"), _password: mockValue("password") });
+     else if (fm === "manual") setConn({ fileNamePattern: mockValue("fileNamePattern") + ".csv" });
+   };
+-  const fillFile = () => { if (!form.fileConfig.sampleFileName) onPickFile(pick(Object.keys(DEMO_FILES))); setFile({ failureReasonCode: mockValue("failureReasonCode") }); };
++  const fillFile = () => { if (!form.fileConfig.sampleFileName) onPickFile(pick(Object.keys(DEMO_FILES).filter((f) => !DEMO_FILES[f].standard))); setFile({ instrumentStatus: "D", failureReasonCode: "R01" }); };
+   const fillStep = () => {
+     const k = STEPS[step].key;
+     if (k === "mode") set({ feedMode: pick(Object.keys(CREDIT_MODES)) });
+     else if (k === "agg") fillAgg();
+     else if (k === "file") fillFile();
+     else if (k === "modespec") fillModeSpec(form.feedMode);
+-    else if (k === "proc") setProc({ reconciliationType: pick(RECON_TYPES) });
++    else if (k === "proc") { const t = pick(RECON_TYPES); setProc({ reconciliationType: t, liabilityCategory: t === "Liability" ? pick(LIABILITY_CATEGORIES) : "" }); }
+     else { if (!form.bankName) fillAgg(); fillFile(); fillModeSpec(form.feedMode); }
+     toast.success(k === "review" ? "All steps filled with sample data" : "Step filled with sample data");
+   };
+@@ -177,12 +184,21 @@
+             {showPreview && !analysing && (<>
+               <div className="form-grid" style={{ marginTop: 18 }}>
+                 <div className="field"><label className="field-label">File Format</label>
+-                  <select className="select" value={form.fileConfig.fileFormat} data-testid="field-credit-format" onChange={(e) => { setFile({ fileFormat: e.target.value }); markEdited("fileFormat"); }}>{["CSV", "TXT", "XLSX", "XLS"].map((t) => <option key={t}>{t}</option>)}</select></div>
+-                {["CSV", "TXT"].includes(form.fileConfig.fileFormat) && <div className="field"><label className="field-label">File Separator</label><input className="input" value={form.fileConfig.separator} onChange={(e) => { setFile({ separator: e.target.value }); markEdited("separator"); }} /></div>}
++                  <select className="select" value={form.fileConfig.fileFormat} data-testid="field-credit-format" onChange={(e) => { setFile({ fileFormat: e.target.value }); markEdited("fileFormat"); }}>{FILE_TYPES.map((t) => <option key={t}>{t}</option>)}</select></div>
++                {isDelimited(form.fileConfig.fileFormat) && <div className="field"><label className="field-label">File Separator</label><select className={"select" + (errors.separator ? " invalid" : "")} value={form.fileConfig.separator} onChange={(e) => { setFile({ separator: e.target.value }); markEdited("separator"); }}><option value="">Select…</option>{SEPARATORS.map(([v, l]) => <option key={l} value={v}>{l}</option>)}</select></div>}
+                 <div className="field"><label className="field-label">Header Position (row, column)</label>
+                   <div style={{ display: "flex", gap: 8 }}><input className="input tnum" style={{ width: 80 }} value={form.fileConfig.startRow} data-testid="field-credit-row" onChange={(e) => { setFile({ startRow: e.target.value }); markEdited("startRow"); }} /><input className="input tnum" style={{ width: 80 }} value={form.fileConfig.startColumn} onChange={(e) => { setFile({ startColumn: e.target.value }); markEdited("startRow"); }} /></div></div>
+-                <div className="field"><label className="field-label">Instrument Status</label><select className="select" value={form.fileConfig.instrumentStatus} onChange={(e) => setFile({ instrumentStatus: e.target.value })}>{["SUCCESS", "FAILURE", "PENDING", "ALL"].map((t) => <option key={t}>{t}</option>)}</select></div>
+-                <div className="field"><label className="field-label">Failure Reason Code</label><input className="input" value={form.fileConfig.failureReasonCode} data-testid="field-failure-code" onChange={(e) => setFile({ failureReasonCode: e.target.value })} {...A("failureReasonCode", form.fileConfig.failureReasonCode, (v) => setFile({ failureReasonCode: v }))} /></div>
++                <div className="field"><label className="field-label">Instrument Status <span className="muted">(optional)</span></label>
++                  <select className="select" value={form.fileConfig.instrumentStatus} data-testid="field-instrument-status" onChange={(e) => setFile({ instrumentStatus: e.target.value, failureReasonCode: e.target.value === "C" ? "" : form.fileConfig.failureReasonCode })}>
++                    <option value="">Not selected — use the file's status column</option>{INSTRUMENT_STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
++                  </select>
++                  <span className="muted" style={{ fontSize: 12 }}>{form.fileConfig.instrumentStatus === "C" ? "Every row is treated as a successful payment, unless the file has its own status column." : form.fileConfig.instrumentStatus === "D" ? "Every row is treated as a failed payment, unless the file has its own status column." : "Used only when the file has no status column."}</span></div>
++                <div className="field"><label className="field-label">Failure Reason Code</label>
++                  <select className="select" value={form.fileConfig.failureReasonCode} disabled={form.fileConfig.instrumentStatus === "C"} data-testid="field-failure-code" onChange={(e) => setFile({ failureReasonCode: e.target.value })}>
++                    <option value="">{form.fileConfig.instrumentStatus === "C" ? "Not needed for C (Credit)" : "Select reversal code…"}</option>
++                    {REVERSAL_CODES.filter((r) => r.active).map((r) => <option key={r.code} value={r.code}>{r.code} — {r.remark}</option>)}
++                  </select>
++                  <span className="muted" style={{ fontSize: 12 }}>From the Reversal Remarks table. A code in the file always wins.</span></div>
+               </div>
+               <PreviewTable {...buildPreview(form.fileConfig.sampleFileName)} startColumn={parseInt(form.fileConfig.startColumn, 10) || 1} headerIdx={(parseInt(form.fileConfig.startRow, 10) || buildPreview(form.fileConfig.sampleFileName).headerIdx + 1) - 1} />
+             </>)}
+@@ -193,20 +209,31 @@
+             {form.feedMode === "email" && (<>
+               <div className="form-grid">
+                 <div className="field"><label className="field-label">From Email ID</label><input className="input" value={form.connection.fromEmail} onChange={(e) => setConn({ fromEmail: e.target.value })} data-testid="field-from-email" {...A("fromEmail", form.connection.fromEmail, (v) => setConn({ fromEmail: v }))} /></div>
+-                <div className="field"><label className="field-label">Receiver Email ID</label><input className="input" value={form.connection.receiverEmail} data-testid="field-receiver-email" onChange={(e) => setConn({ receiverEmail: e.target.value })} {...A("receiverEmail", form.connection.receiverEmail, (v) => setConn({ receiverEmail: v }))} /></div>
+-                <div className="field full"><label className="field-label">Email Subject</label><input className="input" value={form.connection.subject} data-testid="field-email-subject" onChange={(e) => setConn({ subject: e.target.value })} {...A("subject", form.connection.subject, (v) => setConn({ subject: v }))} /></div>
+-                <div className="field"><label className="field-label">File Name Pattern</label><input className="input" value={form.connection.fileNamePattern} data-testid="field-file-pattern" onChange={(e) => setConn({ fileNamePattern: e.target.value })} placeholder="CreditMIS_*" {...A("fileNamePattern", form.connection.fileNamePattern, (v) => setConn({ fileNamePattern: v }))} /></div>
++                <div className="field"><label className="field-label">Receiver Email ID <span className="muted">(CAMS mailbox)</span></label><input className={"input" + (errors.receiverEmail ? " invalid" : "")} value={form.connection.receiverEmail} data-testid="field-receiver-email" onChange={(e) => setConn({ receiverEmail: e.target.value })} {...A("receiverEmail", form.connection.receiverEmail, (v) => setConn({ receiverEmail: v }))} />{errors.receiverEmail && <span className="field-error">{errors.receiverEmail}</span>}</div>
++                <div className="field full"><label className="field-label">Email Subject <span className="muted">— % for the part that changes daily</span></label><input className="input" value={form.connection.subject} data-testid="field-email-subject" onChange={(e) => setConn({ subject: e.target.value })} {...A("subject", form.connection.subject, (v) => setConn({ subject: v + "%" }))} />
++                  <PatternTester pattern={form.connection.subject} kind="like" names={[`${(form.connection.subject || "Daily Collection MIS").replace(/%/g, "")} 20-10-2026`, `${(form.connection.subject || "Daily Collection MIS").replace(/%/g, "")} 21-10-2026`, "RE: Settlement query"]} label="Recent subjects" /></div>
++                <div className="field"><label className="field-label">File Name Pattern</label><input className="input" value={form.connection.fileNamePattern} data-testid="field-file-pattern" onChange={(e) => setConn({ fileNamePattern: e.target.value })} placeholder="CreditMIS_" {...A("fileNamePattern", form.connection.fileNamePattern, (v) => setConn({ fileNamePattern: v }))} /></div>
+                 <div className="field"><label className="field-label">Match Type</label><select className="select" value={form.connection.matchType} onChange={(e) => setConn({ matchType: e.target.value })}>{["Prefix", "Suffix", "Contains", "Exact"].map((t) => <option key={t}>{t}</option>)}</select></div>
++                <div className="field full"><PatternTester pattern={form.connection.fileNamePattern} kind={form.connection.matchType} names={misNames(form)} label="Attachments seen" /></div>
+                 <div className="field"><label className="field-label">File Format ZIP</label><select className="select" value={form.connection.zipOption} data-testid="field-zip" onChange={(e) => setConn({ zipOption: e.target.value })}><option value="none">No ZIP</option><option value="zip">ZIP without password</option><option value="zippw">ZIP with password</option></select></div>
+-                {form.connection.zipOption === "zippw" && <div className="field"><label className="field-label">ZIP Password</label><PasswordInput value={form.connection._zipPassword} onChange={(v) => setConn({ _zipPassword: v })} id="field-zip-password" onFocus={() => { if (!form.connection._zipPassword) setConn({ _zipPassword: mockValue("password") }); }} /></div>}
++                {form.connection.zipOption === "zippw" && <div className="field"><label className="field-label">ZIP Password</label><PasswordInput value={form.connection._zipPassword} onChange={(v) => setConn({ _zipPassword: v })} id="field-zip-password" onFocus={() => { if (!form.connection._zipPassword) setConn({ _zipPassword: mockValue("password") }); }} />{errors.zipPassword && <span className="field-error">{errors.zipPassword}</span>}</div>}
++                <div className="field full"><label className="field-label">Accepted attachment types</label><div className="chip-row">{attachmentTypesFor(form.fileConfig.fileFormat, form.connection.zipOption).map((t) => <span key={t} className="chip chip-previous tnum">{t}</span>)}</div></div>
+               </div>
++              <div className="email-rules"><b>What happens to each email</b><div><Check size={13} /> From, receiver, subject and file name match → file is validated and loaded.</div><div><X size={13} /> Anything else → <b>rejected and logged</b> with the reason, for review and reprocess.</div></div>
++              <div style={{ marginTop: 12 }}><VaultNote /></div>
+             </>)}
+             {form.feedMode === "auto" && (<><div className="form-grid">
+               <div className="field"><label className="field-label">URL</label><input className="input" value={form.connection.url} onChange={(e) => setConn({ url: e.target.value })} data-testid="field-credit-url" {...af("url", form.connection.url, (v) => setConn({ url: "https://dashboard.razorpay.com/app/settlements/export" }), {})} /></div>
+               <div className="field"><label className="field-label">User ID</label><input className="input" value={form.connection.userId} data-testid="field-credit-userid" onChange={(e) => setConn({ userId: e.target.value })} {...A("userId", form.connection.userId, (v) => setConn({ userId: v }))} /></div>
+               <div className="field full"><label className="field-label">Password</label><PasswordInput value={form.connection._password} onChange={(v) => setConn({ _password: v })} id="field-credit-password" onFocus={() => { if (!form.connection._password) setConn({ _password: mockValue("password") }); }} /></div>
+-            </div><div style={{ marginTop: 12 }}><VaultNote /></div></>)}
+-            {form.feedMode === "manual" && <div className="form-grid"><div className="field full"><label className="field-label">File Name Pattern</label><input className="input" value={form.connection.fileNamePattern} data-testid="field-manual-pattern" onChange={(e) => setConn({ fileNamePattern: e.target.value })} placeholder="CreditMIS_*.csv" {...A("fileNamePattern", form.connection.fileNamePattern, (v) => setConn({ fileNamePattern: v + ".csv" }))} /></div></div>}
++              <ScheduleField value={form.connection.schedule} onChange={(v) => setConn({ schedule: v })} />
++            </div><div style={{ marginTop: 12 }}><VaultNote /></div>
++            <TestConnection conn={{ url: form.connection.url, loginId: form.connection.userId }} mode="auto" /></>)}
++            {form.feedMode === "manual" && <div className="form-grid">
++              <div className="field"><label className="field-label">File Name Pattern</label><input className="input" value={form.connection.fileNamePattern} data-testid="field-manual-pattern" onChange={(e) => setConn({ fileNamePattern: e.target.value })} placeholder="CreditMIS_" {...A("fileNamePattern", form.connection.fileNamePattern, (v) => setConn({ fileNamePattern: v }))} /></div>
++              <div className="field"><label className="field-label">Match Type</label><select className="select" value={form.connection.matchType} onChange={(e) => setConn({ matchType: e.target.value })}>{["Prefix", "Suffix", "Contains", "Exact"].map((t) => <option key={t}>{t}</option>)}</select></div>
++              <div className="field full"><PatternTester pattern={form.connection.fileNamePattern} kind={form.connection.matchType} names={misNames(form)} label="Files uploaded recently" /></div>
++            </div>}
+           </>)}
+ 
+           {STEPS[step].key === "proc" && (<>
+@@ -214,17 +241,19 @@
+             <div className="toggle-list">
+               <div className="toggle-row"><div className="tr-txt"><b>Date &amp; Time Update</b><span>Update credit date &amp; time from the MIS file.</span></div><div className="sw-wrap"><Toggle checked={form.processing.dateTimeUpdate} onChange={(v) => setProc({ dateTimeUpdate: v })} id="toggle-datetime" /></div></div>
+               <div className="toggle-row"><div className="tr-txt"><b>Is Active</b><span>Feed becomes Active on approval.</span></div><div className="sw-wrap"><Toggle checked={form.processing.isActive} onChange={(v) => setProc({ isActive: v })} id="toggle-credit-active" /></div></div>
+-              <div className="toggle-row"><div className="tr-txt"><b>Reconciliation Type</b><span>Which flows this feed reconciles.</span></div><div className="sw-wrap segmented">{RECON_TYPES.map((t) => <button key={t} className={form.processing.reconciliationType === t ? "on" : ""} onClick={() => setProc({ reconciliationType: t })}>{t}</button>)}</div></div>
++              <div className="toggle-row"><div className="tr-txt"><b>Reconciliation Type</b><span>Subscription collection, or liability payments.</span></div><div className="sw-wrap segmented" data-testid="credit-recon-type">{RECON_TYPES.map((t) => <button key={t} className={form.processing.reconciliationType === t ? "on" : ""} onClick={() => setProc({ reconciliationType: t, liabilityCategory: t === "Liability" ? form.processing.liabilityCategory : "" })}>{t}</button>)}</div></div>
++              {form.processing.reconciliationType === "Liability" && <div className="toggle-sub"><label className="field-label">Liability category</label><select className={"select" + (errors.liabilityCategory ? " invalid" : "")} style={{ maxWidth: 240 }} value={form.processing.liabilityCategory} onChange={(e) => setProc({ liabilityCategory: e.target.value })} data-testid="field-liability-cat"><option value="">Select…</option>{LIABILITY_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>{errors.liabilityCategory && <span className="field-error">{errors.liabilityCategory}</span>}</div>}
+             </div>
+           </>)}
+ 
+           {STEPS[step].key === "review" && (<div data-testid="credit-review">
+             <div className="step-title">Review &amp; Submit</div><p className="step-desc">Verify all details before submitting.</p>
++            <ChangesCard base={form.baseline} cur={form} />
+             <div className="review-grid">
+               <div className="rev-card"><div className="rc-head"><h4>Mode &amp; Feed</h4><button className="link" onClick={() => gotoStep(0)}>Edit</button></div><div className="rc-body"><div className="rev-row"><span className="k">Feed Mode</span><span className="v">{CREDIT_MODES[form.feedMode].label}</span></div></div></div>
+               <div className="rev-card"><div className="rc-head"><h4>Aggregator &amp; Account</h4><button className="link" onClick={() => gotoStep(1)}>Edit</button></div><div className="rc-body"><div className="rev-row"><span className="k">Bank</span><span className="v">{form.bankName || "—"}</span></div><div className="rev-row"><span className="k">Account</span><span className="v tnum">{form.accountNumber ? maskAccount(form.accountNumber) : "—"}</span></div><div className="rev-row"><span className="k">PA Codes</span><span className="v">{form.paCodes.join(", ") || "—"}</span></div><div className="rev-row"><span className="k">Category</span><span className="v">{form.accountCategory}</span></div></div></div>
+-              <div className="rev-card"><div className="rc-head"><h4>File Configuration</h4><button className="link" onClick={() => gotoStep(2)}>Edit</button></div><div className="rc-body"><div className="rev-row"><span className="k">Sample File</span><span className="v">{form.fileConfig.sampleFileName || "—"}</span></div><div className="rev-row"><span className="k">Format</span><span className="v">{form.fileConfig.fileFormat || "—"}</span></div><div className="rev-row"><span className="k">Header</span><span className="v tnum">{form.fileConfig.startRow},{form.fileConfig.startColumn}</span></div></div></div>
+-              <div className="rev-card"><div className="rc-head"><h4>Processing Controls</h4><button className="link" onClick={() => gotoStep(4)}>Edit</button></div><div className="rc-body"><div className="rev-row"><span className="k">Recon Type</span><span className="v">{form.processing.reconciliationType}</span></div><div className="rev-row"><span className="k">Is Active</span><span className="v">{form.processing.isActive ? "Yes" : "No"}</span></div></div></div>
++              <div className="rev-card"><div className="rc-head"><h4>File Configuration</h4><button className="link" onClick={() => gotoStep(2)}>Edit</button></div><div className="rc-body"><div className="rev-row"><span className="k">Sample File</span><span className="v">{form.fileConfig.sampleFileName || "—"}</span></div><div className="rev-row"><span className="k">Format</span><span className="v">{form.fileConfig.fileFormat || "—"}</span></div><div className="rev-row"><span className="k">Header</span><span className="v tnum">{form.fileConfig.startRow},{form.fileConfig.startColumn}</span></div><div className="rev-row"><span className="k">Instrument Status</span><span className="v">{form.fileConfig.instrumentStatus || "Not selected"}</span></div><div className="rev-row"><span className="k">Failure Reason</span><span className="v">{form.fileConfig.failureReasonCode || "—"}</span></div></div></div>
++              <div className="rev-card"><div className="rc-head"><h4>Processing Controls</h4><button className="link" onClick={() => gotoStep(4)}>Edit</button></div><div className="rc-body"><div className="rev-row"><span className="k">Recon Type</span><span className="v">{form.processing.reconciliationType}{form.processing.liabilityCategory ? " · " + form.processing.liabilityCategory : ""}</span></div><div className="rev-row"><span className="k">Is Active</span><span className="v">{form.processing.isActive ? "Yes" : "No"}</span></div></div></div>
+             </div>
+           </div>)}
+         </div>
+@@ -245,3 +274,5 @@
+     </div>
+   );
+ }
++
++const misNames = (form) => { const pa = (form.paCodes[0] || "Razorpay").toUpperCase(); const ext = (form.fileConfig.fileFormat || "CSV").toLowerCase(); return [`CreditMIS_${pa}_20261021.${ext}`, `SETTLE_${pa}_20261021_MIS.${ext}`, `PA_CREDIT_${pa}_20261021.${ext}`, `${pa}_refunds_20261021.${ext}`]; };
+diff --color -ruN a/frontend/src/features/mapping/MappingEditor.js frontend/src/features/mapping/MappingEditor.js
+--- a/frontend/src/features/mapping/MappingEditor.js	2026-10-21 17:48:55
++++ b/frontend/src/features/mapping/MappingEditor.js	2026-10-21 19:00:19
+@@ -1,88 +1,172 @@
+ import React from "react";
+ import { useNavigate, useParams } from "react-router-dom";
+-import { ArrowLeft, Check, AlertTriangle, RotateCcw, Save, Send, Sparkles, FileText, CheckCircle2, Clock } from "lucide-react";
++import { ArrowLeft, Check, AlertTriangle, RotateCcw, Save, Send, Sparkles, FileText, CheckCircle2, Clock, Ban, KeyRound, Scale, ShieldCheck } from "lucide-react";
+ import { useStore } from "@/state/store";
+ import StepIndicator from "@/components/StepIndicator";
+ import PreviewTable from "@/components/PreviewTable";
+ import { Modal } from "@/components/Modal";
+-import { Chip, Toggle } from "@/components/bits";
+-import { buildPreview, detectFor, DEMO_FILES } from "@/mock/sampleFiles";
+-import { formatDate } from "@/lib/format";
++import { Chip, Toggle, Note } from "@/components/bits";
++import { buildPreview, detectFor, sampleTable } from "@/mock/sampleFiles";
++import { matchHeader, suggestIncremental } from "@/lib/setupSchema";
++import { ChangesCard } from "@/features/setup/SetupBits";
++import { formatDate, uid } from "@/lib/format";
+ import { toast } from "sonner";
+ 
+ const STEPS = [{ key: "sample", label: "Sample File" }, { key: "header", label: "Pick Header" }, { key: "map", label: "Map Columns" }];
++const SPLIT_AMOUNT = ["INSTRM_AMOUNT_CREDIT", "INSTRM_AMOUNT_DEBIT"];
+ 
+ export default function MappingEditor() {
+   const { type, id } = useParams();
+   const nav = useNavigate();
+-  const { get, saveDraft, submit } = useStore();
++  const { get, saveDraft, submit, collections, act, currentUser } = useStore();
+ 
+   const rec = get("bank_mapping", id);
+-  const [mapping, setMapping] = React.useState(() => rec ? JSON.parse(JSON.stringify(rec)) : null);
++  const [mapping, setMapping] = React.useState(() => rec ? { ...JSON.parse(JSON.stringify(rec)), baseline: ["active", "inactive"].includes(rec.status) ? JSON.parse(JSON.stringify(rec)) : rec.baseline || null } : null);
+   const [step, setStep] = React.useState(0);
+   const [headerConfirmed, setHeaderConfirmed] = React.useState(rec?.headerConfirmed || false);
+   const [dateFormat, setDateFormat] = React.useState(rec?.dateFormat || "DD/MM/YYYY");
+   const [dialog, setDialog] = React.useState(null);
+   const [confirmSubmit, setConfirmSubmit] = React.useState(false);
+   const [overrides, setOverrides] = React.useState(0);
++  const [keyHint, setKeyHint] = React.useState(null);
+ 
+   if (!mapping) return <div className="card card-pad" data-testid="mapping-missing">Mapping not found. <button className="link" onClick={() => nav("/mapping")}>Back to list</button></div>;
+ 
++  if (mapping.standard) return (
++    <div data-testid="mapping-editor">
++      <div className="page-head"><div>
++        <button className="link" onClick={() => nav(`/mapping?tab=${type}`)}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to mappings</button>
++        <h1 style={{ marginTop: 6 }}>{mapping.bankName} — Column Mapping</h1>
++      </div></div>
++      <div className="card card-pad"><Note kind="info" icon={ShieldCheck}><b>{mapping.fileType}</b> is a bank standard format. The pre-built parser reads it, so there is no column mapping to maintain for this setup.</Note></div>
++    </div>
++  );
++
+   const isView = mapping.status === "pending";
+   const sampleFile = mapping.sampleFileName || "hdfc_statement_sep.csv";
+   const meta = detectFor(sampleFile);
+   const preview = buildPreview(sampleFile);
++  const table = sampleTable(sampleFile);
+   const columns = preview?.rows[preview.headerIdx]?.filter((c) => c && c.trim()) || [];
+-  const isHDFC = mapping.bankName === "HDFC Bank";
++  const fields = mapping.fields;
++  const isMapped = (sf) => fields.some((f) => f.systemField === sf && f.status === "mapped");
++  const amountCombined = isMapped("INSTRM_AMOUNT");
++  const fieldStatus = (f) => (amountCombined && SPLIT_AMOUNT.includes(f.systemField) ? "disabled" : f.status);
+ 
+   const statusMap = { sample: step === 0 ? "current" : "complete", header: step === 1 ? "current" : step > 1 ? "complete" : "upcoming", map: step === 2 ? "current" : "upcoming" };
+ 
+   const setField = (idx, patch) => setMapping((m) => ({ ...m, fields: m.fields.map((f, i) => i === idx ? { ...f, ...patch } : f) }));
+ 
+   const onMapColumn = (idx, col) => {
+-    const f = mapping.fields[idx];
+-    // mismatch demo: mapping a text column to an amount field
+-    if (col && f.systemField.includes("AMOUNT") && /narration|particulars|description|cheque/i.test(col)) {
+-      setDialog({ type: "mismatch", idx, col });
+-      return;
+-    }
+-    // column-in-use demo
+-    const usedBy = mapping.fields.findIndex((x, i) => i !== idx && x.mappedColumn === col && col);
+-    if (col && usedBy !== -1) { setDialog({ type: "inuse", idx, col, usedBy }); return; }
++    const f = fields[idx];
++    if (col && /AMOUNT|BALANCE/.test(f.systemField) && /narration|particulars|description|cheque|date/i.test(col)) { setDialog({ type: "mismatch", idx, col }); return; }
++    if (col && /DATE/.test(f.systemField) && /amount|credit|debit|balance/i.test(col)) { setDialog({ type: "mismatch", idx, col }); return; }
++    const usedBy = fields.findIndex((x, i) => i !== idx && x.mappedColumn === col && col && x.group === "input");
++    if (col && f.group === "input" && usedBy !== -1) { setDialog({ type: "inuse", idx, col, usedBy }); return; }
+     applyMap(idx, col);
+   };
+-  const applyMap = (idx, col) => setField(idx, { mappedColumn: col, source: col ? "manual" : "manual", status: col ? "mapped" : "pending" });
++  const applyMap = (idx, col) => setMapping((m) => {
++    let next = m.fields.map((f, i) => i === idx ? { ...f, mappedColumn: col, source: "manual", status: col ? "mapped" : "pending" } : f);
++    // PRD v1 — mapping INSTRM_AMOUNT disables (and clears) the separate credit / debit amount fields.
++    if (m.fields[idx].systemField === "INSTRM_AMOUNT" && col) next = next.map((f) => SPLIT_AMOUNT.includes(f.systemField) ? { ...f, mappedColumn: "", status: "pending", incremental: false } : f);
++    return { ...m, fields: next };
++  });
+ 
+-  const mappedCount = mapping.fields.filter((f) => f.status === "mapped").length;
+-  const patternCount = mapping.fields.filter((f) => f.source === "pattern" && f.status === "mapped").length;
+-  const prevCount = mapping.fields.filter((f) => f.source === "previous" && f.status === "mapped").length;
+-  const pendingCount = mapping.fields.filter((f) => f.status !== "mapped").length;
++  // R3 — map by header name; a column the previous mapping used but this file no longer has is flagged, never silently re-used by position.
++  const autoMapByName = () => {
++    let named = 0, missing = 0;
++    setMapping((m) => ({
++      ...m, fields: m.fields.map((f) => {
++        if (f.group !== "input") return f;
++        if (f.status === "mapped" && columns.includes(f.mappedColumn)) return f;
++        if (f.status === "mapped" && !columns.includes(f.mappedColumn)) { missing++; return { ...f, status: "mismatch", note: `“${f.mappedColumn}” is not in this file` }; }
++        const hit = columns.find((c) => matchHeader(f.systemField, c) && !(f.systemField === "BANK_STMT_DATE" && /value/i.test(c)));
++        if (!hit) return f;
++        named++;
++        return { ...f, mappedColumn: hit, source: "header", status: "mapped" };
++      }),
++    }));
++    toast.success(`${named} field${named !== 1 ? "s" : ""} mapped by header name${missing ? ` · ${missing} need re-mapping` : ""}`);
++  };
+ 
++  // R3 — suggest the Incremental (duplicate-key) flags from a uniqueness test on the sample rows.
++  const suggestKeys = () => {
++    if (!table) { toast.error("No sample rows to test"); return; }
++    const res = suggestIncremental(fields.map((f) => ({ ...f, status: fieldStatus(f) })), table.header, table.data);
++    setMapping((m) => ({ ...m, fields: m.fields.map((f) => ({ ...f, incremental: res.keys.includes(f.systemField) })) }));
++    setKeyHint(res);
++    toast.success(`Suggested ${res.keys.length} incremental flags`);
++  };
++
++  const mappedCount = fields.filter((f) => f.status === "mapped").length;
++  const headerCount = fields.filter((f) => f.source === "header" && f.status === "mapped").length;
++  const prevCount = fields.filter((f) => f.source === "previous" && f.status === "mapped").length;
++  const pendingCount = fields.filter((f) => f.group === "input" && fieldStatus(f) === "pending").length;
++  const incCount = fields.filter((f) => f.incremental && f.status === "mapped").length;
++
+   const validateSubmit = () => {
+-    const mandatoryUnmapped = mapping.fields.filter((f) => f.mandatory && f.status !== "mapped");
+-    const incrementalCount = mapping.fields.filter((f) => f.incremental && f.status === "mapped").length;
+-    const hasValueDate = mapping.fields.some((f) => f.systemField === "VALUE_DATE" && f.status === "mapped");
+-    const hasAmount = mapping.fields.some((f) => f.systemField === "TXN_AMOUNT" && f.status === "mapped");
+-    const hasNarration = mapping.fields.some((f) => f.systemField === "NARRATION" && f.status === "mapped");
++    const mandatoryUnmapped = fields.filter((f) => f.mandatory && fieldStatus(f) !== "mapped" && fieldStatus(f) !== "disabled");
++    const hasAmount = amountCombined || isMapped("INSTRM_AMOUNT_CREDIT") || isMapped("INSTRM_AMOUNT_DEBIT");
+     const errs = [];
+-    if (mandatoryUnmapped.length) errs.push(`${mandatoryUnmapped.length} mandatory field(s) not mapped`);
+-    if (incrementalCount < 3) errs.push(`At least 3 incremental flags required (currently ${incrementalCount})`);
+-    if (!hasValueDate) errs.push("Value Date must be mapped");
+-    if (!hasAmount) errs.push("Amount must be mapped");
+-    if (!hasNarration) errs.push("Narration must be mapped");
++    if (mandatoryUnmapped.length) errs.push(`${mandatoryUnmapped.length} required field(s) not mapped: ${mandatoryUnmapped.map((f) => f.systemField).join(", ")}`);
++    if (fields.some((f) => f.status === "mismatch")) errs.push("Some fields point to a column that is not in this file — re-map them");
++    if (incCount < 3) errs.push(`Enable at least 3 incremental flags (currently ${incCount})`);
++    if (!isMapped("VALUE_DATE")) errs.push("Value date must be mapped");
++    if (!hasAmount) errs.push("Amount must be mapped (INSTRM_AMOUNT, or credit / debit amounts)");
++    if (!isMapped("BANK_NARRATION") && !isMapped("BANK_DESCRIPTION")) errs.push("Narration must be mapped");
++    if (mapping.bulkUpload && !isMapped("BANK_AC_NO")) errs.push("Bank account number must be mapped — bulk upload is on for this setup");
+     return errs;
+   };
+ 
+-  const label = `${mapping.bankName} mapping · ${mapping.accountNumber.slice(-4)}`;
+-  const doSaveDraft = () => { saveDraft("bank_mapping", { ...mapping, headerConfirmed, dateFormat, overrides }, label); toast.success("Mapping saved as Draft"); nav(`/mapping?tab=${type}`); };
+-  const openSubmit = () => {
+-    const errs = validateSubmit();
++  const label = `${mapping.bankName} mapping · ${(mapping.accountNumber || "").slice(-4)}`;
++  const payload = () => ({ ...mapping, headerConfirmed, dateFormat, overrides });
++  const doSaveDraft = () => {
++    const errs = validateSubmit().filter((e) => /required|incremental|Value date|Amount|Narration|account number/i.test(e));
+     if (errs.length) { toast.error(errs[0]); return; }
+-    setConfirmSubmit(true);
++    saveDraft("bank_mapping", payload(), label); toast.success("Mapping saved as Draft"); nav(`/mapping?tab=${type}`);
+   };
+-  const doSubmit = () => { submit("bank_mapping", { ...mapping, headerConfirmed, dateFormat, overrides }, label); toast.success("Mapping submitted for approval"); setConfirmSubmit(false); nav(`/mapping?tab=${type}`); };
+-  const doReset = () => { setMapping(JSON.parse(JSON.stringify(rec))); setOverrides(0); toast("Mapping reset"); };
++  const openSubmit = () => { const errs = validateSubmit(); if (errs.length) { toast.error(errs[0]); return; } setConfirmSubmit(true); };
++  const doSubmit = () => { submit("bank_mapping", payload(), label); toast.success("Mapping submitted for approval"); setConfirmSubmit(false); nav(`/mapping?tab=${type}`); };
++  const doReset = () => { setMapping(JSON.parse(JSON.stringify(rec))); setOverrides(0); setKeyHint(null); toast("Mapping reset to last saved"); };
+ 
++  const actionBar = !isView && (
++    <div className="map-actions">
++      <button className="btn btn-success" onClick={openSubmit} data-testid="btn-map-submit"><Send size={15} /> Submit for Approval</button>
++      <button className="btn btn-outline" onClick={doSaveDraft} data-testid="btn-map-draft"><Save size={15} /> Save Mapping</button>
++      <button className="btn btn-ghost" onClick={doReset}><RotateCcw size={15} /> Reset</button>
++    </div>
++  );
++
++  const renderRow = (f, idx) => {
++    const st = fieldStatus(f);
++    const disabled = st === "disabled";
++    return (
++      <tr key={f.systemField} data-testid={"map-field-" + f.systemField} className={disabled ? "row-disabled" : ""}>
++        <td className="sysfield">{f.systemField}{f.mandatory && <span className="req-star"> *</span>}</td>
++        <td style={{ color: "hsl(var(--muted))" }}>{f.attribute}</td>
++        <td>
++          <select className="map-select" value={f.mappedColumn} disabled={isView || disabled} data-testid={"select-col-" + f.systemField} onChange={(e) => onMapColumn(idx, e.target.value)}>
++            <option value="">{disabled ? "Not used — INSTRM_AMOUNT is mapped" : "— Select —"}</option>
++            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
++          </select>
++          {f.status === "mismatch" && <div className="field-warn"><AlertTriangle size={11} /> {f.note || "Re-map this field"}</div>}
++          {/DATE/.test(f.systemField) && f.status === "mapped" && f.systemField === "VALUE_DATE" && (
++            <div className="date-bar" data-testid={"date-bar-" + f.systemField}>
++              <span>Date format</span><Chip type="auto" />
++              <select className="map-select" value={dateFormat} onChange={(e) => setDateFormat(e.target.value)} data-testid="date-format-select"><option>DD/MM/YYYY</option><option>MM/DD/YYYY</option><option>YYYY-MM-DD</option><option>DD-MM-YYYY</option></select>
++              <span style={{ color: "hsl(var(--muted))" }}>Sample: {meta?.dateSample}</span>
++              {meta?.ambiguousDate && <span className="pill pill-pending" style={{ marginLeft: 4 }}><AlertTriangle size={11} /> Day and month both ≤ 12 — please confirm</span>}
++            </div>
++          )}
++        </td>
++        <td>{f.status === "mapped" ? <Chip type={f.source} /> : null}</td>
++        <td><div className="flag-cell"><Toggle checked={f.mandatory} disabled={isView || disabled} onChange={(v) => setField(idx, { mandatory: v })} id={"mand-" + f.systemField} /><span>{f.mandatory ? "Required" : "Optional"}</span></div></td>
++        <td><Toggle checked={f.incremental} disabled={isView || disabled || f.status !== "mapped"} onChange={(v) => setField(idx, { incremental: v })} id={"incr-" + f.systemField} /></td>
++        <td className="map-status">{st === "mapped" ? <span className="ok"><Check size={15} /> Mapped</span> : st === "disabled" ? <span className="dis"><Ban size={13} /> Disabled</span> : st === "mismatch" ? <span className="mis"><AlertTriangle size={13} /> Check</span> : <span className="pend"><Clock size={13} /> Pending</span>}</td>
++      </tr>
++    );
++  };
++
+   return (
+     <div data-testid="mapping-editor">
+       <div className="page-head"><div>
+@@ -97,16 +181,16 @@
+         <div className="wiz-body">
+           {step === 0 && (<>
+             <div className="step-title">Sample File</div>
+-            <div className="summary-banner" data-testid="sample-banner"><FileText size={16} /> Using sample uploaded on <b>&nbsp;{formatDate(mapping.createdAt)}&nbsp;</b> during configuration ({sampleFile}). <button className="link" style={{ marginLeft: 8 }} data-testid="replace-sample">Replace</button></div>
++            <div className="summary-banner" data-testid="sample-banner"><FileText size={16} /> Using the sample uploaded on <b>&nbsp;{formatDate(mapping.createdAt)}&nbsp;</b> during setup ({sampleFile}).</div>
+             <PreviewTable rows={preview.rows} headerIdx={preview.headerIdx} startColumn={meta?.detect.startColumn || 1} caption="Pre-loaded sample preview" />
+             <div style={{ marginTop: 18 }}><button className="btn btn-primary" onClick={() => setStep(1)} data-testid="map-to-header">Continue to header</button></div>
+           </>)}
+ 
+           {step === 1 && (<>
+             <div className="step-title">Pick Header Row</div>
+-            <p className="step-desc">Confirm the row that contains the column names.</p>
++            <p className="step-desc">Confirm the row that contains the column names. Rows above it are skipped.</p>
+             {meta && mapping.headerRow && meta.detect.startRow !== mapping.headerRow && (
+-              <div style={{ marginBottom: 12 }}><div className="note warn"><AlertTriangle /><div>System detected the header on <b>row {meta.detect.startRow}</b>, but your configuration specified <b>row {mapping.headerRow}</b>. Please confirm.</div></div></div>
++              <div style={{ marginBottom: 12 }}><div className="note warn"><AlertTriangle /><div>Header scoring found the column names on <b>row {meta.detect.startRow}</b>, but the setup says <b>row {mapping.headerRow}</b>. Please confirm.</div></div></div>
+             )}
+             <PreviewTable rows={preview.rows} headerIdx={preview.headerIdx} startColumn={meta?.detect.startColumn || 1} caption={`Detected header highlighted (row ${meta?.detect.startRow})`} />
+             <div style={{ marginTop: 18, display: "flex", gap: 10 }}>
+@@ -117,51 +201,45 @@
+ 
+           {step === 2 && (<>
+             <div className="step-title">Map Columns</div>
+-            <div className="summary-banner" data-testid="map-summary-banner"><Sparkles size={16} /> {prevCount} field{prevCount !== 1 ? "s" : ""} mapped from {isHDFC ? "HDFC Bank's approved mapping" : "defaults"}, {patternCount} by pattern match, {pendingCount} pending.</div>
++            {actionBar}
++            {mapping.baseline && <ChangesCard base={{ ...mapping.baseline, kind: "bank_mapping" }} cur={{ ...mapping, kind: "bank_mapping" }} compact />}
++            <div className="summary-banner" data-testid="map-summary-banner"><Sparkles size={16} /> {prevCount} from the last approved mapping, {headerCount} by header name, {pendingCount} pending.
++              {!isView && <button className="btn btn-outline btn-sm" style={{ marginLeft: "auto" }} onClick={autoMapByName} data-testid="btn-auto-map"><Sparkles size={13} /> Auto-map by header name</button>}</div>
+ 
+-            {["input", "narration"].map((group) => (
+-              <div className="map-group" key={group}>
+-                <h4>{group === "input" ? "Bank Statement Input" : "Narration / Description Split"}</h4>
+-                <table className="map">
+-                  <thead><tr><th>System Field</th><th>Attribute</th><th>Map to Column</th><th>Source</th><th>Mandatory</th><th>Incremental</th><th>Status</th></tr></thead>
+-                  <tbody>
+-                    {mapping.fields.map((f, idx) => f.group === group && (
+-                      <tr key={f.systemField} data-testid={"map-field-" + f.systemField}>
+-                        <td className="sysfield">{f.systemField}{f.mandatory && <span className="req-star"> *</span>}</td>
+-                        <td style={{ color: "hsl(var(--muted))" }}>{f.attribute}</td>
+-                        <td>
+-                          <select className="map-select" value={f.mappedColumn} disabled={isView} data-testid={"select-col-" + f.systemField} onChange={(e) => onMapColumn(idx, e.target.value)}>
+-                            <option value="">— Select —</option>
+-                            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+-                          </select>
+-                          {f.attribute === "Date" && f.status === "mapped" && (
+-                            <div className="date-bar" data-testid={"date-bar-" + f.systemField}>
+-                              <span>Date format</span>
+-                              <Chip type="auto" />
+-                              <select className="map-select" value={dateFormat} onChange={(e) => setDateFormat(e.target.value)} data-testid="date-format-select"><option>DD/MM/YYYY</option><option>MM/DD/YYYY</option><option>YYYY-MM-DD</option></select>
+-                              <span style={{ color: "hsl(var(--muted))" }}>Preview: {dateFormat === "YYYY-MM-DD" ? "2026-04-03" : dateFormat === "MM/DD/YYYY" ? "04/03/2026" : "03/04/2026"}</span>
+-                              {meta?.ambiguousDate && <span className="pill pill-pending" style={{ marginLeft: 4 }}><AlertTriangle size={11} /> Ambiguous date format — please confirm</span>}
+-                            </div>
+-                          )}
+-                        </td>
+-                        <td><Chip type={f.source} /></td>
+-                        <td><Toggle checked={f.mandatory} disabled={isView} onChange={(v) => setField(idx, { mandatory: v })} id={"mand-" + f.systemField} /></td>
+-                        <td><Toggle checked={f.incremental} disabled={isView} onChange={(v) => setField(idx, { incremental: v })} id={"incr-" + f.systemField} /></td>
+-                        <td>{f.status === "mapped" ? <Check className="status-icon ok" size={18} /> : f.status === "mismatch" ? <AlertTriangle className="status-icon mis" size={16} /> : <Clock className="status-icon pend" size={16} />}</td>
+-                      </tr>
+-                    ))}
+-                  </tbody>
+-                </table>
++            <div className="key-card" data-testid="incremental-card">
++              <KeyRound size={16} />
++              <div>
++                <b>Incremental flags — which columns make a row unique ({incCount} on, minimum 3)</b>
++                <span>The system uses these together to recognise a row it has already loaded, so the same credit is never counted twice.</span>
++                {keyHint && <span className={keyHint.unique ? "field-ok" : "field-warn"}>{keyHint.unique ? <Check size={12} /> : <AlertTriangle size={12} />} {keyHint.keys.join(" + ")} {keyHint.unique ? `are unique on all ${keyHint.rows} sample rows` : `still repeat on the sample — add another column`}</span>}
+               </div>
+-            ))}
++              {!isView && <button className="btn btn-outline btn-sm" onClick={suggestKeys} data-testid="btn-suggest-keys">Suggest from sample</button>}
++            </div>
+ 
+-            {!isView && (
+-              <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+-                <button className="btn btn-success" onClick={openSubmit} data-testid="btn-map-submit"><Send size={15} /> Submit for Approval</button>
+-                <button className="btn btn-outline" onClick={doSaveDraft} data-testid="btn-map-draft"><Save size={15} /> Save as Draft</button>
+-                <button className="btn btn-ghost" onClick={doReset}><RotateCcw size={15} /> Reset</button>
++            <div className="map-group">
++              <h4>Bank Statement Input</h4>
++              {amountCombined && <Note kind="info">INSTRM_AMOUNT is mapped, so INSTRM_AMOUNT_CREDIT and INSTRM_AMOUNT_DEBIT are disabled. Clear INSTRM_AMOUNT to use separate credit and debit columns.</Note>}
++              <table className="map">
++                <thead><tr><th>System Field</th><th>Attribute</th><th>Map to Column</th><th>Source</th><th>Mandatory</th><th>Incremental</th><th>Status</th></tr></thead>
++                <tbody>{fields.map((f, idx) => f.group === "input" && renderRow(f, idx))}</tbody>
++              </table>
++            </div>
++
++            <StatusValues mapping={mapping} table={table} meta={meta} collections={collections} act={act} me={currentUser} isView={isView} />
++
++            <div className="map-group">
++              <div className="split-head">
++                <h4>Bank Narration / Description Split</h4>
++                <label className="flag-cell"><Toggle checked={!!mapping.narrationSplit} disabled={isView} onChange={(v) => setMapping((m) => ({ ...m, narrationSplit: v }))} id="toggle-narration-split" /><span>{mapping.narrationSplit ? "Enabled" : "Disabled – enable to configure extract columns"}</span></label>
+               </div>
+-            )}
++              {mapping.narrationSplit && (
++                <table className="map">
++                  <thead><tr><th>System Field</th><th>Attribute</th><th>Map to Column</th><th>Source</th><th>Mandatory</th><th>Incremental</th><th>Status</th></tr></thead>
++                  <tbody>{fields.map((f, idx) => f.group === "narration" && renderRow(f, idx))}</tbody>
++                </table>
++              )}
++            </div>
++            {actionBar}
+           </>)}
+         </div>
+       </div>
+@@ -169,28 +247,72 @@
+       {dialog?.type === "mismatch" && (
+         <Modal id="mismatch-dialog" title="Column type mismatch" onClose={() => setDialog(null)}
+           footer={<><button className="btn btn-outline" onClick={() => setDialog(null)} data-testid="btn-remap">Re-map</button><button className="btn btn-danger" data-testid="btn-continue-anyway" onClick={() => { applyMap(dialog.idx, dialog.col); setOverrides((o) => o + 1); setDialog(null); toast("Override recorded"); }}>Continue anyway</button></>}>
+-          <p>You are mapping <b>{mapping.fields[dialog.idx].systemField}</b> (expects a numeric amount) to column <b>“{dialog.col}”</b>, which contains text values like “UPI-RAZORPAY-SIP”. This is likely incorrect.</p>
+-          <p style={{ color: "hsl(var(--muted))" }}>Expected values: positive/negative decimals, e.g. <span className="tnum">25000.00</span>, <span className="tnum">-80000.00</span>.</p>
++          <p>You are mapping <b>{fields[dialog.idx].systemField}</b> ({fields[dialog.idx].attribute}) to column <b>“{dialog.col}”</b>, whose values do not look like that type. This is likely incorrect.</p>
++          <p style={{ color: "hsl(var(--muted))" }}>Amount fields expect numbers such as <span className="tnum">25000.00</span>; date fields expect dates such as <span className="tnum">{meta?.dateSample || "03/04/2026"}</span>.</p>
+         </Modal>
+       )}
+       {dialog?.type === "inuse" && (
+         <Modal id="inuse-dialog" title="Column already in use" onClose={() => setDialog(null)}
+           footer={<><button className="btn btn-outline" onClick={() => setDialog(null)} data-testid="btn-inuse-cancel">Cancel</button><button className="btn btn-primary" data-testid="btn-map-both" onClick={() => { applyMap(dialog.idx, dialog.col); setDialog(null); toast("Mapped to both fields"); }}>Map to both fields</button></>}>
+-          <p>Column <b>“{dialog.col}”</b> is already mapped to <b>{mapping.fields[dialog.usedBy].systemField}</b>. Do you want to map it to <b>{mapping.fields[dialog.idx].systemField}</b> as well?</p>
++          <p>Column <b>“{dialog.col}”</b> is already mapped to <b>{fields[dialog.usedBy].systemField}</b>. Map it to <b>{fields[dialog.idx].systemField}</b> as well?</p>
+         </Modal>
+       )}
+       {confirmSubmit && (
+         <Modal id="submit-confirm" title="Confirm mapping submission" size="lg" onClose={() => setConfirmSubmit(false)}
+           footer={<><button className="btn btn-outline" onClick={() => setConfirmSubmit(false)}>Review again</button><button className="btn btn-success" data-testid="btn-final-submit" onClick={doSubmit}><Send size={15} /> Submit {mappedCount} fields</button></>}>
+-          <p>Review every field before submitting for approval.{overrides > 0 && <> <b style={{ color: "hsl(var(--st-rejected))" }}>{overrides} “Continue anyway” override(s)</b> were recorded.</>}</p>
+-          <div className="legend"><span><span className="sw" style={{ background: "hsl(var(--st-active))" }} />Mapped</span><span><span className="sw" style={{ background: "hsl(var(--st-pending))" }} />Mismatch</span><span><span className="sw" style={{ background: "hsl(var(--chip-purple))" }} />Auto-extracted</span><span><span className="sw" style={{ background: "hsl(var(--st-inactive))" }} />Pending</span></div>
++          <p>Review every field before submitting for approval.{overrides > 0 && <> <b style={{ color: "hsl(var(--st-rejected))" }}>{overrides} “Continue anyway” override(s)</b> were recorded.</>} The mapping applies from the next file; files already loaded are not re-processed.</p>
+           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+-            {mapping.fields.map((f) => {
+-              const color = f.status === "mapped" ? (f.source === "pattern" ? "chip-pattern" : "chip-previous") : "chip-manual";
+-              return <span key={f.systemField} className={"chip " + (f.status === "mapped" ? (f.group === "narration" ? "chip-pattern" : "chip-previous") : "chip-manual")} data-testid={"confirm-field-" + f.systemField}>{f.status === "mapped" ? <CheckCircle2 size={11} /> : <Clock size={11} />}{f.systemField}</span>;
++            {fields.filter((f) => f.group === "input" || mapping.narrationSplit).map((f) => {
++              const st = fieldStatus(f);
++              return <span key={f.systemField} className={"chip " + (st === "mapped" ? "chip-previous" : "chip-manual")} data-testid={"confirm-field-" + f.systemField}>{st === "mapped" ? <CheckCircle2 size={11} /> : st === "disabled" ? <Ban size={11} /> : <Clock size={11} />}{f.systemField}{f.incremental ? " · key" : ""}</span>;
+             })}
+           </div>
+         </Modal>
++      )}
++    </div>
++  );
++}
++
++/**
++ * R8 + PRD v4 §5.3 — how this file says credit vs debit, checked against the admin-maintained standardisation table.
++ * Values the table does not know are flagged; the maker can only ask an admin to add them (the table is admin-only).
++ */
++function StatusValues({ mapping, table, meta, collections, act, me, isView }) {
++  const statusField = mapping.fields.find((f) => f.systemField === "INSTRM_STATUS");
++  const style = meta?.status?.style;
++  const map = (collections.status_map || []);
++  const lookup = (v) => map.find((r) => r.status === "active" && r.source.toUpperCase() === String(v).toUpperCase());
++  const requested = (v) => map.find((r) => r.status === "requested" && r.source.toUpperCase() === String(v).toUpperCase());
++  let values = [];
++  if (statusField?.status === "mapped" && table) {
++    const i = table.header.indexOf(statusField.mappedColumn);
++    values = [...new Set(table.data.map((r) => (r[i] || "").trim()).filter(Boolean))];
++  } else if (style === "sign") values = meta.status.values;
++  if (!values.length && style !== "separate") return null;
++  const ask = (v) => {
++    const row = { id: uid("sm"), source: v, system: "", seenAt: mapping.bankName, table: "RECON_BANK_TXN", column: "INSTRM_STATUS", status: "requested", owner: me, createdAt: new Date().toISOString(), note: `Seen in ${mapping.bankName} sample` };
++    const r = act({ screen: "mapping", cap: "edit", kind: "status_map", id: row.id, target: row, patch: () => row, audit: { entityLabel: `Status value “${v}”`, action: "Request status mapping", from: null, to: "Requested" } });
++    if (!r.ok) { toast.error(r.error); return; }
++    toast.success(`Asked an admin to add “${v}” to the status standardisation table`);
++  };
++  return (
++    <div className="map-group" data-testid="status-values">
++      <h4><Scale size={14} style={{ verticalAlign: -2 }} /> Credit / debit values in this file</h4>
++      <p className="muted" style={{ fontSize: 12.5, margin: "0 0 8px" }}>{meta?.status?.note}. Each value is converted with the admin-maintained status standardisation table.</p>
++      {style === "separate" ? <Note kind="info">Credit and debit come from which amount column is filled — no status values to convert.</Note> : (
++        <table className="map status-tbl"><thead><tr><th>Value in file</th><th>Rows in sample</th><th>System value</th><th /></tr></thead>
++          <tbody>{values.map((v) => {
++            const hit = lookup(v), req = requested(v);
++            const i = statusField?.status === "mapped" && table ? table.header.indexOf(statusField.mappedColumn) : -1;
++            const n = i >= 0 ? table.data.filter((r) => (r[i] || "").trim() === v).length : "—";
++            return (
++              <tr key={v} data-testid={"status-val-" + v}>
++                <td className="tnum"><b>{v}</b></td><td className="tnum">{n}</td>
++                <td>{hit ? <span className={"chip " + (hit.system === "CREDIT" ? "chip-previous" : "chip-manual")}>{hit.system}</span> : <span className="field-warn"><AlertTriangle size={12} /> Not in the table — rows with this value will be held</span>}</td>
++                <td>{!hit && (req ? <span className="muted">Requested from admin</span> : !isView && <button className="link" onClick={() => ask(v)} data-testid={"ask-admin-" + v}>Ask an admin to add it</button>)}</td>
++              </tr>
++            );
++          })}</tbody></table>
+       )}
+     </div>
+   );
+diff --color -ruN a/frontend/src/features/setup/SetupBits.jsx frontend/src/features/setup/SetupBits.jsx
+--- a/frontend/src/features/setup/SetupBits.jsx	1970-01-01 05:30:00
++++ b/frontend/src/features/setup/SetupBits.jsx	2026-10-21 18:48:17
+@@ -0,0 +1,81 @@
++import React from "react";
++import { Check, X, PlugZap, Loader2, CalendarClock, GitCompareArrows, Info } from "lucide-react";
++import { testNames, simulateTest, defaultSchedule, diffSetup, EFFECTIVE_NOTE } from "@/lib/setupSchema";
++
++/** R4 / R6 — live preview of a file-name or subject pattern against names the bank actually sends. */
++export function PatternTester({ pattern, kind = "regex", names, label = "Would these be picked up?" }) {
++  const { invalid, results } = testNames(pattern, kind, names);
++  if (!pattern) return <div className="pt-box muted" data-testid="pattern-tester">Type a pattern to see which names it picks up.</div>;
++  if (invalid) return <div className="pt-box bad" data-testid="pattern-tester"><X size={13} /> This pattern is not valid. Check brackets and backslashes.</div>;
++  const hits = results.filter((r) => r.ok).length;
++  return (
++    <div className="pt-box" data-testid="pattern-tester">
++      <div className="pt-head">{label} <b>{hits} of {results.length} match</b></div>
++      {results.map((r) => <div key={r.name} className={"pt-row " + (r.ok ? "ok" : "no")}>{r.ok ? <Check size={12} /> : <X size={12} />}<span className="tnum">{r.name}</span><em>{r.ok ? "picked up" : "ignored"}</em></div>)}
++    </div>
++  );
++}
++
++/** R5 — when Auto / API pulls run. */
++export function ScheduleField({ value, onChange, disabled }) {
++  const s = value || defaultSchedule();
++  const set = (p) => onChange({ ...s, ...p });
++  return (
++    <div className="field full" data-testid="schedule-field">
++      <label className="field-label"><CalendarClock size={13} style={{ verticalAlign: -2 }} /> Pull schedule</label>
++      <div className="sched">
++        <div className="segmented">
++          <button type="button" disabled={disabled} className={s.kind === "interval" ? "on" : ""} onClick={() => set({ kind: "interval" })}>Every few minutes</button>
++          <button type="button" disabled={disabled} className={s.kind === "daily" ? "on" : ""} onClick={() => set({ kind: "daily" })}>Once a day</button>
++        </div>
++        {s.kind === "interval" ? (
++          <span className="sched-row">Every <select className="select sched-sel" disabled={disabled} value={s.every} onChange={(e) => set({ every: Number(e.target.value) })}>{[15, 30, 60, 120].map((n) => <option key={n} value={n}>{n} min</option>)}</select>
++            between <input className="input sched-time" type="time" disabled={disabled} value={s.from} onChange={(e) => set({ from: e.target.value })} /> and <input className="input sched-time" type="time" disabled={disabled} value={s.to} onChange={(e) => set({ to: e.target.value })} /></span>
++        ) : (
++          <span className="sched-row">At <input className="input sched-time" type="time" disabled={disabled} value={s.at} onChange={(e) => set({ at: e.target.value })} /> every day</span>
++        )}
++      </div>
++    </div>
++  );
++}
++
++/** R5 — one real call with the entered credentials; shows the first rows so the maker sees it works before submitting. */
++export function TestConnection({ conn, mode, onResult }) {
++  const [state, setState] = React.useState(null);
++  const run = () => {
++    setState({ loading: true });
++    setTimeout(() => { const r = simulateTest(conn, mode); setState(r); onResult && onResult(r); }, 900);
++  };
++  return (
++    <div className="tc-box" data-testid="test-connection">
++      <div className="tc-head">
++        <button type="button" className="btn btn-outline" onClick={run} disabled={state?.loading} data-testid="btn-test-connection">{state?.loading ? <Loader2 className="spin" size={15} /> : <PlugZap size={15} />} Test connection</button>
++        <span className="muted">Calls the bank once with these details. Nothing is loaded.</span>
++      </div>
++      {state && !state.loading && (
++        state.ok ? (
++          <div className="tc-ok" data-testid="test-ok">
++            <div><Check size={14} /> {state.message} <span className="muted">({state.ms} ms)</span></div>
++            <table className="tc-rows"><thead><tr><th>Date</th><th>Narration</th><th>Amount</th><th>Dr/Cr</th></tr></thead>
++              <tbody>{state.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={j === 2 ? "tnum" : ""}>{c}</td>)}</tr>)}</tbody></table>
++          </div>
++        ) : <div className="tc-bad" data-testid="test-fail"><X size={14} /> {state.message}</div>
++      )}
++    </div>
++  );
++}
++
++/** R7 — what this submission changes against the live (last approved) version. */
++export function ChangesCard({ base, cur, compact }) {
++  const diff = diffSetup(base, cur);
++  return (
++    <div className="chg-card" data-testid="changes-card">
++      <div className="chg-head"><GitCompareArrows size={15} /> {diff === null ? "New setup — nothing is live for this yet" : diff.length === 0 ? "No changes against the live version" : `${diff.length} change${diff.length > 1 ? "s" : ""} against the live version`}</div>
++      {diff && diff.length > 0 && (
++        <table className="chg-table"><thead><tr><th>Field</th><th>Live now</th><th>After approval</th></tr></thead>
++          <tbody>{diff.slice(0, compact ? 8 : 40).map((d) => <tr key={d.field} data-testid={"chg-" + d.field}><td>{d.field}</td><td className="was">{d.from}</td><td className="now">{d.to}</td></tr>)}</tbody></table>
++      )}
++      <div className="chg-note"><Info size={13} /> {EFFECTIVE_NOTE}</div>
++    </div>
++  );
++}
+diff --color -ruN a/frontend/src/future.css frontend/src/future.css
+--- a/frontend/src/future.css	2026-10-21 17:48:55
++++ b/frontend/src/future.css	2026-10-21 18:58:23
+@@ -505,3 +505,66 @@
+ [data-sonner-toaster] [data-sonner-toast][data-type="error"] [data-icon] { color: #ff8da2; }
+ [data-sonner-toaster] [data-sonner-toast] [data-close-button] { background: #0d1a36 !important; border-color: var(--edge-strong) !important; color: #cfe2ff !important; }
+ [data-sonner-toaster] [data-sonner-toast] [data-button] { background: var(--cams-blue-lit) !important; color: #fff !important; }
++
++/* ── Round 7: Phase-1 setup screens (pattern tester, schedule, test connection, changes, mapping) ── */
++.field-ok, .field-warn { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; margin-top: 4px; }
++.field-ok { color: hsl(var(--st-active)); }
++.field-warn { color: hsl(var(--st-pending)); }
++.field-error.full { grid-column: 1 / -1; }
++.pt-box { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(8, 18, 40, .55); border: 1px solid var(--edge); font-size: 12.5px; }
++.pt-box.bad { color: hsl(var(--st-rejected)); display: flex; gap: 6px; align-items: center; }
++.pt-head { display: flex; justify-content: space-between; color: #8aa3cc; margin-bottom: 6px; }
++.pt-head b { color: #fff; font-weight: 600; }
++.pt-row { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center; padding: 3px 0; }
++.pt-row.ok { color: hsl(var(--st-active)); }
++.pt-row.no { color: #7d8fae; }
++.pt-row span { color: hsl(var(--text)); }
++.pt-row.no span { color: #7d8fae; text-decoration: line-through; text-decoration-color: rgba(125, 143, 174, .5); }
++.pt-row em { font-style: normal; font-size: 11px; }
++.sched { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
++.sched-row { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
++.sched-sel { width: auto; min-width: 96px; }
++.sched-time { width: 118px; }
++.tc-box { margin-top: 18px; padding: 14px; border-radius: 12px; background: var(--glass); border: 1px solid var(--edge); }
++.tc-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
++.tc-ok, .tc-bad { margin-top: 12px; font-size: 13px; }
++.tc-ok > div:first-child { display: flex; gap: 6px; align-items: center; color: hsl(var(--st-active)); font-weight: 600; }
++.tc-bad { display: flex; gap: 6px; align-items: center; color: hsl(var(--st-rejected)); font-weight: 600; }
++.tc-rows { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 12.5px; }
++.tc-rows th { text-align: left; color: #8aa3cc; font-weight: 500; padding: 5px 8px; border-bottom: 1px solid var(--edge); }
++.tc-rows td { padding: 6px 8px; border-bottom: 1px solid rgba(120, 165, 255, .08); }
++.chg-card { padding: 14px 16px; border-radius: 12px; background: linear-gradient(180deg, rgba(47, 140, 240, .10), rgba(11, 21, 44, .6)); border: 1px solid var(--edge-strong); margin-bottom: 14px; }
++.chg-head { display: flex; gap: 8px; align-items: center; font-weight: 600; color: #fff; }
++.chg-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12.5px; }
++.chg-table th { text-align: left; color: #8aa3cc; font-weight: 500; padding: 5px 8px; border-bottom: 1px solid var(--edge); }
++.chg-table td { padding: 6px 8px; border-bottom: 1px solid rgba(120, 165, 255, .08); }
++.chg-table td.was { color: #9aa9c4; text-decoration: line-through; text-decoration-color: rgba(255, 120, 140, .6); }
++.chg-table td.now { color: hsl(var(--st-active)); font-weight: 600; }
++.chg-note { display: flex; gap: 6px; align-items: center; margin-top: 10px; font-size: 12px; color: #9fc4ff; }
++.email-rules { margin-top: 16px; padding: 12px 14px; border-radius: 10px; border: 1px dashed var(--edge-strong); font-size: 12.5px; display: grid; gap: 6px; }
++.email-rules > div { display: flex; gap: 6px; align-items: center; }
++.email-rules > div svg { flex: none; }
++.std-box { margin-top: 16px; }
++.toggle-sub { padding: 10px 16px 14px 16px; display: grid; gap: 6px; border-bottom: 1px solid var(--edge); background: rgba(8, 18, 40, .35); }
++.toggle-sub .muted { font-size: 12px; }
++.key-card { display: flex; gap: 12px; align-items: flex-start; margin: 14px 0; padding: 12px 14px; border-radius: 12px; background: var(--glass); border: 1px solid var(--edge); }
++.key-card > svg { color: var(--cams-cyan); margin-top: 2px; flex: none; }
++.key-card > div { display: grid; gap: 3px; flex: 1; font-size: 13px; }
++.key-card > div > span { color: #9aa9c4; font-size: 12.5px; }
++.map-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 14px; }
++.flag-cell { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: #9aa9c4; }
++.map-status span { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; font-weight: 600; white-space: nowrap; }
++.map-status .ok { color: hsl(var(--st-active)); }
++.map-status .dis { color: #7d8fae; }
++.map-status .mis { color: hsl(var(--st-pending)); }
++.map-status .pend { color: #9aa9c4; }
++tr.row-disabled td { opacity: .5; }
++.split-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
++.status-tbl td { vertical-align: middle; }
++.std-add { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px; border-top: 1px solid var(--edge); }
++.std-add .input { max-width: 240px; }
++.std-add .select { max-width: 140px; }
++.summary-banner .btn-sm { flex: none; }
++.note.info { background: rgba(47, 140, 240, .1); border-color: rgba(47, 140, 240, .3); color: #cfe2ff; }
++.note.info svg { color: var(--cams-cyan); }
++.map-group .note { margin-bottom: 10px; }
+diff --color -ruN a/frontend/src/lib/access.js frontend/src/lib/access.js
+--- a/frontend/src/lib/access.js	2026-10-21 17:48:55
++++ b/frontend/src/lib/access.js	2026-10-21 18:54:58
+@@ -58,6 +58,7 @@
+     screens: [
+       { key: "users", label: "Users", path: "/admin/users", group: "Administration", caps: ["view", "edit", "approve", "export"] },
+       { key: "roles", label: "Roles & Access", path: "/admin/roles", group: "Administration", caps: ["view", "edit", "approve"] },
++      { key: "status_std", label: "Status standardisation", path: "/admin/status-standardisation", group: "Administration", caps: ["view", "edit", "approve"] },
+     ],
+   },
+ ];
+@@ -77,9 +78,9 @@
+   const r = (id, name, module, description, perms, extra = {}) => ({ id, name, module, description, perms, status: "active", system: true, createdBy: "System", createdAt: at, ...extra });
+   return [
+     r("role_platform_admin", "Platform Admin", "admin", "Manages users, roles and access across all modules. Cannot operate any module.",
+-      { users: ["view", "edit", "export"], roles: ["view", "edit"] }),
++      { users: ["view", "edit", "export"], roles: ["view", "edit"], status_std: ["view", "edit"] }),
+     r("role_access_approver", "Access Approver", "admin", "Second-admin approval of role changes and privileged role grants.",
+-      { users: ["view", "approve"], roles: ["view", "approve"] }),
++      { users: ["view", "approve"], roles: ["view", "approve"], status_std: ["view", "approve"] }),
+     r("role_recon_setup_maker", "Recon · Setup Maker", "recon", "Onboards banks and aggregators: setups, mappings, match rules.",
+       { today: ["view"], command: ["view"], ingestion: ["view", "edit"], bank_setup: ["view", "edit", "export"], credit_mis: ["view", "edit", "export"], mapping: ["view", "edit"], rules: ["view", "edit"], approvals: ["view"], reports: ["view", "export"], audit: ["view"] }),
+     r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Runs the daily cycle: uploads and reprocesses bank files, matching, problem cases, documents, fund release and refunds. No setup screens. Uses the simple view.",
+diff --color -ruN a/frontend/src/lib/autofill.js frontend/src/lib/autofill.js
+--- a/frontend/src/lib/autofill.js	2026-10-21 17:48:55
++++ b/frontend/src/lib/autofill.js	2026-10-21 18:49:31
+@@ -10,7 +10,7 @@
+   corporateId: () => "CAMS" + n(5),
+   loginId: () => pick(["cams_recon_ops", "recon.priya", "cams_stmt_bot", "ops_mf_recon"]) + n(2),
+   password: () => "Tr#" + n(4) + "Recon!",
+-  subjectPattern: (c) => `${(c.bankName || "Bank").split(" ")[0]} Statement_*_MIS`,
++  subjectPattern: (c) => `${c.bankName || "Bank"} Account Statement%`,
+   sender: (c) => `statements@${slug(c.bankName)}bank.com`,
+   receiver: () => pick(["recon.ops@camsonline.com", "creditmis@camsonline.com", "stmt.inbound@camsonline.com"]),
+   uploadPath: (c) => `/inbound/${slug(c.bankName)}/${pick(["liquid", "equity", "pool"])}`,
+@@ -20,9 +20,9 @@
+   startColumn: () => "1",
+   separator: () => pick([",", "|", "~"]),
+   fromEmail: () => pick(["mis@razorpay.com", "settlements@camspay.com", "reports@billdesk.com"]),
+-  receiverEmail: () => pick(["creditmis@atronline.com", "collections@atronline.com"]),
++  receiverEmail: () => pick(["creditmis@camsonline.com", "collections@camsonline.com"]),
+   subject: () => pick(["Daily Collection MIS", "Settlement File - Credit MIS", "HDFC Settlement File"]),
+-  fileNamePattern: () => pick(["CreditMIS_*", "SETTLE_*_MIS", "PA_CREDIT_*"]),
++  fileNamePattern: () => pick(["CreditMIS_", "SETTLE_", "PA_CREDIT_"]),
+   userId: () => "pa_cams_" + n(3),
+   failureReasonCode: () => pick(["R01 — Insufficient funds", "R03 — Account closed", "R09 — Mandate expired", "NA"]),
+ };
+diff --color -ruN a/frontend/src/lib/constants.js frontend/src/lib/constants.js
+--- a/frontend/src/lib/constants.js	2026-10-21 17:48:55
++++ b/frontend/src/lib/constants.js	2026-10-21 18:52:55
+@@ -1,4 +1,4 @@
+-import { Sparkles, Pencil, History, Shapes, Hand, DownloadCloud, Upload, Mail, Plug } from "lucide-react";
++import { Sparkles, Pencil, History, Shapes, Hand, DownloadCloud, Upload, Mail, Plug, Heading } from "lucide-react";
+ 
+ export const STATUS = {
+   not_started: { label: "Not Started", cls: "pill-not_started" },
+@@ -15,13 +15,14 @@
+   previous: { label: "From previous mapping", icon: History, cls: "chip-previous" },
+   pattern: { label: "Pattern match", icon: Shapes, cls: "chip-pattern" },
+   manual: { label: "Manual", icon: Hand, cls: "chip-manual" },
++  header: { label: "Header name match", icon: Heading, cls: "chip-auto" },
+ };
+ 
+ export const BANK_MODES = {
+-  auto: { label: "Auto Download", icon: DownloadCloud, desc: "Fetch statements automatically from the bank portal on a schedule.", req: "Requires URL, Corporate ID & credentials" },
+-  manual: { label: "Manual Upload (SFTP)", icon: Upload, desc: "Operator uploads the statement file manually via SFTP.", req: "No connection credentials needed" },
+-  email: { label: "Email", icon: Mail, desc: "Statements arrive as email attachments and are parsed.", req: "Requires sender, receiver & subject pattern" },
+-  api: { label: "API", icon: Plug, desc: "Pull statements through the bank's REST API endpoint.", req: "Requires URL, Login ID & credentials" },
++  auto: { label: "Auto Download", icon: DownloadCloud, desc: "Fetch statements automatically from the bank portal on a schedule.", req: "URL, Corporate ID, credentials & a schedule" },
++  manual: { label: "Manual Upload (SFTP)", icon: Upload, desc: "Operator uploads the statement file manually via SFTP.", req: "SFTP upload path & file-name pattern" },
++  email: { label: "Email", icon: Mail, desc: "Statements arrive as email attachments and are parsed.", req: "Sender, receiver & subject pattern (backup channel)" },
++  api: { label: "API", icon: Plug, desc: "Pull statements through the bank's REST API endpoint.", req: "URL, Login ID, credentials & a schedule" },
+ };
+ 
+ export const CREDIT_MODES = {
+@@ -31,7 +32,8 @@
+   api: { label: "API", icon: Plug, desc: "Pull Credit MIS through the aggregator API.", req: "Connection handled by platform (N/A step)" },
+ };
+ 
+-export const RECON_TYPES = ["Subscription", "Redemption", "Both"];
++// PRD v1 / Credit MIS PRD: Subscription or Liability (Liability needs a category in Credit MIS).
++export const RECON_TYPES = ["Subscription", "Liability"];
+ export const PA_CODES = ["Razorpay", "CAMSPay", "BillDesk", "PayU", "CCAvenue", "Cashfree"];
+ export const PAY_MECHANISMS = ["NetBanking", "UPI", "NEFT/RTGS", "Debit Card", "Credit Card", "Mandate"];
+ 
+diff --color -ruN a/frontend/src/lib/setupSchema.js frontend/src/lib/setupSchema.js
+--- a/frontend/src/lib/setupSchema.js	1970-01-01 05:30:00
++++ b/frontend/src/lib/setupSchema.js	2026-10-21 18:57:55
+@@ -0,0 +1,168 @@
++// Shared rules for the Phase-1 setup screens (bank statement setup, Credit MIS setup, column mapping).
++// Field names and allowed values follow Recon_PRD_v1 / Credit_MIS_PRD / Phase-1 PRD v4.
++// Additions from PHASE1_SETUP_RESEARCH.md ([Fits PRD] only) are marked with their R-number.
++
++import { maskAccount } from "@/lib/format";
++
++// PRD v1 "File Type": DBF, XLS, XLSX, PSV, CSV, PDF, TXT, XXD "and any other file formats supported".
++export const FILE_TYPES = ["CSV", "PSV", "TXT", "XLS", "XLSX", "DBF", "PDF", "XXD"];
++// R2 — bank-standard statement formats with pre-built parsers (no column mapping needed).
++export const STANDARD_FORMATS = {
++  MT940: "SWIFT MT940 — end-of-day statement",
++  MT942: "SWIFT MT942 — intraday statement",
++  "CAMT.053": "ISO 20022 camt.053 — end-of-day statement",
++  BAI2: "BAI2 — US/International cash-management file",
++};
++export const isStandard = (t) => Boolean(STANDARD_FORMATS[t]);
++export const isDelimited = (t) => ["CSV", "PSV", "TXT"].includes(t);
++// PRD v1 "File Separator": special characters only.
++export const SEPARATORS = [["|", "Pipe |"], ["-", "Hyphen -"], [",", "Comma ,"], ["/", "Slash /"], [" ", "Space"], ["\t", "Tab"], ["$", "Dollar $"], ["~", "Tilde ~"], ["^", "Caret ^"]];
++export const sepLabel = (s) => (SEPARATORS.find(([v]) => v === s) || [s, s || "—"])[1];
++
++export const LIABILITY_CATEGORIES = ["Redemption", "Dividend", "Refund", "Brokerage"];
++// Credit MIS PRD — Instrument Status (optional) and Failure Reason Code (from Reversal Remarks table, active codes only).
++export const INSTRUMENT_STATUS = [["C", "C (Credit)"], ["D", "D (Debit)"]];
++export const REVERSAL_CODES = [
++  { code: "R01", remark: "Insufficient funds", active: true },
++  { code: "R02", remark: "Account closed", active: true },
++  { code: "R03", remark: "No such account", active: true },
++  { code: "R04", remark: "Invalid account number", active: true },
++  { code: "R09", remark: "Mandate expired / not registered", active: true },
++  { code: "R14", remark: "Payment stopped by investor", active: true },
++  { code: "R17", remark: "Account frozen", active: true },
++  { code: "R99", remark: "Legacy — unspecified", active: false },
++];
++
++// R6 — what an email-mode setup accepts as attachments, given the file type.
++export const attachmentTypesFor = (fileType, zip) => {
++  const ext = { CSV: [".csv"], PSV: [".psv", ".txt"], TXT: [".txt"], XLS: [".xls"], XLSX: [".xlsx"], DBF: [".dbf"], PDF: [".pdf"], XXD: [".xxd"], MT940: [".sta", ".mt940", ".txt"], MT942: [".mt942", ".txt"], "CAMT.053": [".xml"], BAI2: [".bai", ".bai2", ".txt"] }[fileType] || [];
++  return zip && zip !== "none" ? [...ext, ".zip"] : ext;
++};
++export const CAMS_DOMAIN = "@camsonline.com";
++export const extFor = (fileType) => (attachmentTypesFor(fileType)[0] || ".csv").slice(1);
++
++// ── Pattern testing (R4 file-name pattern, R6 subject %like%, CMIS match type) ──────────────────────
++export function regexFor(pattern, kind = "regex") {
++  if (!pattern) return null;
++  try {
++    if (kind === "like") return new RegExp("^" + pattern.split("%").map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i");
++    if (kind === "Prefix") return new RegExp("^" + esc(pattern), "i");
++    if (kind === "Suffix") return new RegExp(esc(pattern) + "$", "i");
++    if (kind === "Contains") return new RegExp(esc(pattern), "i");
++    if (kind === "Exact") return new RegExp("^" + esc(pattern) + "$", "i");
++    return new RegExp("^" + pattern + "$");
++  } catch (e) { return "invalid"; }
++}
++const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++export function testNames(pattern, kind, names) {
++  const re = regexFor(pattern, kind);
++  if (re === "invalid") return { invalid: true, results: [] };
++  return { invalid: false, results: names.map((n) => ({ name: n, ok: re ? re.test(n) : false })) };
++}
++/** Example names the bank / aggregator actually sends — used for the live pattern preview. */
++export function exampleFileNames(bankCode = "BANK", acct = "0000", ext = "csv") {
++  const a = String(acct).slice(-4);
++  return [`${bankCode}_${a}_20261020.${ext}`, `${bankCode}_${a}_20261021.${ext}`, `${bankCode}_${a}_20261021_rev1.${ext}`, `${bankCode}_9911_20261021.${ext}`, `statement_${a}.pdf`];
++}
++export function exampleSubjects(bankName = "Bank", acct = "0000") {
++  const a = String(acct).slice(-4);
++  return [`${bankName} Account Statement ${a} dated 20-10-2026`, `${bankName} Account Statement ${a} dated 21-10-2026`, `FW: ${bankName} Account Statement ${a} dated 21-10-2026`, `${bankName} Interest Certificate ${a}`];
++}
++
++// ── R5 schedule ─────────────────────────────────────────────────────────────────────────────────────
++export const defaultSchedule = () => ({ kind: "interval", every: 30, at: "08:30", from: "07:00", to: "21:00" });
++export const scheduleText = (s) => !s ? "—" : s.kind === "daily" ? `Daily at ${s.at}` : `Every ${s.every} min, ${s.from}–${s.to}`;
++
++/** R5 — simulated "Test connection": a real build calls the bank once with the saved credentials and shows the first rows. */
++export function simulateTest(conn, mode) {
++  const missing = mode === "email" ? [] : ["url", "loginId"].filter((k) => !conn[k]);
++  if (missing.length) return { ok: false, message: `Fill ${missing.map((m) => (m === "url" ? "URL" : "Login ID")).join(" and ")} first.` };
++  if (/fail|wrong/i.test(conn.loginId || "")) return { ok: false, message: "Bank rejected the login (HTTP 401). Check Login ID / password with the bank RM." };
++  return {
++    ok: true, ms: 640 + Math.round(Math.random() * 400), message: "Connected. The bank returned yesterday's statement.",
++    rows: [["20-10-2026", "UPI/RAZORPAY/SIP/88213", "25,000.00", "CR"], ["20-10-2026", "NEFT/CAMSPAY/SUB/77120", "1,50,000.00", "CR"], ["20-10-2026", "RTGS/REDEMPTION/PAYOUT", "80,000.00", "DR"]],
++  };
++}
++
++// ── R7 — summary + diff vs the last approved version ───────────────────────────────────────────────
++const onOff = (v) => (v ? "On" : "Off");
++export function summarizeSetup(r) {
++  if (!r) return [];
++  const fc = r.fileConfig || {}, p = r.processing || {}, c = r.connection || {};
++  if (r._kind === "bank_mapping" || r.kind === "bank_mapping") {
++    return (r.fields || []).filter((f) => f.status === "mapped" || f.incremental || f.mandatory).map((f) => [f.systemField, `${f.mappedColumn || "—"}${f.mandatory ? " · Required" : ""}${f.incremental ? " · Incremental" : ""}`]).concat([["Date format", r.dateFormat || "—"], ["Narration split", onOff(r.narrationSplit)]]);
++  }
++  if (r.kind === "credit_config" || r._kind === "credit_config") {
++    return [
++      ["Feed mode", r.feedMode], ["Bank", r.bankName], ["Account", maskAccount(r.accountNumber)], ["PA codes", (r.paCodes || []).join(", ")],
++      ["File format", fc.fileFormat], ["Separator", isDelimited(fc.fileFormat) ? sepLabel(fc.separator) : "—"], ["Header position", `${fc.startRow || "—"}, ${fc.startColumn || "—"}`],
++      ["Instrument status", fc.instrumentStatus || "Not selected"], ["Failure reason code", fc.failureReasonCode || "—"],
++      ["From email", c.fromEmail], ["Receiver email", c.receiverEmail], ["Subject", c.subject], ["File name pattern", c.fileNamePattern ? `${c.matchType || ""} ${c.fileNamePattern}` : ""],
++      ["ZIP", c.zipOption], ["Schedule", r.feedMode === "auto" ? scheduleText(c.schedule) : ""],
++      ["Reconciliation type", p.reconciliationType === "Liability" ? `Liability · ${p.liabilityCategory || "—"}` : p.reconciliationType], ["Date & time update", onOff(p.dateTimeUpdate)], ["Is active", onOff(p.isActive)],
++    ].filter(([, v]) => v !== "" && v !== undefined);
++  }
++  return [
++    ["Download mode", r.downloadMode], ["Bank", r.bankName], ["Account", r.accountNumber ? maskAccount(r.accountNumber) : "Derived from file"], ["Scheme / Collection", r.schemeOrCollection], ["Masked account pattern", r.maskedPattern || "—"],
++    ["URL", c.url], ["File download path", c.path], ["Corporate ID", c.corporateId], ["Login ID", c.loginId], ["Schedule", ["auto", "api"].includes(r.downloadMode) ? scheduleText(c.schedule) : ""],
++    ["Sender", c.sender], ["Receiver", c.receiver], ["Subject pattern", c.subjectPattern], ["Attachment name pattern", c.attachmentPattern], ["ZIP", r.downloadMode === "email" ? (c.zipOption || "none") : ""],
++    ["File type", fc.fileType], ["Separator", isDelimited(fc.fileType) ? sepLabel(fc.separator) : "—"], ["Start row", isStandard(fc.fileType) ? "n/a (standard format)" : String(fc.startRow ?? "")], ["Start column", isStandard(fc.fileType) ? "n/a (standard format)" : String(fc.startColumn ?? "")],
++    ["File upload path", fc.uploadPath], ["File name pattern", fc.fileNamePattern],
++    ["Bulk upload", onOff(p.bulkUpload)], ["Compute running balance", onOff(p.computeRunningBalance)], ["Validate running balance", onOff(p.validateRunningBalance)],
++    ["Running balance cleanup", p.runningBalanceCleanup ? `On · remove "${p.cleanupChars || ""}"` : "Off"], ["Direct match", onOff(p.directMatch)], ["Descending order", onOff(p.descendingOrder)],
++    ["Reconciliation type", p.reconciliationType], ["Is active", onOff(p.isActive)],
++  ].filter(([, v]) => v !== "" && v !== undefined);
++}
++export function diffSetup(base, cur) {
++  if (!base) return null;
++  const a = Object.fromEntries(summarizeSetup(base)), b = Object.fromEntries(summarizeSetup(cur));
++  return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => (a[k] ?? "—") !== (b[k] ?? "—")).map((k) => ({ field: k, from: a[k] ?? "—", to: b[k] ?? "—" }));
++}
++export const EFFECTIVE_NOTE = "Takes effect from the next file received after approval. Files already loaded are not re-processed.";
++
++// ── R3 — duplicate-key (Incremental flag) suggestion from the sample ───────────────────────────────
++/** Smallest set of mapped columns (min 3, PRD) whose combined values are unique on every sample row. */
++export function suggestIncremental(fields, header, dataRows) {
++  const colIdx = (name) => header.indexOf(name);
++  const order = ["VALUE_DATE", "INSTRM_AMOUNT", "INSTRM_AMOUNT_CREDIT", "UTR_NUMBER", "INSTRM_NO", "BANK_NARRATION", "BANK_DESCRIPTION", "CLOSING_BALANCE", "BANK_STMT_DATE"];
++  const rank = (f) => { const i = order.indexOf(f.systemField); return i === -1 ? 99 : i; };
++  const isUnique = (set) => new Set(dataRows.map((r) => set.map((p) => r[colIdx(p.mappedColumn)]).join("¦"))).size === dataRows.length;
++  const picked = [];
++  // Business keys first (date, amount, reference, narration); keep adding until every sample row is unique.
++  fields.filter((f) => f.status === "mapped" && f.group === "input" && colIdx(f.mappedColumn) >= 0)
++    .sort((x, y) => rank(x) - rank(y))
++    .forEach((f) => { if (picked.length < 3 || !isUnique(picked)) picked.push(f); });
++  return { keys: picked.map((f) => f.systemField), unique: isUnique(picked), rows: dataRows.length };
++}
++
++// ── PRD v1 column-mapping field list ("Only the list of fields mentioned above must be incorporated") ──
++export const MAPPING_FIELDS = [
++  ["INSTRM_AMOUNT", "Bank credit/debit amount", "amount"], ["INSTRM_AMOUNT_CREDIT", "Bank credit amount", "amount"], ["INSTRM_AMOUNT_DEBIT", "Bank debit amount", "amount"],
++  ["INSTRM_STATUS", "Bank credit/debit status (C/D, CR/DR)", "status"], ["VALUE_DATE", "Bank credit/value date", "date"], ["BANK_DESCRIPTION", "Bank statement description/narration", "text"],
++  ["BANK_NARRATION", "Bank statement narration", "text"], ["BANK_STMT_DATE", "Bank transaction date", "date"], ["INSTRM_NO", "Cheque/instrument number", "text"],
++  ["UTR_NUMBER", "UTR/transaction reference number", "text"], ["LOCATION_CODE", "Entry received location", "text"], ["BANK_AC_NO", "MF bank account number", "text"],
++  ["BANK_NAME", "MF bank name", "text"], ["CLOSING_BALANCE", "Running balance", "amount"], ["BANK_CREDIT_TIME", "Bank credit time/value date", "date"],
++];
++export const NARRATION_FIELDS = [
++  ["EXTRACT_FOLIO_NO", "Extracted folio number"], ["EXTRACT_SCHEME_CODE", "Extracted scheme code"], ["EXTRACT_INSTRUMENT_DATE", "Extracted instrument date"],
++  ["EXTRACT_INVESTOR_ACCOUNT_NUMBER", "Extracted investor account number"], ["EXTRACT_INVESTOR_BANK_NAME", "Extracted investor bank name"], ["EXTRACT_INVESTOR_NAME", "Extracted investor name"],
++  ["EXTRACT_INVESTOR_IFSC", "Extracted investor IFSC"], ["EXTRACT_INVESTOR_AC_TYPE", "Extracted investor account type"], ["EXTRACT_NARRATION_UTR_NUMBER", "Extracted UTR number from narration"], ["EXTRACT_PAN", "Extracted PAN from narration"],
++];
++// R3 — header names banks actually use for each field (map by name first, position only as fallback).
++export const HEADER_SYNONYMS = {
++  INSTRM_AMOUNT: [/^amount$/i, /^txn ?amount$/i, /^transaction amount$/i],
++  INSTRM_AMOUNT_CREDIT: [/^credit$/i, /^deposit/i, /^cr amount$/i, /^credit amount$/i],
++  INSTRM_AMOUNT_DEBIT: [/^debit$/i, /^withdrawal/i, /^dr amount$/i, /^debit amount$/i],
++  INSTRM_STATUS: [/^dr\/cr$/i, /^cr\/dr$/i, /^type$/i, /^status$/i, /^c\/d$/i],
++  VALUE_DATE: [/^value ?date$/i, /^value dt$/i],
++  BANK_DESCRIPTION: [/^description$/i, /^particulars$/i, /^remarks$/i],
++  BANK_NARRATION: [/^narration$/i, /^details$/i],
++  BANK_STMT_DATE: [/^txn ?date$/i, /^tran(saction)? ?date$/i, /^date$/i, /^posting date$/i],
++  INSTRM_NO: [/^cheque ?no/i, /^chq/i, /^instrument/i],
++  UTR_NUMBER: [/^utr/i, /^ref(erence)? ?no/i, /^ref$/i],
++  CLOSING_BALANCE: [/balance/i],
++  BANK_AC_NO: [/^a\/?c ?no/i, /^account ?(no|number)$/i],
++};
++export function matchHeader(systemField, header) {
++  return (HEADER_SYNONYMS[systemField] || []).some((re) => re.test(String(header).trim()));
++}
+diff --color -ruN a/frontend/src/mock/sampleFiles.js frontend/src/mock/sampleFiles.js
+--- a/frontend/src/mock/sampleFiles.js	2026-10-21 17:48:55
++++ b/frontend/src/mock/sampleFiles.js	2026-10-21 18:47:57
+@@ -9,6 +9,7 @@
+     detect: { fileType: "CSV", separator: ",", startRow: 12, startColumn: 1 },
+     dateSample: "03/04/2026",
+     ambiguousDate: true,
++    status: { style: "separate", note: "Separate Debit and Credit columns — no status column needed" },
+     raw:
+       "HDFC BANK LTD\n" +
+       "Regd. Office: HDFC House, Churchgate, Mumbai 400020\n" +
+@@ -35,6 +36,7 @@
+     detect: { fileType: "XLSX", separator: null, startRow: 8, startColumn: 2 },
+     dateSample: "15-09-2026",
+     ambiguousDate: false,
++    status: { style: "sign", note: "One Amount column — positive = credit, negative = debit", values: ["Positive Amount", "Negative Amount"] },
+     preview: [
+       ["", "SOUTH INDIAN BANK", "", "", "", ""],
+       ["", "T.B Road, Thrissur, Kerala 680001", "", "", "", ""],
+@@ -50,6 +52,52 @@
+       ["", "18-09-2026", "UPI/CASHFREE/SUB", "ICICR9090", "+7500.00", "795500.00"],
+     ],
+   },
++  "idbi_statement_oct.csv": {
++    kind: "csv",
++    label: "idbi_statement_oct.csv",
++    size: "31 KB",
++    detect: { fileType: "CSV", separator: ",", startRow: 4, startColumn: 1 },
++    dateSample: "20/10/2026",
++    ambiguousDate: false,
++    status: { style: "column", column: "Dr/Cr", note: "A Dr/Cr column says whether each row is a credit or a debit" },
++    raw:
++      "IDBI BANK LTD - CURRENT ACCOUNT STATEMENT\n" +
++      "A/C XXXXXXXX3313 | 01/10/2026 - 20/10/2026\n" +
++      "\n" +
++      "Tran Date,Value Date,Description,Ref No,Amount,Dr/Cr,Balance\n" +
++      "20/10/2026,20/10/2026,UPI/RAZORPAY/SIP/88213,IDBR88213,25000.00,CR,925000.00\n" +
++      "20/10/2026,20/10/2026,NEFT/CAMSPAY/SUB/77120,IDBN77120,150000.00,CR,1075000.00\n" +
++      "20/10/2026,20/10/2026,RTGS/REDEMPTION/PAYOUT,IDBR55671,80000.00,DR,995000.00\n" +
++      "20/10/2026,20/10/2026,UPI/RAZORPAY/SIP/88213 RETURN,IDBR88213,25000.00,REV,970000.00\n" +
++      "21/10/2026,21/10/2026,UPI/BILLDESK/SIP/66001,IDBR66001,12500.00,CR,982500.00",
++  },
++  "sbin_3313_20261020.sta": {
++    kind: "mt940",
++    label: "sbin_3313_20261020.sta",
++    size: "6 KB",
++    standard: true,
++    detect: { fileType: "MT940", separator: null, startRow: 0, startColumn: 1 },
++    dateSample: "261020",
++    ambiguousDate: false,
++    raw:
++      ":20:SBIN3313201026\n" +
++      ":25:SBIN0000300/38103313\n" +
++      ":28C:00291/001\n" +
++      ":60F:C261019INR895000,00\n" +
++      ":61:2610201020C25000,00NTRFIDBR88213//UTR88213\n" +
++      ":86:UPI/RAZORPAY/SIP/88213\n" +
++      ":61:2610201020C150000,00NTRFNONREF//UTR77120\n" +
++      ":86:NEFT/CAMSPAY/SUB/77120\n" +
++      ":61:2610201020D80000,00NTRFNONREF//UTR55671\n" +
++      ":86:RTGS/REDEMPTION/PAYOUT\n" +
++      ":62F:C261020INR990000,00",
++    parsed: [
++      ["Value date", "C/D", "Amount", "Reference", "Narration (:86:)"],
++      ["20-10-2026", "C", "25,000.00", "UTR88213", "UPI/RAZORPAY/SIP/88213"],
++      ["20-10-2026", "C", "1,50,000.00", "UTR77120", "NEFT/CAMSPAY/SUB/77120"],
++      ["20-10-2026", "D", "80,000.00", "UTR55671", "RTGS/REDEMPTION/PAYOUT"],
++    ],
++  },
+   "fake_xls_actually_html.xls": {
+     kind: "xls",
+     label: "fake_xls_actually_html.xls",
+@@ -79,7 +127,9 @@
+   const f = DEMO_FILES[fileName];
+   if (!f) return null;
+   let rows;
+-  if (f.kind === "csv" && f.raw) {
++  if (f.kind === "mt940") {
++    rows = f.raw.split("\n").map((l) => [l]);
++  } else if (f.kind === "csv" && f.raw) {
+     rows = parseCSV(f.raw).slice(0, 13);
+   } else {
+     rows = f.preview.slice(0, 13);
+@@ -90,4 +140,13 @@
+ 
+ export function detectFor(fileName) {
+   return DEMO_FILES[fileName] || null;
++}
++
++/** Header + data rows of a sample (for the duplicate-key test and status values). */
++export function sampleTable(fileName) {
++  const p = buildPreview(fileName);
++  if (!p || p.headerIdx < 0) return null;
++  const header = p.rows[p.headerIdx];
++  const data = (DEMO_FILES[fileName].kind === "csv" ? parseCSV(DEMO_FILES[fileName].raw) : DEMO_FILES[fileName].preview).slice(p.headerIdx + 1).filter((r) => r.some((c) => c && c.trim()));
++  return { header, data };
+ }
+diff --color -ruN a/frontend/src/mock/seed.js frontend/src/mock/seed.js
+--- a/frontend/src/mock/seed.js	2026-10-21 17:48:55
++++ b/frontend/src/mock/seed.js	2026-10-21 18:58:23
+@@ -1,6 +1,7 @@
+ import { BANKS, ACCOUNTS } from "./bankMaster";
+ import { uid } from "../lib/format";
+ import { PA_CODES, PAY_MECHANISMS } from "../lib/constants";
++import { MAPPING_FIELDS, NARRATION_FIELDS, isStandard, defaultSchedule } from "../lib/setupSchema";
+ 
+ const MODES = ["auto", "manual", "email", "api"];
+ const now = Date.now();
+@@ -16,7 +17,7 @@
+ 
+ function mkConnection(mode) {
+   if (mode === "manual") return {};
+-  if (mode === "email") return { subjectPattern: "Statement_*_MIS", sender: "statements@bank.com", receiver: "recon.ops@camsonline.com" };
++  if (mode === "email") return { subjectPattern: "%Account Statement%", sender: "statements@bank.com", receiver: "recon.ops@camsonline.com", attachmentPattern: "", zipOption: "none" };
+   return {
+     url: "https://portal.bank.com/corp/statements",
+     path: "/export/daily",
+@@ -25,11 +26,13 @@
+     passwordSet: true,
+     credentialUpdatedAt: new Date(now - 30 * day).toISOString(),
+     credentialUpdatedBy: "Priya",
++    schedule: defaultSchedule(),
+   };
+ }
+ 
+-function mkFileConfig(bankName) {
++function mkFileConfig(bankName, bankCode = "BANK", acct = "0000") {
+   return {
++    fileNamePattern: `${bankCode}_${String(acct).slice(-4)}_\\d{8}\\.csv`,
+     fileType: "CSV", separator: ",", startRow: 1, startColumn: 1,
+     uploadPath: "/inbound/" + bankName.split(" ")[0].toLowerCase(),
+     uploadUser: "sftp_cams", uploadPasswordSet: true,
+@@ -41,8 +44,8 @@
+   return {
+     isActive: status !== "inactive",
+     bulkUpload: false, computeRunningBalance: true, validateRunningBalance: true,
+-    runningBalanceCleanup: false, directMatch: true,
+-    reconciliationType: "Both", descendingOrder: false,
++    runningBalanceCleanup: false, cleanupChars: "", directMatch: true,
++    reconciliationType: "Subscription", descendingOrder: false,
+   };
+ }
+ 
+@@ -73,7 +76,7 @@
+       lastUpdated: new Date(now - i * day * 0.3).toISOString(),
+       rejection: null,
+       connection: mkConnection(mode),
+-      fileConfig: mkFileConfig(bank.name),
++      fileConfig: mkFileConfig(bank.name, bank.code, acc.accountNumber),
+       processing: mkProcessing(status),
+     });
+   }
+@@ -89,9 +92,34 @@
+     accountNumber: ACCOUNTS["South Indian Bank"][0].accountNumber, schemeName: "Short Term Bond",
+     rejection: { by: "Arun", date: new Date(now - 3 * day).toISOString(), comment: "Wrong account selected for Liquid scheme. The Scheme Code does not match the chosen collection account." },
+   };
++  // One live setup with an edit waiting for the checker — shows the R7 "what changes" diff in Approvals.
++  const pi = list.findIndex((x) => x.status === "pending" && x.downloadMode === "auto");
++  if (pi !== -1) {
++    const live = { ...list[pi], status: "active", fileConfig: { ...list[pi].fileConfig, startRow: 1 }, processing: { ...list[pi].processing, validateRunningBalance: false, directMatch: false }, connection: { ...list[pi].connection, schedule: { ...defaultSchedule(), every: 60 } } };
++    list[pi] = { ...list[pi], baseline: live, fileConfig: { ...list[pi].fileConfig, startRow: 3 }, processing: { ...list[pi].processing, runningBalanceCleanup: true, cleanupChars: "Cr" } };
++  }
+   return list;
+ }
+ 
++/** PRD v1 / v4 §5.3 — admin-maintained transaction status standardisation (source value → system value). */
++export function seedStatusMap() {
++  const at = new Date(now - 90 * day).toISOString();
++  return [["C", "CREDIT", "HDFC Bank"], ["CR", "CREDIT", "IDBI Bank"], ["SUCCESS", "CREDIT", "IndusInd Bank"], ["Positive Amount", "CREDIT", "South Indian Bank"],
++    ["D", "DEBIT", "HDFC Bank"], ["DR", "DEBIT", "IDBI Bank"], ["FAILURE", "DEBIT", "IndusInd Bank"], ["Negative Amount", "DEBIT", "South Indian Bank"]]
++    .map(([source, system, seenAt], i) => ({ id: "sm_" + i, source, system, seenAt, table: "RECON_BANK_TXN", column: "INSTRM_STATUS", status: "active", owner: "Meera", createdAt: at }));
++}
++
++/** Mapping record created when a bank setup is approved. */
++export function newMappingFor(cfg, sno) {
++  const std = isStandard(cfg.fileConfig?.fileType);
++  return {
++    id: uid("bm"), kind: "bank_mapping", type: "bank", sno, bankName: cfg.bankName, accountNumber: cfg.accountNumber || "", fileType: cfg.fileConfig?.fileType || "CSV",
++    status: std ? "active" : "not_started", standard: std, owner: cfg.owner, configId: cfg.id, sampleFileName: cfg.fileConfig?.sampleFileName || null,
++    headerRow: Number(cfg.fileConfig?.startRow) || 1, headerConfirmed: false, dateFormat: "DD/MM/YYYY", bulkUpload: !!cfg.processing?.bulkUpload,
++    createdAt: new Date().toISOString(), lastUpdated: new Date().toISOString(), rejection: null, fields: mkBankMappingFields(false), narrationSplit: false, overrides: 0, approved: std,
++  };
++}
++
+ export function seedCreditConfigs() {
+   const list = [];
+   for (let i = 0; i < 60; i++) {
+@@ -120,8 +148,8 @@
+       lastUpdated: new Date(now - i * day * 0.5).toISOString(),
+       rejection: null,
+       connection: mkConnection(mode),
+-      fileConfig: { fileFormat: i % 2 === 0 ? "CSV" : "XLSX", separator: ",", startRow: 1, startColumn: 1, instrumentStatus: "SUCCESS", failureReasonCode: "NA", sampleFileName: null, detected: {}, edited: {} },
+-      processing: { dateTimeUpdate: true, reconciliationType: "Subscription", isActive: status !== "inactive" },
++      fileConfig: { fileFormat: i % 2 === 0 ? "CSV" : "XLSX", separator: ",", startRow: 1, startColumn: 1, instrumentStatus: i % 3 === 0 ? "D" : "C", failureReasonCode: i % 3 === 0 ? "R01" : "", sampleFileName: null, detected: {}, edited: {} },
++      processing: { dateTimeUpdate: true, reconciliationType: i % 4 === 3 ? "Liability" : "Subscription", liabilityCategory: i % 4 === 3 ? "Refund" : "", isActive: status !== "inactive" },
+     });
+   }
+   list[0] = { ...list[0], status: "rejected", rejection: { by: "Arun", date: new Date(now - 2 * day).toISOString(), comment: "Payment Aggregator code mismatch — Razorpay MIS mapped to a CAMSPay pool account. Please correct the aggregator selection." } };
+@@ -129,24 +157,17 @@
+   return list;
+ }
+ 
++// PRD v1 field list only. `reuse` = HDFC's approved mapping (separate Debit / Credit columns).
++const HDFC_MAP = { INSTRM_AMOUNT_CREDIT: "Credit", INSTRM_AMOUNT_DEBIT: "Debit", VALUE_DATE: "Value Date", BANK_STMT_DATE: "Txn Date", BANK_NARRATION: "Narration", INSTRM_NO: "Cheque No", CLOSING_BALANCE: "Running Balance" };
++// Value date, amount and narration are enforced by the save rules (amount and narration each have two valid fields), so only VALUE_DATE starts as Required.
++const MANDATORY = ["VALUE_DATE"];
++const INCREMENTAL = ["VALUE_DATE", "INSTRM_AMOUNT_CREDIT", "BANK_NARRATION"];
+ function mkBankMappingFields(reuse) {
+-  const f = (sysField, attr, mandatory, incremental, mapped, source) => ({
+-    group: "input", systemField: sysField, attribute: attr, mappedColumn: mapped || "", source: source || "manual",
+-    mandatory, incremental, status: mapped ? "mapped" : "pending",
++  const inputs = MAPPING_FIELDS.map(([sysField, attr]) => {
++    const col = reuse ? HDFC_MAP[sysField] || "" : "";
++    return { group: "input", systemField: sysField, attribute: attr, mappedColumn: col, source: col ? "previous" : "manual", mandatory: MANDATORY.includes(sysField), incremental: reuse && INCREMENTAL.includes(sysField), status: col ? "mapped" : "pending" };
+   });
+-  const inputs = [
+-    f("TXN_DATE", "Date", true, true, reuse ? "Txn Date" : "", reuse ? "previous" : "manual"),
+-    f("VALUE_DATE", "Date", true, true, reuse ? "Value Date" : "", reuse ? "previous" : "manual"),
+-    f("TXN_AMOUNT", "Amount", true, true, reuse ? "Credit" : "", reuse ? "previous" : "manual"),
+-    f("DEBIT_AMOUNT", "Amount", false, false, reuse ? "Debit" : "", reuse ? "pattern" : "manual"),
+-    f("RUNNING_BALANCE", "Amount", false, false, reuse ? "Running Balance" : "", reuse ? "previous" : "manual"),
+-    f("CHEQUE_NO", "Text", false, false, reuse ? "Cheque No" : "", reuse ? "previous" : "manual"),
+-    f("NARRATION", "Text", true, false, reuse ? "Narration" : "", reuse ? "previous" : "manual"),
+-  ];
+-  const narration = [
+-    { group: "narration", systemField: "UTR_NUMBER", attribute: "Extracted", mappedColumn: reuse ? "Narration" : "", source: reuse ? "pattern" : "manual", mandatory: false, incremental: false, status: reuse ? "mapped" : "pending" },
+-    { group: "narration", systemField: "PA_REF", attribute: "Extracted", mappedColumn: reuse ? "Narration" : "", source: reuse ? "pattern" : "manual", mandatory: false, incremental: false, status: reuse ? "mapped" : "pending" },
+-  ];
++  const narration = NARRATION_FIELDS.map(([sysField, attr]) => ({ group: "narration", systemField: sysField, attribute: attr, mappedColumn: "", source: "manual", mandatory: false, incremental: false, status: "pending" }));
+   return [...inputs, ...narration];
+ }
+ 
+diff --color -ruN a/frontend/src/state/store.js frontend/src/state/store.js
+--- a/frontend/src/state/store.js	2026-10-21 17:48:55
++++ b/frontend/src/state/store.js	2026-10-21 18:48:39
+@@ -1,5 +1,6 @@
+ import React, { createContext, useContext, useEffect, useReducer, useCallback } from "react";
+-import { seedBankConfigs, seedCreditConfigs, seedMappings } from "../mock/seed";
++import { seedBankConfigs, seedCreditConfigs, seedMappings, seedStatusMap, newMappingFor } from "../mock/seed";
++import { diffSetup, isStandard } from "../lib/setupSchema";
+ import { seedUsers } from "../mock/userSeed";
+ import { uid } from "../lib/format";
+ import { ACTIONS, authorize, INVITE_TTL_MS } from "../lib/rbac";
+@@ -7,10 +8,16 @@
+ import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
+ import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections } from "../mock/opsSeed";
+ 
+-const KEY = "cams_recon_state_v12";
++const KEY = "cams_recon_state_v13";
+ // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
+-const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose"];
++const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map"];
+ 
++/** R7 — keep the live (last approved) version on a draft/pending edit so the checker sees a diff. */
++function baselineOf(prev, item) {
++  if (prev && (prev.status === "active" || prev.status === "inactive")) { const { baseline, ...live } = prev; return JSON.parse(JSON.stringify(live)); }
++  return (prev && prev.baseline) || item.baseline || null;
++}
++
+ function buildSeed() {
+   const configs = seedBankConfigs();
+   const creditConfigs = seedCreditConfigs();
+@@ -32,7 +39,7 @@
+       ],
+       files, emails: seedEmails(files), connections: seedConnections(files), credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
+       exceptions: seedExceptions(), documents: seedDocuments(),
+-      releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }],
++      releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(),
+     },
+     audit,
+     persona: "usr_meera",
+@@ -135,7 +142,7 @@
+   const saveDraft = useCallback((kind, item, label) => {
+     const prev = get(kind, item.id);
+     const from = prev ? prev.status : "new";
+-    const saved = { ...item, status: "draft", lastUpdated: new Date().toISOString(), owner: activePersona.name };
++    const saved = { ...item, baseline: baselineOf(prev, item), status: "draft", lastUpdated: new Date().toISOString(), owner: activePersona.name };
+     dispatch({ type: "UPSERT", kind, item: saved });
+     addAudit({ entityType: kind, entityId: saved.id, entityLabel: label, action: "Save as Draft", from: statusLabel(from), to: "Draft" });
+     return saved;
+@@ -144,9 +151,11 @@
+   const submit = useCallback((kind, item, label) => {
+     const prev = get(kind, item.id);
+     const from = prev ? prev.status : "new";
+-    const saved = { ...item, status: "pending", lastUpdated: new Date().toISOString(), owner: activePersona.name };
++    const saved = { ...item, baseline: baselineOf(prev, item), status: "pending", lastUpdated: new Date().toISOString(), owner: activePersona.name };
+     dispatch({ type: "UPSERT", kind, item: saved });
+-    addAudit({ entityType: kind, entityId: saved.id, entityLabel: label, action: "Submit for Approval", from: statusLabel(from), to: "Pending Approval" });
++    // R7 — log whether this is a new setup or an edit, and which fields changed.
++    const diff = diffSetup(saved.baseline, { ...saved, kind });
++    addAudit({ entityType: kind, entityId: saved.id, entityLabel: label, action: diff ? "Submit edit for Approval" : "Submit new setup for Approval", from: statusLabel(from), to: "Pending Approval", comment: diff ? (diff.length ? "Changed: " + diff.map((d) => d.field).join(", ") : "No field changes") : undefined });
+     return saved;
+   }, [get, addAudit, activePersona.name]);
+ 
+@@ -160,10 +169,16 @@
+     }
+     const active = item.processing ? item.processing.isActive !== false : true;
+     const to = active ? "active" : "inactive";
+-    const saved = { ...item, status: to, lastUpdated: new Date().toISOString(), rejection: null, approved: true };
++    const saved = { ...item, status: to, lastUpdated: new Date().toISOString(), rejection: null, approved: true, baseline: null, effectiveFrom: new Date().toISOString() };
+     dispatch({ type: "UPSERT", kind, item: saved });
+-    addAudit({ entityType: kind, entityId: id, entityLabel: label, action: "Approve", from: "Pending Approval", to: statusLabel(to) });
+-  }, [get, addAudit, actor]);
++    addAudit({ entityType: kind, entityId: id, entityLabel: label, action: "Approve", from: "Pending Approval", to: statusLabel(to), comment: "Effective from the next file; already-loaded files not re-processed" });
++    // A newly approved bank setup gets its column-mapping record (standard formats need none — pre-built parser).
++    if (kind === "bank_config" && !(state.collections.bank_mapping || []).some((m) => m.configId === id)) {
++      const m = newMappingFor(saved, (state.collections.bank_mapping || []).length + 1);
++      dispatch({ type: "UPSERT", kind: "bank_mapping", item: m });
++      addAudit({ entityType: "bank_mapping", entityId: m.id, entityLabel: `${saved.bankName} mapping`, action: isStandard(saved.fileConfig?.fileType) ? "Standard format — no mapping needed" : "Mapping created", from: null, to: isStandard(saved.fileConfig?.fileType) ? "Active" : "Not Started" });
++    }
++  }, [get, addAudit, actor, state.collections.bank_mapping]);
+ 
+   const reject = useCallback((kind, id, comment, label) => {
+     const item = get(kind, id);

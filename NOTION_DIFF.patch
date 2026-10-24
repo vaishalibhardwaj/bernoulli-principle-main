@@ -1,0 +1,375 @@
+diff --color -ruN n4a/frontend/src/features/today/Today.jsx n4b/frontend/src/features/today/Today.jsx
+--- n4a/frontend/src/features/today/Today.jsx	2026-10-21 03:04:40
++++ n4b/frontend/src/features/today/Today.jsx	2026-10-21 03:04:40
+@@ -15,6 +15,13 @@
+ 
+ const TONE_ORDER = { red: 0, amber: 1, green: 2 };
+ 
++/** Wraps the leading verb in a highlight pill (Notion's signature device). */
++function Verb({ text }) {
++  const [first, ...rest] = String(text).split(" ");
++  if (!rest.length) return text;
++  return <><span className="hl-pill">{first}</span> {rest.join(" ")}</>;
++}
++
+ function useWorkItems() {
+   const { collections, perms, personaUser, act, currentUser } = useStore();
+   const nav = useNavigate();
+@@ -145,6 +152,7 @@
+         <div>
+           <div className="eyebrow-sm"><Sun size={13} /> {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</div>
+           <h1>{greet}, {first}</h1>
++          <p className="today-sub">{isChecker ? "Your team's work is waiting for a second pair of eyes." : "Here's today's money, and the one thing to do next."}</p>
+         </div>
+         <CutoffChip />
+       </div>
+@@ -153,7 +161,7 @@
+       <div className={"next-card" + (hero.late ? " late" : "")} data-testid="next-action">
+         <div className="nc-body">
+           <div className="nc-eyebrow">{hero.eyebrow}{hero.late && <span className="nc-late">Running late</span>}</div>
+-          <h2>{hero.title}</h2>
++          <h2><Verb text={hero.title} /></h2>
+           <p>{hero.why}</p>
+           {hero.summary && <div className="nc-sum">{hero.summary}</div>}
+         </div>
+diff --color -ruN n4a/frontend/src/index.css n4b/frontend/src/index.css
+--- n4a/frontend/src/index.css	2026-10-21 03:04:40
++++ n4b/frontend/src/index.css	2026-10-21 03:04:40
+@@ -1,4 +1,4 @@
+-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
++@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+ @tailwind base;
+ @tailwind components;
+ @tailwind utilities;
+diff --color -ruN n4a/frontend/src/index.js n4b/frontend/src/index.js
+--- n4a/frontend/src/index.js	2026-10-21 03:04:40
++++ n4b/frontend/src/index.js	2026-10-21 03:04:40
+@@ -4,7 +4,7 @@
+ import "@/styles.css";
+ import "@/ops.css";
+ import "@/theme.css";
+-import "@/theme-aurora.css";
++import "@/notion.css";
+ import App from "@/App";
+ import { StoreProvider } from "@/state/store";
+ import { Toaster } from "sonner";
+diff --color -ruN n4a/frontend/src/notion.css n4b/frontend/src/notion.css
+--- n4a/frontend/src/notion.css	1970-01-01 05:30:00
++++ n4b/frontend/src/notion.css	2026-10-21 03:04:40
+@@ -0,0 +1,316 @@
++/* ============================================================================
++   Notion layer — "warm paper notebook under afternoon sun".
++   Warm #f6f5f4 canvas, white cards with 1px hairlines (no shadows), ink built
++   from black at different alphas, ONE filled blue action per view, colour used
++   as sparse punctuation (soft pills, a marigold "next" card, a midnight island).
++   Loaded last: overrides tokens + base components from styles/ops/theme.css.
++   ============================================================================ */
++:root {
++  /* Reference tokens */
++  --n-blue: #0075de;
++  --n-blue-hover: #005bb0;
++  --n-sky-tint: #e6f3fe;
++  --n-paper: #f6f5f4;
++  --n-white: #ffffff;
++  --n-ink: rgba(0, 0, 0, 0.95);
++  --n-ink-90: rgba(0, 0, 0, 0.9);
++  --n-ink-60: rgba(0, 0, 0, 0.6);
++  --n-ink-54: rgba(0, 0, 0, 0.54);
++  --n-ink-40: rgba(0, 0, 0, 0.4);
++  --n-graphite: #615d59;
++  --n-hair: rgba(0, 0, 0, 0.08);
++  --n-hair-strong: rgba(0, 0, 0, 0.14);
++  --n-hover: rgba(0, 0, 0, 0.04);
++  --n-marigold: #ffb110;
++  --n-coral: #f64932;
++  --n-sky-wash: #62aef0;
++  --n-midnight: #02093a;
++  --n-peach: #f6d5b8;
++  --n-serif: "Source Serif 4", "Source Serif Pro", Georgia, serif;
++  /* Soft tag fills (Notion database tag palette) */
++  --tag-green-bg: #dbeddb;  --tag-green-fg: #1c3829;
++  --tag-yellow-bg: #fdecc8; --tag-yellow-fg: #402c1b;
++  --tag-red-bg: #ffe2dd;    --tag-red-fg: #5d1715;
++  --tag-blue-bg: #d3e5ef;   --tag-blue-fg: #183347;
++  --tag-gray-bg: #e3e2e0;   --tag-gray-fg: #32302c;
++
++  /* Map onto the app's existing HSL tokens so every screen inherits them */
++  --primary: 208 100% 44%;
++  --primary-hover: 208 100% 35%;
++  --primary-soft: 208 94% 95%;
++  --primary-soft-border: 208 70% 86%;
++  --primary-deep: 208 80% 25%;
++  --page: 30 9% 96%;
++  --border: 30 6% 90%;
++  --border-strong: 30 5% 82%;
++  --text: 0 0% 7%;
++  --muted: 30 4% 36%;
++  --st-active: 145 32% 33%;
++  --st-pending: 36 100% 38%;
++  --st-rejected: 7 84% 48%;
++  --radius-card: 12px;
++  --radius-input: 8px;
++  --shadow-card: none;
++  --shadow-soft: none;
++  --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.06);
++  --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
++}
++
++/* ---- Canvas & type ---- */
++body { background: var(--n-paper); color: var(--n-ink); font-size: 14px; line-height: 1.43; letter-spacing: 0; font-feature-settings: "lnum"; }
++* { transition-timing-function: ease; }
++::selection { background: var(--n-sky-tint); }
++:focus-visible { outline: 2px solid var(--n-blue); outline-offset: 2px; }
++.muted { color: var(--n-ink-54); }
++a { color: inherit; }
++
++/* ---- Shell: sidebar like a notebook margin, sticky top nav ---- */
++.shell { --sb: 240px; }
++.sidebar { background: var(--n-paper); border-right: 1px solid var(--n-hair); }
++.sidebar-brand { border-bottom: none; padding: 14px 14px 8px; min-height: 52px; }
++.brand-mark { width: 26px; height: 26px; border-radius: 6px; background: #000; }
++.brand-text { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
++.brand-text small { color: var(--n-ink-54); }
++.nav { padding: 4px 8px; }
++.nav-section-title { color: var(--n-ink-40); font-size: 12px; font-weight: 500; padding: 16px 10px 4px; letter-spacing: 0; text-transform: none; }
++.nav-item { color: var(--n-ink-54); font-weight: 500; font-size: 14px; padding: 6px 10px; border-radius: 6px; transition: background-color .2s, color .2s; }
++.nav-item svg { color: var(--n-ink-40); }
++.nav-item:hover { background: var(--n-hover); color: var(--n-ink); }
++.nav-item:hover svg { color: var(--n-ink-60); }
++.nav-item.active { background: rgba(0, 0, 0, 0.055); color: var(--n-ink); box-shadow: none; font-weight: 600; }
++.nav-item.active svg { color: var(--n-blue); }
++.nav-step { border-color: var(--n-hair-strong); color: var(--n-ink-40); }
++.nav-item.active .nav-step { border-color: var(--n-blue); color: var(--n-blue); }
++.nav-badge { background: var(--n-ink); color: #fff; border-radius: 9999px; font-weight: 600; }
++.nav-module-title { color: var(--n-ink-40); }
++.topbar { background: rgba(255, 255, 255, 0.9); backdrop-filter: saturate(180%) blur(8px); border-bottom: none; box-shadow: 0 0.7px 1.462px rgba(0, 0, 0, 0.015), 0 3px 9px rgba(0, 0, 0, 0.03); min-height: 52px; }
++.crumbs { color: var(--n-ink-54); }
++.crumbs b { color: var(--n-ink); font-weight: 500; }
++.search-trigger { background: var(--n-paper); border: 1px solid transparent; border-radius: 8px; color: var(--n-ink-40); }
++.search-trigger:hover { background: #fff; border-color: var(--n-hair); }
++.search-trigger kbd, .cmdk-input kbd { border-color: var(--n-hair); color: var(--n-ink-40); border-radius: 4px; }
++.icon-btn { color: var(--n-ink-54); border-radius: 6px; }
++.icon-btn:hover { background: var(--n-hover); }
++.bell-dot { background: var(--n-coral); }
++.persona-btn { background: #fff; border: 1px solid var(--n-hair); border-radius: 9999px; padding: 5px 12px; font-weight: 500; }
++.persona-btn .dot { background: var(--n-blue); }
++/* Avatar character mark: white circle, 2px accent ring */
++.avatar { width: 32px; height: 32px; background: #fff; color: var(--n-ink); border: 2px solid var(--n-coral); box-shadow: none; font-weight: 600; }
++.content { padding: 32px 40px 96px; }
++.page-wrap { max-width: 1200px; animation: notionIn .2s ease both; }
++@keyframes notionIn { from { opacity: 0; } to { opacity: 1; } }
++
++/* ---- Page header: big quiet title + editorial serif intro ---- */
++.page-head { margin-bottom: 24px; align-items: flex-end; }
++.page-head h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; color: var(--n-ink); gap: 12px !important; }
++.page-head h1 svg { width: 30px; height: 30px; padding: 6px; border-radius: 8px; background: #fff; border: 1px solid var(--n-hair); color: var(--n-ink-60) !important; box-sizing: content-box; }
++.page-head p { font-family: var(--n-serif); font-size: 18px; line-height: 1.56; color: var(--n-graphite); margin-top: 8px; max-width: 720px; }
++
++/* ---- Cards: white on paper, hairline, no shadow ---- */
++.card, .kpi, .kpi-card, .ops-stat, .cy-step, .journey-bar, .mw-item, .role-card, .metric, .tile, .stat-card, .rev-card, .role-tile, .sugg-card, .pl-step, .ver-item, .rp-module, .why-cand, .role-block { background: #fff; border: 1px solid var(--n-hair); border-radius: 12px; box-shadow: none !important; }
++.card-head { border-bottom: 1px solid var(--n-hair); padding: 14px 20px; }
++.card-head h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; }
++.card-pad { padding: 20px 24px; }
++
++/* ---- Buttons: one blue fill, everything else ghost ---- */
++.btn { border-radius: 8px; font-weight: 500; font-size: 14px; padding: 6px 15px; box-shadow: none !important; transition: background-color .2s, color .2s, border-color .2s; }
++.btn-sm { font-size: 13px; padding: 4px 10px; }
++.btn-lg { font-size: 15px; padding: 9px 18px; }
++.btn-primary { background: var(--n-blue); color: #fff; border-color: var(--n-blue); }
++.btn-primary:hover:not(:disabled) { background: var(--n-blue-hover); }
++.btn-outline { background: #fff; color: var(--n-ink-90); border: 1px solid var(--n-hair-strong); }
++.btn-outline:hover:not(:disabled) { background: var(--n-hover); color: var(--n-ink); border-color: var(--n-hair-strong); }
++.btn-ghost { background: transparent; color: var(--n-ink-60); }
++.btn-ghost:hover:not(:disabled) { background: var(--n-hover); color: var(--n-ink); }
++.btn-fill, .btn-success { background: var(--n-sky-tint); color: var(--n-blue); border-color: transparent; }
++.btn-fill:hover:not(:disabled), .btn-success:hover:not(:disabled) { background: #d3e9fd; color: var(--n-blue-hover); }
++.btn-danger { background: #fff; color: var(--n-coral); border: 1px solid rgba(246, 73, 50, 0.4); }
++.btn-danger:hover:not(:disabled) { background: #fff4f2; }
++.link { color: var(--n-blue); font-weight: 500; }
++
++/* ---- Pills: Notion database tags ---- */
++.pill { border-radius: 9999px; padding: 2px 10px; font-size: 12px; font-weight: 500; border: none; gap: 5px; }
++.pill .dot { display: none; }
++.pill-active { background: var(--tag-green-bg); color: var(--tag-green-fg); }
++.pill-pending { background: var(--tag-yellow-bg); color: var(--tag-yellow-fg); }
++.pill-rejected { background: var(--tag-red-bg); color: var(--tag-red-fg); }
++.pill-draft, .pill-inactive, .pill-not_started { background: var(--tag-gray-bg); color: var(--tag-gray-fg); border: none; }
++.chip { border-radius: 9999px; padding: 2px 8px; }
++.light { border-radius: 9999px; font-weight: 500; }
++.light.green { background: var(--tag-green-bg); color: var(--tag-green-fg); }
++.light.amber { background: var(--tag-yellow-bg); color: var(--tag-yellow-fg); }
++.light.red { background: var(--tag-red-bg); color: var(--tag-red-fg); }
++.us-pill { border-radius: 9999px; }
++.role-chip { border-radius: 9999px; }
++.step-chip { border-radius: 9999px; background: var(--n-sky-tint); color: var(--n-blue); }
++.ap-kind { border-radius: 9999px; background: var(--tag-gray-bg); color: var(--tag-gray-fg); font-weight: 500; }
++.rr-ref { border-radius: 9999px; background: var(--n-paper); }
++.phase-tag, .priv-tag, .simple-tag { border-radius: 9999px; }
++
++/* ---- Inputs ---- */
++.input, .select, .textarea { border-radius: 8px; border: 1px solid var(--n-hair-strong); box-shadow: none; background: #fff; font-size: 14px; }
++.input:focus, .select:focus, .textarea:focus { border-color: var(--n-blue); box-shadow: 0 0 0 3px rgba(0, 117, 222, 0.15); }
++.input[readonly], .input:disabled, .select:disabled { background: var(--n-paper); }
++
++/* ---- Tables: database view ---- */
++table.grid thead th { background: transparent; text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; color: var(--n-ink-54); border-bottom: 1px solid var(--n-hair); padding: 8px 14px; }
++table.grid tbody td { border-bottom: 1px solid var(--n-hair); font-size: 14px; padding: 10px 14px; }
++table.grid tbody tr:hover { background: rgba(0, 0, 0, 0.025); }
++.toolbar { background: #fff; border-bottom: 1px solid var(--n-hair); border-radius: 12px 12px 0 0; }
++
++/* ---- View tabs (database-view style) instead of segmented pills ---- */
++.segmented { background: transparent !important; border: none !important; padding: 0; gap: 4px; border-radius: 0; }
++.segmented button { background: transparent !important; box-shadow: none !important; border: none; border-radius: 6px; padding: 6px 10px; color: var(--n-ink-54); font-weight: 500; position: relative; }
++.segmented button:hover { background: var(--n-hover) !important; color: var(--n-ink); }
++.segmented button.on { color: var(--n-ink) !important; font-weight: 600; }
++.segmented button.on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -3px; height: 2px; border-radius: 2px; background: var(--n-ink); }
++.filter-chip { border-radius: 9999px; border: 1px solid var(--n-hair-strong); background: #fff; color: var(--n-ink-60); font-weight: 500; }
++.filter-chip.on { background: var(--n-ink); border-color: var(--n-ink); color: #fff; }
++
++/* ---- Overlays ---- */
++.drawer { border-radius: 12px 0 0 12px; box-shadow: var(--shadow-raised); }
++.modal, .menu-pop, .cmdk { border-radius: 12px; box-shadow: var(--shadow-raised); border: none; }
++.menu-item:hover, .note-row:hover { background: var(--n-hover); }
++.cmdk-item[data-selected="true"] { background: rgba(0, 0, 0, 0.05); }
++.cmdk-overlay, .overlay, .drawer-overlay { background: rgba(15, 15, 15, 0.35); }
++.sess-banner { border-radius: 12px; box-shadow: none; }
++.sess-banner.info { background: var(--n-sky-tint); border-color: transparent; color: #183347; }
++.sess-banner.warn { background: var(--tag-yellow-bg); border-color: transparent; color: var(--tag-yellow-fg); }
++.note { border-radius: 8px; }
++
++/* ============ Signature moments ============ */
++
++/* Highlight pill wrapped around a verb (hero device) */
++.hl-pill { display: inline-block; background: var(--n-peach); color: #000; border-radius: 9999px; padding: 0 14px 2px; margin: 0 2px; line-height: 1.25; }
++
++/* Today: big quiet greeting + serif line */
++.today-head h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.1; }
++.today-sub { font-family: var(--n-serif); font-size: 18px; color: var(--n-graphite); margin: 6px 0 0; line-height: 1.56; }
++.eyebrow-sm { color: var(--n-ink-54); }
++.cutoff-chip { border-radius: 9999px; background: #fff; border: 1px solid var(--n-hair); color: var(--n-ink-90); font-weight: 500; }
++.cutoff-chip.hot { background: var(--tag-red-bg); color: var(--tag-red-fg); border-color: transparent; }
++
++/* "Do this next" = the marigold accent card — the first colour the eye finds */
++.next-card { background: var(--n-marigold); border: none; box-shadow: none; border-radius: 12px; padding: 28px 28px; }
++.next-card.late { background: var(--n-coral); }
++.next-card.late, .next-card.late p, .next-card.late .nc-eyebrow, .next-card.late .nc-sum { color: #fff; }
++.next-card h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.025em; color: #000; }
++.next-card p { color: rgba(0, 0, 0, 0.72); font-family: var(--n-serif); font-size: 18px; }
++.nc-eyebrow { color: rgba(0, 0, 0, 0.7); font-weight: 600; }
++.nc-sum { color: #000; }
++.nc-late { background: rgba(255, 255, 255, 0.25); color: #fff; border-radius: 9999px; }
++.next-card .hl-pill { background: #fff; }
++.next-card.late .btn-primary { background: #fff; color: var(--n-coral); border-color: #fff; }
++
++/* Daily cycle stepper */
++.cy-step { padding: 14px; transition: border-color .2s; }
++.cy-step.active { border-color: var(--n-blue); box-shadow: none; }
++.cy-step.done { background: #fff; }
++.cy-step.done .cy-title { color: var(--n-ink-54); }
++.cy-step.late:not(.done) { border-color: rgba(246, 73, 50, 0.5); }
++.cy-ico { border-color: var(--n-hair-strong); color: var(--n-ink-54); }
++.cy-ico.active { background: var(--n-blue); border-color: var(--n-blue); }
++.cy-ico.done { background: #448361; border-color: #448361; }
++.cy-ico.waiting { border-color: var(--n-marigold); color: #9a6700; }
++.cy-step { position: relative; }
++.cy-mine { position: absolute; top: -9px; left: 12px; margin: 0; background: #000; border-radius: 9999px; padding: 1px 8px; font-weight: 600; white-space: nowrap; }
++.cy-by { white-space: nowrap; }
++.cy-step:has(.cy-mine) { border-color: #000; box-shadow: none; }
++.cy-by { color: var(--n-ink-40); }
++.cy-link { color: var(--n-blue); font-weight: 500; }
++.journey-bar { padding: 6px 8px; }
++.jb-step { border-radius: 6px; color: var(--n-ink-54); }
++.jb-step:hover { background: var(--n-hover); }
++.jb-step.current { background: var(--n-sky-tint); color: var(--n-ink); }
++.jb-label { color: var(--n-ink-40); font-weight: 500; }
++.next-strip { background: var(--tag-green-bg); border: none; color: var(--tag-green-fg); border-radius: 12px; }
++
++/* Work list rows: hairline cards; urgency shown by the number token, not a thick bar */
++.mw-item { border-left-width: 1px !important; border-left-color: var(--n-hair) !important; padding: 16px 18px; }
++.mw-num { background: var(--n-paper); color: var(--n-ink-60); font-weight: 600; }
++.mw-item.tone-red .mw-num { background: var(--tag-red-bg); color: var(--tag-red-fg); }
++.mw-item.tone-amber .mw-num { background: var(--tag-yellow-bg); color: var(--tag-yellow-fg); }
++.mw-item.tone-green .mw-num { background: var(--tag-green-bg); color: var(--tag-green-fg); }
++.mw-kind { color: var(--n-ink-54); font-weight: 500; }
++.mw-title { color: var(--n-ink); font-weight: 600; letter-spacing: -0.01em; }
++.mw-detail { color: var(--n-graphite); }
++.mw-hint { color: var(--n-ink-54); }
++.mw-when.red { color: var(--n-coral); }
++.mw-when.amber { color: #9a6700; }
++.mw-when.green { color: #448361; }
++/* One filled blue per view: the "Do this next" button. Row actions are ghost-blue. */
++.mw-list .mw-item .mw-btn { background: var(--n-sky-tint); color: var(--n-blue); border-color: transparent; }
++.mw-list .mw-item .mw-btn:hover { background: #d3e9fd; }
++.mw-done { background: var(--tag-green-bg); color: var(--tag-green-fg); border-radius: 9999px; }
++
++/* KPIs */
++.kpi b, .kc-row b, .os-value { letter-spacing: -0.03em; color: var(--n-ink); }
++.kpi span, .kc-label, .os-label { color: var(--n-ink-54); }
++.ops-stat { border-left-width: 1px !important; }
++.ops-stat.tone-red .os-value { color: var(--n-coral); }
++/* Dashboard north-star tile = the midnight "dark island" */
++.kpi-cards .kpi-card:first-child { background: var(--n-midnight); border-color: var(--n-midnight); color: #fff; }
++.kpi-cards .kpi-card:first-child .kc-label, .kpi-cards .kpi-card:first-child .kc-note { color: rgba(255, 255, 255, 0.7); }
++.kpi-cards .kpi-card:first-child .kc-row b { color: #fff; }
++.kpi-cards .kpi-card:first-child .spark-svg polyline { stroke: var(--n-sky-wash); }
++.kpi-cards .kpi-card:first-child .kc-delta.down { color: #ff9b8a; }
++.kpi-cards .kpi-card:first-child .kc-delta.up { color: #9fe0b5; }
++.kc-delta.up { color: #448361; }
++.kc-delta.down { color: var(--n-coral); }
++
++/* Charts: Notion blue single series, hairline grid */
++.spark-svg polyline, .lc-line { stroke: var(--n-blue); }
++.lc-area { fill: var(--n-blue); opacity: 0.06; }
++.lc-dot { fill: var(--n-blue); }
++.lc-grid { stroke: var(--n-hair); }
++.lc-tip { background: #000; border-radius: 8px; }
++.bl-track, .share-bar, .fn-bar { background: var(--n-paper); border-radius: 9999px; }
++.bl-track i, .share-bar i { background: var(--n-blue); border-radius: 9999px; }
++.bl-row.warn .bl-track i { background: var(--n-marigold); }
++.heat td:not(:first-child) { background: rgba(0, 117, 222, calc(var(--h) * 0.5 + 0.04)); border-radius: 8px; }
++.heat td.hot { background: rgba(246, 73, 50, calc(var(--h) * 0.45 + 0.15)); }
++
++/* Fund release: realised amount in the sky-wash accent card */
++.release-hero { background: #fff; }
++.rh-amounts > div:first-child { background: var(--n-sky-tint); border-radius: 12px; padding: 16px 18px; }
++.rh-amounts > div.held { background: var(--n-paper); border-radius: 12px; padding: 16px 18px; }
++.rh-amounts b { color: var(--n-ink); letter-spacing: -0.035em; }
++.rh-steps li.done > span { background: #448361; border-color: #448361; }
++
++/* Approvals: rows like a database list */
++.ap-row { padding: 14px 20px; border-bottom: 1px solid var(--n-hair); }
++.ap-row.urgent { box-shadow: none; background: linear-gradient(90deg, var(--tag-red-bg) 0 3px, transparent 3px); }
++.ap-urgent { color: var(--n-coral); }
++
++/* Sugg cards (match) and misc accents */
++.sugg-card { border-top-width: 1px; }
++.sc-head { color: var(--n-ink-60); }
++.fast { color: #448361; }
++.match-bar { background: #000; border-radius: 12px; }
++.delta.ok { background: #448361; } .delta.bad { background: var(--n-coral); }
++.clock.red { color: var(--n-coral); } .clock.amber { color: #9a6700; }
++.ok-check { color: #448361; } .bad-check { color: var(--n-coral); }
++.int-add { color: var(--n-coral); }
++.close-day { padding: 24px; }
++.cd-check li.done svg { color: #448361; }
++.cd-check li:not(.done) svg { color: #9a6700; }
++
++/* Module strip / role tiles keep their module colour only as a small top rule */
++.role-tile { border-top: 3px solid var(--mc) !important; }
++.module-strip .role-card.active-filter { box-shadow: 0 0 0 2px var(--mc) !important; }
++
++/* Legacy Phase-1 screens */
++.hero { background: transparent; }
++.stepper .step-title { font-weight: 600; }
++.metric:hover, .tile:hover { border-color: var(--n-hair-strong); }
++.pager .pg-btn { border-radius: 8px; }
++.toolbar .search input { background: var(--n-paper); border-color: transparent; }
++.toolbar .search input:focus { background: #fff; border-color: var(--n-blue); }
++table.grid td.tnum { white-space: nowrap; }
++/* Original admin screens hard-code teal inline — bring them back to the one-blue system */
++[data-testid="btn-add-user"], [data-testid="btn-new-role"], [data-testid="drawer-save-user"], [data-testid="role-submit"] { background: var(--n-blue) !important; border-color: var(--n-blue) !important; color: #fff !important; }
++[data-testid="admin-notif-banner"] { background: var(--n-sky-tint) !important; border: none !important; color: #183347 !important; }
++[data-testid="admin-notif-banner"] svg { color: var(--n-blue) !important; }
++.user-management-page .page-head h1 svg, [data-testid="roles-access"] .page-head h1 svg { color: var(--n-ink-60) !important; }
++.role-card .rc-name svg { color: var(--n-ink-60) !important; }
++.role-card.active-filter { border-color: var(--n-blue) !important; }

@@ -1,0 +1,1212 @@
+diff --color -ruN r2a/frontend/src/App.js r2b/frontend/src/App.js
+--- r2a/frontend/src/App.js	2026-10-21 01:40:26
++++ r2b/frontend/src/App.js	2026-10-21 01:40:26
+@@ -18,12 +18,13 @@
+ import Exceptions from "@/features/exceptions/Exceptions";
+ import DocumentExtraction from "@/features/extraction/DocumentExtraction";
+ import ModulePlaceholder from "@/features/modules/ModulePlaceholder";
++import MyWork from "@/features/mywork/MyWork";
+ import { useStore } from "@/state/store";
+ import { homePath } from "@/lib/access";
+ 
+ function HomeRedirect() {
+-  const { perms } = useStore();
+-  return <Navigate to={homePath(perms)} replace />;
++  const { perms, simple } = useStore();
++  return <Navigate to={homePath(perms, simple)} replace />;
+ }
+ 
+ export default function App() {
+@@ -34,6 +35,7 @@
+           <Route path="/" element={<HomeRedirect />} />
+           <Route path="/admin/users" element={<UserManagement />} />
+           <Route path="/admin/roles" element={<RolesAccess />} />
++          <Route path="/my-work" element={<MyWork />} />
+           <Route path="/command" element={<CommandCentre />} />
+           <Route path="/ingestion" element={<FileInbox />} />
+           <Route path="/rules" element={<MatchRules />} />
+diff --color -ruN r2a/frontend/src/components/AppShell.js r2b/frontend/src/components/AppShell.js
+--- r2a/frontend/src/components/AppShell.js	2026-10-21 01:40:26
++++ r2b/frontend/src/components/AppShell.js	2026-10-21 01:40:26
+@@ -3,15 +3,15 @@
+ import {
+   LayoutDashboard, Landmark, CreditCard, GitCompareArrows, History, Gauge, Inbox, Combine, Siren, ScanText, ListOrdered,
+   PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound, Lock,
+-  Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown,
++  Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, ListTodo, Eye,
+ } from "lucide-react";
+ import { useStore } from "@/state/store";
+ import { ConfirmModal } from "@/components/Modal";
+-import { navFor, homePath, screenForPath, hasCap, PERSONAS } from "@/lib/access";
++import { navFor, homePath, screenForPath, hasCap, PERSONAS, screenLabel } from "@/lib/access";
+ import { toast } from "sonner";
+ 
+ const ICONS = {
+-  command: Gauge, ingestion: Inbox, match: Combine, exceptions: Siren, extraction: ScanText,
++  my_work: ListTodo, command: Gauge, ingestion: Inbox, match: Combine, exceptions: Siren, extraction: ScanText,
+   bank_setup: Landmark, credit_mis: CreditCard, mapping: GitCompareArrows, rules: ListOrdered,
+   approvals: LayoutDashboard, audit: History, users: Users, roles: KeyRound,
+   brk_compute: Calculator, brk_payout: Wallet, brk_master: BookUser,
+@@ -24,7 +24,7 @@
+ ];
+ 
+ export default function AppShell() {
+-  const { state, role, currentUser, currentRole, persona, perms, switchPersona, toggleSidebar, resetDemo, collections } = useStore();
++  const { state, role, currentUser, currentRole, persona, perms, switchPersona, toggleSidebar, resetDemo, collections, simple, setSimple, personaUser } = useStore();
+   const nav = useNavigate();
+   const loc = useLocation();
+   const [menuOpen, setMenuOpen] = React.useState(false);
+@@ -38,7 +38,7 @@
+     if (menuOpen || personaOpen) { window.addEventListener("click", close); return () => window.removeEventListener("click", close); }
+   }, [menuOpen, personaOpen]);
+ 
+-  const modules = navFor(perms);
++  const modules = navFor(perms, simple);
+   const screen = screenForPath(loc.pathname);
+   const allowed = !screen || hasCap(perms, screen.key, "view");
+ 
+@@ -49,7 +49,10 @@
+   const driftCount = (collections.files || []).filter((f) => ["drift", "unknown", "check_failed", "late", "missing"].includes(f.status)).length;
+   const docsToReview = (collections.documents || []).filter((d) => d.status === "needs_review").length;
+ 
++  const myWorkCount = (collections.exceptions || []).filter((e) => e.status !== "closed" && e.status !== "pending_approval" && (e.owner === personaUser.name || (!e.owner && e.amount > 0 && e.interestHoursLeft < 24))).length
++    + (collections.suggestions || []).filter((s) => !s.decided).length + docsToReview;
+   const badgeFor = (key) => ({
++    my_work: myWorkCount,
+     approvals: role === "auth" ? queueCount : 0,
+     bank_setup: role === "maker" ? rejectedCount : 0,
+     roles: hasCap(perms, "roles", "approve") ? accessPending : 0,
+@@ -58,14 +61,15 @@
+     extraction: docsToReview,
+   }[key] || 0);
+ 
+-  const crumbs = screen ? [screen.moduleLabel, screen.label] : ["CAMS Operations"];
++  const crumbs = screen ? (simple ? [screenLabel(screen, true)] : [screen.moduleLabel, screen.label]) : ["CAMS Operations"];
+   EXTRA_CRUMBS.forEach(([re, label]) => { if (re.test(loc.pathname) && crumbs.length === 2) crumbs.push(label); });
++  const toggleSimple = () => { setSimple(!simple); setMenuOpen(false); nav("/"); };
+ 
+   const personaLabel = PERSONAS.find((p) => p.id === persona)?.label || currentUser;
+   const choosePersona = (id) => { switchPersona(id); setPersonaOpen(false); nav("/"); };
+ 
+   return (
+-    <div className={"shell" + (state.sidebarCollapsed ? " collapsed" : "")}>
++    <div className={"shell" + (state.sidebarCollapsed ? " collapsed" : "") + (simple ? " simple" : "")}>
+       <aside className={"sidebar" + (state.sidebarCollapsed ? " mini" : "")}>
+         <div className="sidebar-brand">
+           <div className="brand-mark"><Shield size={16} /></div>
+@@ -87,8 +91,8 @@
+                     const badge = badgeFor(s.key);
+                     return (
+                       <NavLink key={s.key} to={s.path} end={s.path === "/dashboard"} className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} data-testid={"nav-" + s.key}>
+-                        <Icon /><span className="nav-label">{s.label}</span>
+-                        {s.phase && s.phase !== "P1" && <span className={"phase-tag " + s.phase.toLowerCase()} title={`Roadmap phase ${s.phase.slice(1)}`}>{s.phase}</span>}
++                        <Icon /><span className="nav-label">{screenLabel(s, simple)}</span>
++                        {!simple && s.phase && s.phase !== "P1" && <span className={"phase-tag " + s.phase.toLowerCase()} title={`Roadmap phase ${s.phase.slice(1)}`}>{s.phase}</span>}
+                         {badge > 0 && <span className="nav-badge pop" key={badge}>{badge}</span>}
+                       </NavLink>
+                     );
+@@ -146,6 +150,7 @@
+               <div className="menu-pop" onClick={(e) => e.stopPropagation()} data-testid="user-menu">
+                 <div className="menu-head"><b>{currentUser}</b><span>{currentRole}</span></div>
+                 <div className="menu-sep" />
++                <button className="menu-item" onClick={toggleSimple} data-testid="menu-simple"><Eye /> {simple ? "Switch to full view" : "Switch to simple view"}</button>
+                 <button className="menu-item" onClick={() => { setConfirmReset(true); setMenuOpen(false); }} data-testid="menu-reset-demo"><RotateCcw /> Reset demo data</button>
+                 <div className="menu-sep" />
+                 <button className="menu-item" data-testid="menu-logout"><LogOut /> Sign out</button>
+@@ -175,9 +180,9 @@
+             {allowed ? <Outlet /> : (
+               <div className="card card-pad no-access" data-testid="no-access">
+                 <Lock size={28} />
+-                <h2>You don't have access to {screen.label}</h2>
++                <h2>You don't have access to {screenLabel(screen, simple)}</h2>
+                 <p className="muted">Access is granted per screen through roles in Administration › Roles & Access. Ask your admin to add a role that includes <b>{screen.label}</b>.</p>
+-                <button className="btn btn-primary" onClick={() => nav(homePath(perms))}>Go to my home screen</button>
++                <button className="btn btn-primary" onClick={() => nav(homePath(perms, simple))}>Go to my home screen</button>
+               </div>
+             )}
+           </div>
+diff --color -ruN r2a/frontend/src/features/admin/RolesAccess.jsx r2b/frontend/src/features/admin/RolesAccess.jsx
+--- r2a/frontend/src/features/admin/RolesAccess.jsx	2026-10-21 01:40:26
++++ r2b/frontend/src/features/admin/RolesAccess.jsx	2026-10-21 01:40:26
+@@ -103,6 +103,7 @@
+                   <span className="rt-module">{MODULE_BY_KEY[r.module]?.label}</span>
+                   {r.status !== "active" && <span className={"pill " + (r.status === "pending" ? "pill-pending" : "pill-rejected")}><span className="dot" />{r.status === "pending" ? "Pending approval" : "Rejected"}</span>}
+                   {isPrivileged(r) && <span className="priv-tag">privileged</span>}
++                  {r.simple && <span className="simple-tag">simple view</span>}
+                 </div>
+                 <h3>{r.name}</h3>
+                 <p className="muted">{r.description}</p>
+@@ -193,6 +194,8 @@
+               </select></div>
+             <div className="field"><label className="field-label">Description</label>
+               <input className="input" value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} placeholder="What is this role for?" /></div>
++            <label className="toggle-inline"><input type="checkbox" className="cb" checked={Boolean(editing.simple)} onChange={(e) => setEditing({ ...editing, simple: e.target.checked })} data-testid="role-simple" />
++              <span><b>Daily user: simple view</b><br /><span className="muted">Plain words, one "My Work" queue, no charts or percentages. Use for people who work the daily queue.</span></span></label>
+             <div className="field"><label className="field-label">Screen permissions</label>
+               <PermissionMatrix module={editing.module} perms={editing.perms} onChange={(p) => setEditing({ ...editing, perms: p })} /></div>
+             {Object.values(editing.perms).some((c) => c.includes("edit")) && Object.values(editing.perms).some((c) => c.includes("approve")) && (
+diff --color -ruN r2a/frontend/src/features/exceptions/Exceptions.jsx r2b/frontend/src/features/exceptions/Exceptions.jsx
+--- r2a/frontend/src/features/exceptions/Exceptions.jsx	2026-10-21 01:40:26
++++ r2b/frontend/src/features/exceptions/Exceptions.jsx	2026-10-21 01:40:26
+@@ -5,7 +5,8 @@
+ import { hasCap } from "@/lib/access";
+ import { ROOT_CAUSES, EXCEPTION_TYPES } from "@/mock/opsSeed";
+ import { timeAgo } from "@/lib/format";
+-import { inrShort, inr, dur, Conf, Stat, PhaseBadge, ReadOnlyNote } from "@/features/ops/ui";
++import { inrShort, inr, dur, Conf, Stat, PhaseBadge, ReadOnlyNote, timeLeftWords } from "@/features/ops/ui";
++import { PLAIN_EXCEPTION, PLAIN_CASE_STATUS, stripNumbers } from "@/lib/plain";
+ import { Siren, Hourglass, UserPlus, Check, X, Sparkles, MessageSquare, Download } from "lucide-react";
+ import { toast } from "sonner";
+ 
+@@ -13,20 +14,26 @@
+ const priority = (e) => Math.round((Math.log10(Math.max(1000, e.amount)) * 10) * (e.interestHoursLeft < 24 ? 3 : e.interestHoursLeft < 48 ? 2 : 1) + e.ageHours / 6);
+ 
+ export default function Exceptions() {
+-  const { collections, perms, act, currentUser, personaUser } = useStore();
++  const { collections, perms, act, currentUser, personaUser, simple } = useStore();
++  const ST = simple ? PLAIN_CASE_STATUS : STATUS;
++  const typeLabel = (t) => (simple && PLAIN_EXCEPTION[t]) || t;
+   const nav = useNavigate();
+   const [sp] = useSearchParams();
+   const all = collections.exceptions || [];
+   const canEdit = hasCap(perms, "exceptions", "edit");
+   const canApprove = hasCap(perms, "exceptions", "approve");
+-  const [view, setView] = React.useState(sp.get("risk") ? "risk" : canApprove && !canEdit ? "approval" : "open");
++  const [view, setView] = React.useState(simple ? "mine" : sp.get("risk") ? "risk" : canApprove && !canEdit ? "approval" : "open");
+   const [type, setType] = React.useState("all");
+   const [sel, setSel] = React.useState([]);
+   const [openId, setOpenId] = React.useState(sp.get("case"));
+   const [cause, setCause] = React.useState("");
+   const [note, setNote] = React.useState("");
+ 
+-  const VIEWS = [
++  const VIEWS = simple ? [
++    ["mine", "My cases", (e) => e.owner === personaUser.name && e.status !== "closed"],
++    ["unassigned", "Nobody working on these", (e) => !e.owner && e.status !== "closed"],
++    ["closed", "Done", (e) => e.status === "closed" && e.owner === personaUser.name],
++  ] : [
+     ["open", "All open", (e) => e.status !== "closed"],
+     ["mine", "My cases", (e) => e.owner === personaUser.name && e.status !== "closed"],
+     ["unassigned", "Unassigned", (e) => !e.owner && e.status !== "closed"],
+@@ -34,7 +41,7 @@
+     ["approval", "Closure pending checker", (e) => e.status === "pending_approval"],
+     ["closed", "Closed", (e) => e.status === "closed"],
+   ];
+-  const vf = VIEWS.find((v) => v[0] === view)[2];
++  const vf = (VIEWS.find((v) => v[0] === view) || VIEWS[0])[2];
+   const rows = all.filter(vf).filter((e) => type === "all" || e.type === type).sort((a, b) => priority(b) - priority(a));
+   const open = all.find((e) => e.id === openId);
+ 
+@@ -45,11 +52,11 @@
+   };
+   const bulkAssign = () => {
+     let n = 0; sel.forEach((id) => { const e = all.find((x) => x.id === id); if (e && update(e, { owner: personaUser.name, status: e.status === "open" ? "in_progress" : e.status }, "Assign", `Assigned to ${personaUser.name}`)) n++; });
+-    toast.success(`${n} case(s) assigned to you`); setSel([]);
++    toast.success(simple ? `${n} case${n !== 1 ? "s are" : " is"} now yours` : `${n} case(s) assigned to you`); setSel([]);
+   };
+   const requestClose = (e) => {
+-    if (!cause) { toast.error("Pick a root cause — it feeds the trends view"); return; }
+-    if (update(e, { status: "pending_approval", rootCause: cause, owner: e.owner || personaUser.name, closedBy: currentUser }, "Request closure", `Root cause: ${cause}`)) { toast.success("Sent to a checker to confirm closure"); setCause(""); }
++    if (!cause) { toast.error(simple ? "Please pick why this happened" : "Pick a root cause — it feeds the trends view"); return; }
++    if (update(e, { status: "pending_approval", rootCause: cause, owner: e.owner || personaUser.name, closedBy: currentUser }, "Request closure", `Root cause: ${cause}`)) { toast.success(simple ? "Done from your side. Your team lead will approve it." : "Sent to a checker to confirm closure"); setCause(""); }
+   };
+   const decideClose = (e, yes) => {
+     const target = { ...e, owner: e.closedBy };
+@@ -72,52 +79,52 @@
+     <div data-testid="exceptions">
+       <div className="page-head">
+         <div>
+-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Siren size={24} /> Exceptions</h1>
+-          <p>One workbench for every exception type. Each case has an owner, a ₹ amount, an interest clock, a suggested fix and a root cause. Highest priority first.</p>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Siren size={24} /> {simple ? "Problem cases" : "Exceptions"}</h1>
++          {simple ? <p>Payments that could not be sorted out automatically. Most urgent at the top.</p> : <p>One workbench for every exception type. Each case has an owner, a ₹ amount, an interest clock, a suggested fix and a root cause. Highest priority first.</p>}
+         </div>
+-        <div className="actions">
++        {!simple && <div className="actions">
+           <PhaseBadge phase="P2">cases · SLA & interest clock · root causes · bulk actions</PhaseBadge>
+           {hasCap(perms, "exceptions", "export") && <button className="btn btn-outline btn-sm" onClick={() => toast.success(`Exported ${rows.length} cases to CSV`)}><Download size={14} /> Export</button>}
+-        </div>
++        </div>}
+       </div>
+       {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
+ 
+-      <div className="ops-stats">
++      {!simple && <div className="ops-stats">
+         <Stat label="Open cases" value={openList.length} sub={inrShort(openList.reduce((s, e) => s + e.amount, 0)) + " total"} onClick={() => setView("open")} />
+         <Stat label="Interest clock < 24h" value={openList.filter((e) => e.amount > 0 && e.interestHoursLeft < 24).length} sub="Work these first" tone="red" onClick={() => setView("risk")} id="ex-risk" />
+         <Stat label="Unassigned" value={openList.filter((e) => !e.owner).length} sub="Pick up or bulk-assign" tone="amber" onClick={() => setView("unassigned")} />
+         <Stat label="Closure pending checker" value={all.filter((e) => e.status === "pending_approval").length} sub="Maker–checker on closure" tone="blue" onClick={() => setView("approval")} />
+-      </div>
++      </div>}
+ 
+-      <div className="ex-layout">
++      <div className={"ex-layout" + (simple ? " single" : "")}>
+         <div className="card">
+           <div className="toolbar" style={{ flexWrap: "wrap" }}>
+             <div className="segmented">{VIEWS.map(([k, l]) => <button key={k} className={view === k ? "on" : ""} onClick={() => { setView(k); setSel([]); }} data-testid={"ex-view-" + k}>{l}</button>)}</div>
+-            <select className="select" style={{ maxWidth: 200 }} value={type} onChange={(e) => setType(e.target.value)}><option value="all">All types</option>{EXCEPTION_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+-            {sel.length > 0 && canEdit && <button className="btn btn-primary btn-sm" onClick={bulkAssign} data-testid="bulk-assign"><UserPlus size={13} /> Assign {sel.length} to me</button>}
++            {!simple && <select className="select" style={{ maxWidth: 200 }} value={type} onChange={(e) => setType(e.target.value)}><option value="all">All types</option>{EXCEPTION_TYPES.map((t) => <option key={t}>{t}</option>)}</select>}
++            {sel.length > 0 && canEdit && <button className="btn btn-primary btn-sm" onClick={bulkAssign} data-testid="bulk-assign"><UserPlus size={13} /> {simple ? `Take ${sel.length} case${sel.length !== 1 ? "s" : ""}` : `Assign ${sel.length} to me`}</button>}
+           </div>
+           <table className="grid" data-testid="ex-table">
+-            <thead><tr><th style={{ width: 30 }} /><th>Case</th><th>Type</th><th>Investor / bank</th><th style={{ textAlign: "right" }}>Amount</th><th>Interest clock</th><th>Owner</th><th>Status</th><th style={{ textAlign: "right" }}>Priority</th></tr></thead>
++            <thead><tr><th style={{ width: 30 }} /><th>Case</th><th>{simple ? "What happened" : "Type"}</th><th>Investor / bank</th><th style={{ textAlign: "right" }}>Amount</th><th>{simple ? "Time left" : "Interest clock"}</th><th>{simple ? "Who" : "Owner"}</th><th>Status</th>{!simple && <th style={{ textAlign: "right" }}>Priority</th>}</tr></thead>
+             <tbody>
+               {rows.map((e) => (
+                 <tr key={e.id} onClick={() => setOpenId(e.id)} style={{ cursor: "pointer" }} data-testid={"ex-row-" + e.id}>
+                   <td onClick={(ev) => ev.stopPropagation()}><input type="checkbox" className="cb" disabled={!canEdit} checked={sel.includes(e.id)} onChange={() => setSel((s) => s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id])} /></td>
+                   <td className="tnum">{e.ref}</td>
+-                  <td>{e.type}</td>
++                  <td>{typeLabel(e.type)}</td>
+                   <td>{e.investor}<div className="muted">{e.bankName}</div></td>
+                   <td className="tnum" style={{ textAlign: "right" }}>{e.amount ? inrShort(e.amount) : "—"}</td>
+-                  <td>{e.amount ? <span className={"clock " + (e.interestHoursLeft < 24 ? "red" : e.interestHoursLeft < 48 ? "amber" : "")}><Hourglass size={12} /> {dur(e.interestHoursLeft)}</span> : <span className="muted">n/a</span>}</td>
+-                  <td>{e.owner || <span className="muted">Unassigned</span>}</td>
+-                  <td><span className={"pill " + STATUS[e.status][1]}><span className="dot" />{STATUS[e.status][0]}</span></td>
+-                  <td className="tnum" style={{ textAlign: "right" }}><b>{priority(e)}</b></td>
++                  <td>{e.amount ? <span className={"clock " + (e.interestHoursLeft < 24 ? "red" : e.interestHoursLeft < 48 ? "amber" : "")}><Hourglass size={12} /> {simple ? timeLeftWords(e.interestHoursLeft) : dur(e.interestHoursLeft)}</span> : <span className="muted">{simple ? "—" : "n/a"}</span>}</td>
++                  <td>{e.owner === personaUser.name && simple ? "You" : e.owner || <span className="muted">{simple ? "Nobody yet" : "Unassigned"}</span>}</td>
++                  <td><span className={"pill " + ST[e.status][1]}><span className="dot" />{ST[e.status][0]}</span></td>
++                  {!simple && <td className="tnum" style={{ textAlign: "right" }}><b>{priority(e)}</b></td>}
+                 </tr>
+               ))}
+-              {rows.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: "center", padding: 30 }}>No cases in this view.</td></tr>}
++              {rows.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: "center", padding: 30 }}>{simple && view === "mine" ? "You have no open cases. Check \"Nobody working on these\" to pick one up." : "No cases in this view."}</td></tr>}
+             </tbody>
+           </table>
+         </div>
+ 
+-        <div className="card">
++        {!simple && <div className="card">
+           <div className="card-head"><h3>Root-cause trends</h3><span className="muted">From closed cases</span></div>
+           <div className="card-pad">
+             {causes.map((x) => (
+@@ -125,32 +132,32 @@
+             ))}
+             <div className="muted" style={{ marginTop: 10 }}>A spike in "Bank narration format changed" points to a drift case or a new rule. Check File Inbox and Match Rules.</div>
+           </div>
+-        </div>
++        </div>}
+       </div>
+ 
+       {open && (
+-        <Drawer id="case-drawer" title={`${open.ref} — ${open.type}`} subtitle={`${open.investor} · ${open.bankName} · opened ${timeAgo(open.createdAt)}`} onClose={() => setOpenId(null)}>
++        <Drawer id="case-drawer" title={`${open.ref} — ${typeLabel(open.type)}`} subtitle={`${open.investor} · ${open.bankName} · opened ${timeAgo(open.createdAt)}`} onClose={() => setOpenId(null)}>
+           <div className="kv-line"><span>Amount</span><b className="tnum">{open.amount ? inr(open.amount) : "—"}</b></div>
+-          <div className="kv-line"><span>Interest clock</span>{open.amount ? <span className={"clock " + (open.interestHoursLeft < 24 ? "red" : "")}><Hourglass size={12} /> {dur(open.interestHoursLeft)} until delayed interest accrues</span> : <span className="muted">n/a</span>}</div>
+-          <div className="kv-line"><span>Owner</span>{open.owner || "Unassigned"}</div>
+-          <div className="kv-line"><span>Status</span><span className={"pill " + STATUS[open.status][1]}><span className="dot" />{STATUS[open.status][0]}</span></div>
++          <div className="kv-line"><span>{simple ? "Time left" : "Interest clock"}</span>{open.amount ? <span className={"clock " + (open.interestHoursLeft < 24 ? "red" : "")}><Hourglass size={12} /> {simple ? (open.interestHoursLeft <= 0 ? "Late — penalty interest is already running" : `${timeLeftWords(open.interestHoursLeft)} before penalty interest starts`) : `${dur(open.interestHoursLeft)} until delayed interest accrues`}</span> : <span className="muted">n/a</span>}</div>
++          <div className="kv-line"><span>{simple ? "Who" : "Owner"}</span>{open.owner || (simple ? "Nobody yet" : "Unassigned")}</div>
++          <div className="kv-line"><span>Status</span><span className={"pill " + ST[open.status][1]}><span className="dot" />{ST[open.status][0]}</span></div>
+ 
+           <div className="fd-section suggestion-box">
+-            <h4><Sparkles size={14} /> Suggested resolution <Conf value={open.suggestion.conf} /></h4>
+-            <p>{open.suggestion.text}</p>
+-            {canEdit && open.status !== "closed" && open.status !== "pending_approval" && <button className="btn btn-fill btn-sm" onClick={() => runSuggestion(open)} data-testid="run-suggestion">{open.suggestion.action}</button>}
++            <h4><Sparkles size={14} /> {simple ? "What to do" : "Suggested resolution"} {!simple && <Conf value={open.suggestion.conf} />}</h4>
++            <p>{simple ? stripNumbers(open.suggestion.text) : open.suggestion.text}</p>
++            {canEdit && open.status !== "closed" && open.status !== "pending_approval" && <button className="btn btn-fill btn-sm" onClick={() => runSuggestion(open)} data-testid="run-suggestion">{simple ? open.suggestion.action.replace("Match Workbench", "Match payments").replace("File Inbox", "Bank files today") : open.suggestion.action}</button>}
+           </div>
+ 
+           {canEdit && ["open", "in_progress"].includes(open.status) && (
+             <div className="fd-section">
+-              <h4>Close case</h4>
+-              <select className="select" value={cause} onChange={(e) => setCause(e.target.value)} data-testid="root-cause"><option value="">Root cause (required)…</option>{ROOT_CAUSES.map((c) => <option key={c}>{c}</option>)}</select>
+-              <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={() => requestClose(open)} data-testid="request-close"><Check size={13} /> Request closure</button>
++              <h4>{simple ? "Finished? Tell us why it happened" : "Close case"}</h4>
++              <select className="select" value={cause} onChange={(e) => setCause(e.target.value)} data-testid="root-cause"><option value="">{simple ? "Pick one…" : "Root cause (required)…"}</option>{ROOT_CAUSES.map((c) => <option key={c}>{c}</option>)}</select>
++              <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={() => requestClose(open)} data-testid="request-close"><Check size={13} /> {simple ? "Mark as done" : "Request closure"}</button>
+             </div>
+           )}
+           {open.status === "pending_approval" && (
+             <div className="fd-section">
+-              <h4>Closure requested by {open.closedBy || open.owner} · root cause: {open.rootCause}</h4>
++              <h4>{simple ? `Marked done by ${open.closedBy || open.owner} — waiting for approval` : `Closure requested by ${open.closedBy || open.owner} · root cause: ${open.rootCause}`}</h4>
+               {canApprove && (open.closedBy || open.owner) !== currentUser && !(open.closedBy || "").startsWith(currentUser) ? (
+                 <div style={{ display: "flex", gap: 8 }}>
+                   <button className="btn btn-outline btn-sm" onClick={() => decideClose(open, false)}><X size={13} /> Send back</button>
+diff --color -ruN r2a/frontend/src/features/extraction/DocumentExtraction.jsx r2b/frontend/src/features/extraction/DocumentExtraction.jsx
+--- r2a/frontend/src/features/extraction/DocumentExtraction.jsx	2026-10-21 01:40:26
++++ r2b/frontend/src/features/extraction/DocumentExtraction.jsx	2026-10-21 01:40:26
+@@ -6,6 +6,8 @@
+ import { Conf, PhaseBadge, ReadOnlyNote } from "@/features/ops/ui";
+ import { ScanText, Mail, FileText, Image, CheckCircle2, XCircle, Check, ShieldCheck, Ban } from "lucide-react";
+ import { toast } from "sonner";
++import { useSearchParams } from "react-router-dom";
++import { PLAIN_DOC_STATUS, plainField, plainCheck } from "@/lib/plain";
+ 
+ const PIPELINE = [
+   ["Capture", "Mailbox / SFTP listener stores file + body, hashes for duplicates"],
+@@ -23,11 +25,13 @@
+ const HIGH_VALUE = 10000000; // ₹1 Cr → second person
+ 
+ export default function DocumentExtraction() {
+-  const { collections, perms, act, currentUser } = useStore();
++  const { collections, perms, act, currentUser, simple } = useStore();
++  const [sp] = useSearchParams();
++  const ST = simple ? PLAIN_DOC_STATUS : STATUS;
+   const docs = collections.documents || [];
+   const canEdit = hasCap(perms, "extraction", "edit");
+   const canApprove = hasCap(perms, "extraction", "approve");
+-  const [selId, setSelId] = React.useState(docs.find((d) => d.status === "needs_review")?.id || docs[0]?.id);
++  const [selId, setSelId] = React.useState(sp.get("doc") || docs.find((d) => d.status === "needs_review")?.id || docs[0]?.id);
+   const doc = docs.find((d) => d.id === selId);
+   const [edits, setEdits] = React.useState({});
+   const [confirmed, setConfirmed] = React.useState({});
+@@ -54,7 +58,7 @@
+     const corrections = Object.entries(edits).filter(([, v]) => v);
+     const res = act({ screen: "extraction", cap: "edit", kind: "documents", id: doc.id, patch: { status: needsChecker ? "pending_checker" : "approved", owner: currentUser, corrections: corrections.length }, audit: { entityLabel: doc.name, action: needsChecker ? "Submit extraction (high value)" : "Approve extraction & load", from: "Needs review", to: needsChecker ? "Awaiting checker" : "Loaded", comment: `${corrections.length} correction(s) captured for learning` } });
+     if (!res.ok) { toast.error(res.error); return; }
+-    toast.success(needsChecker ? "Above ₹1 Cr — sent to a checker" : "Rows loaded into the recon ledger, linked to this document");
++    toast.success(simple ? (needsChecker ? "Saved. Big amount, so your team lead will approve it." : "Saved. Thank you!") : needsChecker ? "Above ₹1 Cr — sent to a checker" : "Rows loaded into the recon ledger, linked to this document");
+   };
+   const checker = (yes) => {
+     const res = act({ screen: "extraction", cap: "approve", kind: "documents", id: doc.id, patch: { status: yes ? "approved" : "needs_review" }, audit: { entityLabel: doc.name, action: yes ? "Approve extraction" : "Return extraction", from: "Awaiting checker", to: yes ? "Loaded" : "Needs review" } });
+@@ -66,15 +70,15 @@
+     const done = confirmed[f.key];
+     return (
+       <div key={f.key} className={"xf-row" + (flagged && !done ? " flagged" : "")} data-testid={"xf-" + f.key}>
+-        <div className="xf-label">{f.label}</div>
++        <div className="xf-label">{simple ? plainField(f.label) : f.label}</div>
+         <div className="xf-val">
+           {flagged && canEdit && doc.status === "needs_review" ? (
+             <input className="input tnum" value={edits[f.key] ?? f.value} onChange={(e) => setEdits((x) => ({ ...x, [f.key]: e.target.value }))} />
+           ) : <span className="tnum">{edits[f.key] || f.value}</span>}
+-          {f.validator && <div className={"xf-valid " + (f.validator.ok ? "ok" : "bad")}>{f.validator.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {f.validator.msg}</div>}
++          {f.validator && <div className={"xf-valid " + (f.validator.ok ? "ok" : "bad")}>{f.validator.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />} {simple ? plainCheck(f.validator.msg) : f.validator.msg}</div>}
+         </div>
+         <Conf value={f.conf} auto={T.auto} review={T.review} />
+-        {flagged && canEdit && doc.status === "needs_review" && <button className={"btn btn-sm " + (done ? "btn-success" : "btn-outline")} onClick={() => setConfirmed((c) => ({ ...c, [f.key]: !c[f.key] }))} data-testid={"confirm-" + f.key}><Check size={12} /> {done ? "Confirmed" : "Confirm"}</button>}
++        {flagged && canEdit && doc.status === "needs_review" && <button className={"btn btn-sm " + (done ? "btn-success" : "btn-outline")} onClick={() => setConfirmed((c) => ({ ...c, [f.key]: !c[f.key] }))} data-testid={"confirm-" + f.key}><Check size={12} /> {simple ? (done ? "Checked ✓" : "This is correct") : done ? "Confirmed" : "Confirm"}</button>}
+       </div>
+     );
+   };
+@@ -83,16 +87,16 @@
+     <div data-testid="doc-extraction">
+       <div className="page-head">
+         <div>
+-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><ScanText size={24} /> Document Extraction</h1>
+-          <p>PDF MIS files, scanned slips and email bodies become the same rows a CSV would. A person checks only the values the system is unsure about.</p>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><ScanText size={24} /> {simple ? "Read PDFs & emails" : "Document Extraction"}</h1>
++          <p>{simple ? "The system has read these documents. Check only the values marked in orange, then save." : "PDF MIS files, scanned slips and email bodies become the same rows a CSV would. A person checks only the values the system is unsure about."}</p>
+         </div>
+-        <div className="actions"><PhaseBadge phase="P3">AI extraction · field confidence · human-in-the-loop</PhaseBadge></div>
++        {!simple && <div className="actions"><PhaseBadge phase="P3">AI extraction · field confidence · human-in-the-loop</PhaseBadge></div>}
+       </div>
+       {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
+ 
+-      <div className="pipeline" data-testid="pipeline">
++      {!simple && <div className="pipeline" data-testid="pipeline">
+         {PIPELINE.map(([t, d], i) => <div key={t} className="pl-step"><span>{i + 1}</span><b>{t}</b><small>{d}</small></div>)}
+-      </div>
++      </div>}
+ 
+       <div className="xt-layout">
+         <div className="card xt-list">
+@@ -101,7 +105,7 @@
+             return (
+               <button key={d.id} className={"xt-doc" + (d.id === selId ? " on" : "")} onClick={() => setSelId(d.id)} data-testid={"doc-" + d.id}>
+                 <Icon size={16} />
+-                <div><b>{d.name}</b><div className="muted">{d.docType} · {d.source}</div><span className={"pill " + STATUS[d.status][1]}><span className="dot" />{STATUS[d.status][0]}</span></div>
++                <div><b>{d.name}</b><div className="muted">{d.docType} · {d.source}</div><span className={"pill " + ST[d.status][1]}><span className="dot" />{ST[d.status][0]}</span></div>
+               </button>
+             );
+           })}
+@@ -110,34 +114,34 @@
+         <div className="card xt-preview">
+           <div className="card-head"><h3>{doc.kind}</h3><span className="muted">received {formatDateTime(doc.receivedAt)}</span></div>
+           <pre className="doc-page">{doc.text.map((l, i) => <div key={i}>{markLine(l) || " "}</div>)}</pre>
+-          <div className="muted" style={{ padding: "0 16px 14px" }}><mark className="low">Highlighted</mark> = value extracted below the {T.auto * 100}% auto-load threshold.</div>
++          <div className="muted" style={{ padding: "0 16px 14px" }}><mark className="low">Highlighted</mark> = {simple ? "the system wasn't sure it read this correctly. Please compare." : `value extracted below the ${T.auto * 100}% auto-load threshold.`}</div>
+         </div>
+ 
+         <div className="card xt-fields">
+-          <div className="card-head"><h3>Extracted values</h3><span className={"pill " + STATUS[doc.status][1]}><span className="dot" />{STATUS[doc.status][0]}</span></div>
++          <div className="card-head"><h3>{simple ? "What the system read" : "Extracted values"}</h3><span className={"pill " + ST[doc.status][1]}><span className="dot" />{ST[doc.status][0]}</span></div>
+           <div className="card-pad">
+-            {doc.status === "ignored" ? <div className="muted"><Ban size={14} /> Classified as not a reconciliation document. Nothing extracted. Kept for audit.</div> : <>
++            {doc.status === "ignored" ? <div className="muted"><Ban size={14} /> {simple ? "This is not a payment document (e.g. an advert). Nothing to do." : "Classified as not a reconciliation document. Nothing extracted. Kept for audit."}</div> : <>
+               {doc.fields.map(fieldRow)}
+               {doc.lines.length > 0 && (
+                 <table className="grid compact xt-lines" style={{ marginTop: 12 }}>
+-                  <thead><tr><th>Txn ref</th><th>App no</th><th style={{ textAlign: "right" }}>Amount</th><th>Status</th><th>Reason</th></tr></thead>
++                  <thead><tr><th>{simple ? "Payment reference" : "Txn ref"}</th><th>{simple ? "Application" : "App no"}</th><th style={{ textAlign: "right" }}>Amount</th><th>Status</th><th>Reason</th></tr></thead>
+                   <tbody>{doc.lines.map((l, i) => (
+                     <tr key={i}>{["utr", "app", "amount", "status", "reason"].map((k) => {
+                       if (!l[k]) return <td key={k} className="muted">—</td>;
+                       const [v, c, hint] = l[k]; const key = `${i}.${k}`; const low = c < T.auto;
+                       return <td key={k} className={(low && !confirmed[key] ? "cell-low" : "") + (k === "amount" ? " tnum r" : " tnum")} title={hint || `${Math.round(c * 100)}%`}>
+-                        {low && canEdit && doc.status === "needs_review" ? <span className="cell-fix">{v}<button className="link" onClick={() => setConfirmed((x) => ({ ...x, [key]: !x[key] }))} data-testid={"fix-" + key}>{confirmed[key] ? "✓ fixed" : "fix"}</button></span> : v}
++                        {low && canEdit && doc.status === "needs_review" ? <span className="cell-fix">{v}<button className="link" onClick={() => setConfirmed((x) => ({ ...x, [key]: !x[key] }))} data-testid={"fix-" + key}>{simple ? (confirmed[key] ? "✓ checked" : "check") : confirmed[key] ? "✓ fixed" : "fix"}</button></span> : v}
+                         {hint && <div className="muted" style={{ fontSize: 10.5 }}>{hint}</div>}
+                       </td>;
+                     })}</tr>
+                   ))}</tbody>
+                 </table>
+               )}
+-              {doc.status === "auto_loaded" && <div className="note" style={{ marginTop: 12 }}><CheckCircle2 size={14} /><div>Every value ≥ {T.auto * 100}% and every validator passed, so this loaded with <b>no human touch</b>.</div></div>}
++              {doc.status === "auto_loaded" && <div className="note" style={{ marginTop: 12 }}><CheckCircle2 size={14} /><div>{simple ? <>The system read everything clearly, so this was <b>saved automatically</b>. Nothing to do.</> : <>Every value ≥ {T.auto * 100}% and every validator passed, so this loaded with <b>no human touch</b>.</>}</div></div>}
+               {doc.status === "needs_review" && canEdit && (
+                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+-                  <span className="muted">{unresolved.length ? `${unresolved.length} flagged value(s) left` : "All flagged values resolved"}</span>
+-                  <button className="btn btn-primary" style={{ marginLeft: "auto" }} disabled={unresolved.length > 0} onClick={submit} data-testid="approve-extraction"><ShieldCheck size={14} /> {value >= HIGH_VALUE ? "Submit to checker (≥ ₹1 Cr)" : "Approve & load rows"}</button>
++                  <span className="muted">{simple ? (unresolved.length ? `${unresolved.length} orange value${unresolved.length !== 1 ? "s" : ""} still to check` : "All checked") : unresolved.length ? `${unresolved.length} flagged value(s) left` : "All flagged values resolved"}</span>
++                  <button className="btn btn-primary" style={{ marginLeft: "auto" }} disabled={unresolved.length > 0} onClick={submit} data-testid="approve-extraction"><ShieldCheck size={14} /> {simple ? (value >= HIGH_VALUE ? "Looks right — send for approval" : "Looks right — save") : value >= HIGH_VALUE ? "Submit to checker (≥ ₹1 Cr)" : "Approve & load rows"}</button>
+                 </div>
+               )}
+               {doc.status === "pending_checker" && (canApprove && doc.owner !== currentUser ? (
+diff --color -ruN r2a/frontend/src/features/ingestion/FileInbox.jsx r2b/frontend/src/features/ingestion/FileInbox.jsx
+--- r2a/frontend/src/features/ingestion/FileInbox.jsx	2026-10-21 01:40:26
++++ r2b/frontend/src/features/ingestion/FileInbox.jsx	2026-10-21 01:40:26
+@@ -7,6 +7,7 @@
+ import { inrShort, num, Conf, PhaseBadge, ReadOnlyNote } from "@/features/ops/ui";
+ import { Inbox, CheckCircle2, XCircle, Fingerprint, ArrowRight, RefreshCw, Send, Trash2, Wand2, Clock } from "lucide-react";
+ import { toast } from "sonner";
++import { PLAIN_FILE_STATUS } from "@/lib/plain";
+ 
+ const STATUS = {
+   loaded: { label: "Loaded", cls: "pill-active" },
+@@ -23,7 +24,8 @@
+ const FILTERS = [["attention", "Needs attention"], ["all", "All files today"], ["loaded", "Loaded"]];
+ 
+ export default function FileInbox() {
+-  const { collections, perms, act, currentUser } = useStore();
++  const { collections, perms, act, currentUser, simple } = useStore();
++  const statusText = (st) => (simple ? PLAIN_FILE_STATUS[st] : STATUS[st]?.label) || st;
+   const nav = useNavigate();
+   const [sp] = useSearchParams();
+   const [filter, setFilter] = React.useState("attention");
+@@ -46,10 +48,10 @@
+     <div data-testid="file-inbox">
+       <div className="page-head">
+         <div>
+-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={24} /> File Inbox & Format Drift</h1>
+-          <p>Every expected statement, checked against its approved structure fingerprint. When a bank changes its file, we adapt on our side. No failed loads, no asking the bank.</p>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={24} /> {simple ? "Bank files today" : "File Inbox & Format Drift"}</h1>
++          {simple ? <p>Every bank statement we expect today, and whether it arrived OK.</p> : <p>Every expected statement, checked against its approved structure fingerprint. When a bank changes its file, we adapt on our side. No failed loads, no asking the bank.</p>}
+         </div>
+-        <div className="actions"><PhaseBadge phase="P1">fingerprinting · drift cases · expected-file calendar · completeness checks</PhaseBadge></div>
++        {!simple && <div className="actions"><PhaseBadge phase="P1">fingerprinting · drift cases · expected-file calendar · completeness checks</PhaseBadge></div>}
+       </div>
+ 
+       <div className="segmented" style={{ marginBottom: 14 }}>
+@@ -68,7 +70,7 @@
+                   <td style={{ textTransform: "capitalize" }}>{f.channel}</td>
+                   <td className="tnum">{formatDateTime(f.expectedBy).split(", ")[1]}</td>
+                   <td className="tnum">{f.receivedAt ? formatDateTime(f.receivedAt).split(", ")[1] : <span className="muted">—</span>}</td>
+-                  <td><span className={"pill " + (STATUS[f.status]?.cls || "")}><span className="dot" />{STATUS[f.status]?.label || f.status}</span></td>
++                  <td><span className={"pill " + (STATUS[f.status]?.cls || "")}><span className="dot" />{statusText(f.status)}</span></td>
+                   <td className="tnum" style={{ textAlign: "right" }}>{f.rows ? num(f.rows) : "—"}</td>
+                   <td className="tnum" style={{ textAlign: "right" }}>{f.creditAmount ? inrShort(f.creditAmount) : "—"}</td>
+                   <td>{f.receivedAt ? (failed ? <span className="bad-check"><XCircle size={13} /> {failed} failed</span> : <span className="ok-check"><CheckCircle2 size={13} /> 5/5</span>) : <span className="muted">not received</span>}</td>
+@@ -84,14 +86,14 @@
+       {open && (
+         <Drawer id="file-drawer" title={`${label(open)} — ${open.fileName}`} subtitle={`${open.channel} · expected by ${formatDateTime(open.expectedBy)}`} onClose={() => setOpenId(null)}>
+           {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
+-          <div className="fd-section">
++          {simple ? <div className="kv-line"><span>Status</span><span className={"pill " + (STATUS[open.status]?.cls || "")}><span className="dot" />{statusText(open.status)}</span></div> : <div className="fd-section">
+             <h4><Fingerprint size={14} /> Structure fingerprint</h4>
+             <div className="kv-line"><span>Fingerprint</span><code>{open.fingerprint || "—"}</code></div>
+-            <div className="kv-line"><span>Status</span><span className={"pill " + (STATUS[open.status]?.cls || "")}><span className="dot" />{STATUS[open.status]?.label}</span></div>
+-          </div>
++            <div className="kv-line"><span>Status</span><span className={"pill " + (STATUS[open.status]?.cls || "")}><span className="dot" />{statusText(open.status)}</span></div>
++          </div>}
+ 
+           <div className="fd-section">
+-            <h4>Completeness checks</h4>
++            <h4>{simple ? "Checks" : "Completeness checks"}</h4>
+             {open.receivedAt ? open.checks.map((c) => (
+               <div key={c.key} className={"check-row " + (c.ok ? "ok" : "bad")}>
+                 {c.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+@@ -102,7 +104,7 @@
+ 
+           {open.drift && (
+             <div className="fd-section">
+-              <h4><Wand2 size={14} /> Drift detected · {open.drift.summary}</h4>
++              <h4><Wand2 size={14} /> {simple ? "The bank changed its file layout" : `Drift detected · ${open.drift.summary}`}</h4>
+               <div className="col-compare">
+                 <div><div className="muted">Approved structure</div>{open.drift.oldColumns.map((c) => <span key={c} className={"col-pill" + (open.drift.newColumns.includes(c) ? "" : " gone")}>{c}</span>)}</div>
+                 <div><div className="muted">Today's file</div>{open.drift.newColumns.map((c) => <span key={c} className={"col-pill" + (open.drift.oldColumns.includes(c) ? "" : " new")}>{c}</span>)}</div>
+diff --color -ruN r2a/frontend/src/features/match/MatchWorkbench.jsx r2b/frontend/src/features/match/MatchWorkbench.jsx
+--- r2a/frontend/src/features/match/MatchWorkbench.jsx	2026-10-21 01:40:26
++++ r2b/frontend/src/features/match/MatchWorkbench.jsx	2026-10-21 01:40:26
+@@ -2,12 +2,13 @@
+ import { useStore } from "@/state/store";
+ import { Modal } from "@/components/Modal";
+ import { hasCap } from "@/lib/access";
+-import { uid, formatDate, timeAgo } from "@/lib/format";
++import { formatDate, timeAgo } from "@/lib/format";
+ import { inr, Conf, PhaseBadge, ReadOnlyNote } from "@/features/ops/ui";
++import { stripNumbers } from "@/lib/plain";
+ import { Combine, Sparkles, Check, X, HelpCircle, CheckCircle2, XCircle, Zap, Search } from "lucide-react";
+ import { toast } from "sonner";
++import { useMatchActions, FAST_TRACK } from "./matchActions";
+ 
+-const FAST_TRACK = { conf: 0.9, amount: 200000 }; // risk-tiered: low-risk AI matches skip the checker
+ 
+ const tokens = (s) => new Set(String(s).toUpperCase().replace(/[^A-Z ]/g, " ").split(/\s+/).filter((t) => t.length > 1));
+ function nameSim(a, b) {
+@@ -18,7 +19,9 @@
+ }
+ 
+ export default function MatchWorkbench() {
+-  const { collections, perms, act, upsert, currentUser } = useStore();
++  const { collections, perms, act, currentUser, simple } = useStore();
++  const [byHand, setByHand] = React.useState(false);
++  const txt = (t) => (simple ? stripNumbers(t) : t);
+   const canEdit = hasCap(perms, "match", "edit");
+   const canApprove = hasCap(perms, "match", "approve");
+   const credits = collections.credits || [];
+@@ -35,25 +38,8 @@
+   const sumC = credits.filter((c) => selC.includes(c.id)).reduce((s, c) => s + c.amount, 0);
+   const sumP = purchases.filter((p) => selP.includes(p.id)).reduce((s, p) => s + p.amount, 0);
+   const delta = sumC - sumP;
+-  const byId = (list, id) => list.find((x) => x.id === id);
++  const { propose, acceptSuggestion, dismissSuggestion, setStatus, byId } = useMatchActions();
+ 
+-  const setStatus = (ids, kind, status) => ids.forEach((id) => { const x = byId(kind === "credits" ? credits : purchases, id); if (x) upsert(kind, { ...x, status }); });
+-
+-  const propose = (creditIds, purchaseIds, source, confidence) => {
+-    const amount = creditIds.reduce((s, id) => s + (byId(credits, id)?.amount || 0), 0);
+-    const fast = source === "ai" && confidence >= FAST_TRACK.conf && amount <= FAST_TRACK.amount;
+-    const m = { id: uid("m"), credits: creditIds, purchases: purchaseIds, amount, source, confidence, status: fast ? "confirmed" : "pending", owner: currentUser, createdAt: new Date().toISOString(), type: `${creditIds.length > 1 ? "N" : "1"}:${purchaseIds.length > 1 ? "N" : "1"}` };
+-    const res = act({ screen: "match", cap: "edit", audit: { entityLabel: `${m.type} match ${inr(amount)}`, action: fast ? "Match confirmed (fast-track)" : "Propose match", to: fast ? "Matched" : "Pending checker", comment: source === "ai" ? `AI suggestion, confidence ${(confidence * 100).toFixed(0)}%` : "Manual selection" } });
+-    if (!res.ok) { toast.error(res.error); return false; }
+-    upsert("matches", m);
+-    setStatus(creditIds, "credits", fast ? "matched" : "proposed");
+-    setStatus(purchaseIds, "purchases", fast ? "matched" : "proposed");
+-    toast.success(fast ? "Low-risk match confirmed (fast-track, no checker needed)" : "Match proposed — waiting for a checker");
+-    return true;
+-  };
+-
+-  const acceptSuggestion = (s) => { if (propose(s.credits, s.purchases, "ai", s.confidence)) upsert("suggestions", { ...s, decided: "accepted" }); };
+-  const dismissSuggestion = (s) => { upsert("suggestions", { ...s, decided: "dismissed" }); toast("Suggestion dismissed — it stays visible in the 'Why not matched' explainer"); };
+   const proposeManual = () => { if (propose(selC, selP, "manual", 1)) { setSelC([]); setSelP([]); } };
+ 
+   const decide = (m, yes) => {
+@@ -71,8 +57,8 @@
+       return { p, sim, checks: [
+         { ok: p.amount === c.amount, text: p.amount === c.amount ? "Amount equal" : `Amount differs by ${inr(Math.abs(p.amount - c.amount))}` },
+         { ok: Boolean(p.utr) && c.narration.includes(p.utr), text: p.utr ? (c.narration.includes(p.utr) ? "UTR found in narration" : `UTR ${p.utr} not in narration`) : "Purchase has no UTR" },
+-        { ok: days <= 2, text: `Date gap ${days.toFixed(0)} day(s) (window ±2)` },
+-        { ok: sim >= 0.85, text: `Name similarity ${sim.toFixed(2)} (needs ≥ 0.85)` },
++        { ok: days <= 2, text: simple ? (days <= 2 ? "Dates are close" : `Dates are ${days.toFixed(0)} days apart`) : `Date gap ${days.toFixed(0)} day(s) (window ±2)` },
++        { ok: sim >= 0.85, text: simple ? (sim >= 0.85 ? "Names match" : "Names don't match") : `Name similarity ${sim.toFixed(2)} (needs ≥ 0.85)` },
+         { ok: p.regBank === c.remitterIfsc, text: p.regBank === c.remitterIfsc ? "Remitter IFSC = registered bank" : "Remitter IFSC ≠ registered bank" },
+       ] };
+     }).sort((a, b) => b.checks.filter((x) => x.ok).length - a.checks.filter((x) => x.ok).length || Math.abs(a.p.amount - c.amount) - Math.abs(b.p.amount - c.amount)).slice(0, 3);
+@@ -85,16 +71,17 @@
+     <div data-testid="match-workbench">
+       <div className="page-head">
+         <div>
+-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Combine size={24} /> Match Workbench</h1>
+-          <p>What rules couldn't match with certainty: AI suggestions with reasons, N:M selection with a live difference, and an explainer for anything left over.</p>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Combine size={24} /> {simple ? "Match payments" : "Match Workbench"}</h1>
++          <p>{simple ? "The system found these likely matches. Check each one and say yes or no." : "What rules couldn't match with certainty: AI suggestions with reasons, N:M selection with a live difference, and an explainer for anything left over."}</p>
+         </div>
+-        <div className="actions"><PhaseBadge phase="P2">split-pane matching · P3: AI suggestions</PhaseBadge></div>
++        {simple ? (canEdit && <div className="actions"><button className="btn btn-outline" onClick={() => setByHand((v) => !v)} data-testid="toggle-by-hand">{byHand ? "Hide match by hand" : "Match by hand"}</button></div>)
++          : <div className="actions"><PhaseBadge phase="P2">split-pane matching · P3: AI suggestions</PhaseBadge></div>}
+       </div>
+       {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
+ 
+       {pendingMatches.length > 0 && (
+         <div className="card" style={{ marginBottom: 16 }} data-testid="pending-matches">
+-          <div className="card-head"><h3>Matches awaiting checker</h3><span className="muted">AI matches above {FAST_TRACK.conf * 100}% and up to {inr(FAST_TRACK.amount)} are fast-tracked; everything else needs a second person</span></div>
++          <div className="card-head"><h3>{simple ? "Waiting for approval" : "Matches awaiting checker"}</h3><span className="muted">{simple ? "Your team lead will approve these. Nothing to do here." : `AI matches above ${FAST_TRACK.conf * 100}% and up to ${inr(FAST_TRACK.amount)} are fast-tracked; everything else needs a second person`}</span></div>
+           {pendingMatches.map((m) => (
+             <div key={m.id} className="acr-row">
+               <div className="acr-main">
+@@ -119,16 +106,17 @@
+             const ps = s.purchases.map((id) => byId(purchases, id)).filter(Boolean);
+             return (
+               <div key={s.id} className="card sugg-card" data-testid={"sugg-" + s.id}>
+-                <div className="sc-head"><Sparkles size={14} /><span className="strat">{s.type}</span><Conf value={s.confidence} auto={FAST_TRACK.conf} />
+-                  {s.confidence >= FAST_TRACK.conf && cs.reduce((a, c) => a + c.amount, 0) <= FAST_TRACK.amount && <span className="fast"><Zap size={11} /> fast-track</span>}</div>
++                <div className="sc-head"><Sparkles size={14} />{simple ? <b className="sc-q">Is this a match?</b> : <span className="strat">{s.type}</span>}<Conf value={s.confidence} auto={FAST_TRACK.conf} />
++                  {s.confidence >= FAST_TRACK.conf && cs.reduce((a, c) => a + c.amount, 0) <= FAST_TRACK.amount && <span className="fast"><Zap size={11} /> {simple ? "no approval needed" : "fast-track"}</span>}</div>
++                {simple && <div className="sc-labels"><span>Money received</span><span>Purchase</span></div>}
+                 <div className="sc-sides">
+                   <div>{cs.map((c) => <div key={c.id}><b>{inr(c.amount)}</b> <span className="muted">{c.ref} · {c.remitter}</span></div>)}</div>
+                   <div>{ps.map((p) => <div key={p.id}><b>{inr(p.amount)}</b> <span className="muted">{p.appNo} · {p.investor}</span></div>)}</div>
+                 </div>
+-                <ul className="reasons">{s.reasons.map((r, i) => <li key={i} className={r.ok ? "ok" : "bad"}>{r.ok ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{r.text}</li>)}</ul>
++                <ul className="reasons">{s.reasons.map((r, i) => <li key={i} className={r.ok ? "ok" : "bad"}>{r.ok ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{txt(r.text)}</li>)}</ul>
+                 {canEdit && <div className="sc-actions">
+-                  <button className="btn btn-ghost btn-sm" onClick={() => dismissSuggestion(s)}>Dismiss</button>
+-                  <button className="btn btn-primary btn-sm" onClick={() => acceptSuggestion(s)} data-testid={"accept-" + s.id}><Check size={13} /> Accept</button>
++                  <button className={"btn btn-sm " + (simple ? "btn-outline" : "btn-ghost")} onClick={() => dismissSuggestion(s)}>{simple ? "Not a match" : "Dismiss"}</button>
++                  <button className="btn btn-primary btn-sm" onClick={() => acceptSuggestion(s)} data-testid={"accept-" + s.id}><Check size={13} /> {simple ? "Yes, match" : "Accept"}</button>
+                 </div>}
+               </div>
+             );
+@@ -136,23 +124,24 @@
+         </div>
+       )}
+ 
+-      <div className="split-pane">
++      {simple && suggestions.length === 0 && <div className="card card-pad mw-empty" style={{ marginBottom: 16 }}><h2>No suggested matches right now</h2><p className="muted">New ones appear here automatically.</p></div>}
++      {(!simple || byHand) && <div className="split-pane">
+         <div className="card">
+-          <div className="card-head"><h3>Open bank credits</h3><span className="muted">{openC.length}</span>
++          <div className="card-head"><h3>{simple ? "Money received (not matched yet)" : "Open bank credits"}</h3><span className="muted">{openC.length}</span>
+             <div className="search" style={{ marginLeft: "auto", maxWidth: 220 }}><Search /><input className="input" placeholder="Filter both sides…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
+           <div className="pane-list">
+             {openC.map((c) => (
+               <label key={c.id} className={"pane-row" + (selC.includes(c.id) ? " on" : "")} data-testid={"credit-" + c.id}>
+                 <input type="checkbox" className="cb" disabled={!canEdit} checked={selC.includes(c.id)} onChange={() => setSelC((s) => s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id])} />
+                 <div className="pr-main"><b className="tnum">{inr(c.amount)}</b><span className="muted">{c.bankName} · {formatDate(c.valueDate)}</span><div className="pr-narr tnum">{c.narration}</div></div>
+-                <button className="row-icon-btn" title="Why not matched?" onClick={(e) => { e.preventDefault(); explain(c); }} data-testid={"why-" + c.id}><HelpCircle size={15} /></button>
++                <button className="row-icon-btn" title={simple ? "Why no match?" : "Why not matched?"} onClick={(e) => { e.preventDefault(); explain(c); }} data-testid={"why-" + c.id}><HelpCircle size={15} /></button>
+               </label>
+             ))}
+             {openC.length === 0 && <div className="muted card-pad">No open credits.</div>}
+           </div>
+         </div>
+         <div className="card">
+-          <div className="card-head"><h3>Open purchases</h3><span className="muted">{openP.length}</span></div>
++          <div className="card-head"><h3>{simple ? "Purchases waiting for money" : "Open purchases"}</h3><span className="muted">{openP.length}</span></div>
+           <div className="pane-list">
+             {openP.map((p) => (
+               <label key={p.id} className={"pane-row" + (selP.includes(p.id) ? " on" : "")} data-testid={"purchase-" + p.id}>
+@@ -163,26 +152,26 @@
+             {openP.length === 0 && <div className="muted card-pad">No open purchases.</div>}
+           </div>
+         </div>
+-      </div>
++      </div>}
+ 
+       {(selC.length > 0 || selP.length > 0) && (
+         <div className="match-bar" data-testid="match-bar">
+-          <span>{selC.length} credit{selC.length !== 1 ? "s" : ""} <b className="tnum">{inr(sumC)}</b></span>
++          <span>{selC.length} {simple ? "payment" : "credit"}{selC.length !== 1 ? "s" : ""} <b className="tnum">{inr(sumC)}</b></span>
+           <span>↔</span>
+           <span>{selP.length} purchase{selP.length !== 1 ? "s" : ""} <b className="tnum">{inr(sumP)}</b></span>
+-          <span className={"delta " + (Math.abs(delta) < 1 ? "ok" : "bad")}>Δ {inr(delta)} {Math.abs(delta) < 1 ? "✓" : ""}</span>
++          <span className={"delta " + (Math.abs(delta) < 1 ? "ok" : "bad")}>{simple ? (Math.abs(delta) < 1 ? "Amounts are equal ✓" : `Difference ${inr(Math.abs(delta))}`) : <>Δ {inr(delta)} {Math.abs(delta) < 1 ? "✓" : ""}</>}</span>
+           <button className="btn btn-ghost btn-sm" onClick={() => { setSelC([]); setSelP([]); }}>Clear</button>
+-          <button className="btn btn-primary" disabled={!selC.length || !selP.length || Math.abs(delta) >= 1} onClick={proposeManual} data-testid="propose-match">Propose {selC.length}:{selP.length} match</button>
++          <button className="btn btn-primary" disabled={!selC.length || !selP.length || Math.abs(delta) >= 1} onClick={proposeManual} data-testid="propose-match">{simple ? "Match these" : `Propose ${selC.length}:${selP.length} match`}</button>
+         </div>
+       )}
+ 
+       {why && (
+-        <Modal id="why-modal" size="lg" title={`Why isn't ${why.c.ref} (${inr(why.c.amount)}) matched?`} onClose={() => setWhy(null)}>
++        <Modal id="why-modal" size="lg" title={simple ? `Why didn't ${inr(why.c.amount)} from ${why.c.remitter} match?` : `Why isn't ${why.c.ref} (${inr(why.c.amount)}) matched?`} onClose={() => setWhy(null)}>
+           <p className="muted" style={{ marginTop: 0 }}>Narration: <code>{why.c.narration}</code></p>
+           {why.cands.map(({ p, checks }) => (
+             <div key={p.id} className="why-cand">
+               <div><b>{p.appNo}</b> · {p.investor} · <b className="tnum">{inr(p.amount)}</b></div>
+-              <ul className="reasons">{checks.map((x, i) => <li key={i} className={x.ok ? "ok" : "bad"}>{x.ok ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{x.text}</li>)}</ul>
++              <ul className="reasons">{checks.map((x, i) => <li key={i} className={x.ok ? "ok" : "bad"}>{x.ok ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{txt(x.text)}</li>)}</ul>
+             </div>
+           ))}
+           {why.cands.length === 0 && <div className="muted">No open purchases to compare against.</div>}
+diff --color -ruN r2a/frontend/src/features/match/matchActions.js r2b/frontend/src/features/match/matchActions.js
+--- r2a/frontend/src/features/match/matchActions.js	1970-01-01 05:30:00
++++ r2b/frontend/src/features/match/matchActions.js	2026-10-21 01:40:26
+@@ -0,0 +1,40 @@
++import { useStore } from "@/state/store";
++import { uid } from "@/lib/format";
++import { inr } from "@/features/ops/ui";
++import { toast } from "sonner";
++
++export const FAST_TRACK = { conf: 0.9, amount: 200000 }; // risk-tiered: low-risk AI matches skip the checker
++
++export const isFastTrack = (confidence, amount) => confidence >= FAST_TRACK.conf && amount <= FAST_TRACK.amount;
++
++/** Shared by Match Workbench and My Work, so a match proposed from either place behaves the same. */
++export function useMatchActions() {
++  const { collections, act, upsert, currentUser, simple } = useStore();
++  const credits = collections.credits || [];
++  const purchases = collections.purchases || [];
++  const byId = (list, id) => list.find((x) => x.id === id);
++
++  const setStatus = (ids, kind, status) => ids.forEach((id) => { const x = byId(kind === "credits" ? credits : purchases, id); if (x) upsert(kind, { ...x, status }); });
++
++  const propose = (creditIds, purchaseIds, source, confidence) => {
++    const amount = creditIds.reduce((s, id) => s + (byId(credits, id)?.amount || 0), 0);
++    const fast = source === "ai" && isFastTrack(confidence, amount);
++    const m = { id: uid("m"), credits: creditIds, purchases: purchaseIds, amount, source, confidence, status: fast ? "confirmed" : "pending", owner: currentUser, createdAt: new Date().toISOString(), type: `${creditIds.length > 1 ? "N" : "1"}:${purchaseIds.length > 1 ? "N" : "1"}` };
++    const res = act({ screen: "match", cap: "edit", audit: { entityLabel: `${m.type} match ${inr(amount)}`, action: fast ? "Match confirmed (fast-track)" : "Propose match", to: fast ? "Matched" : "Pending checker", comment: source === "ai" ? `AI suggestion, confidence ${(confidence * 100).toFixed(0)}%` : "Manual selection" } });
++    if (!res.ok) { toast.error(res.error); return false; }
++    upsert("matches", m);
++    setStatus(creditIds, "credits", fast ? "matched" : "proposed");
++    setStatus(purchaseIds, "purchases", fast ? "matched" : "proposed");
++    if (simple) toast.success(fast ? "Matched. Nothing else to do." : "Sent to your team lead for approval.");
++    else toast.success(fast ? "Low-risk match confirmed (fast-track, no checker needed)" : "Match proposed — waiting for a checker");
++    return true;
++  };
++
++  const acceptSuggestion = (s) => { if (propose(s.credits, s.purchases, "ai", s.confidence)) upsert("suggestions", { ...s, decided: "accepted" }); };
++  const dismissSuggestion = (s) => {
++    upsert("suggestions", { ...s, decided: "dismissed" });
++    toast(simple ? "OK — marked as not a match." : "Suggestion dismissed — it stays visible in the 'Why not matched' explainer");
++  };
++
++  return { propose, acceptSuggestion, dismissSuggestion, setStatus, byId, credits, purchases };
++}
+diff --color -ruN r2a/frontend/src/features/mywork/MyWork.jsx r2b/frontend/src/features/mywork/MyWork.jsx
+--- r2a/frontend/src/features/mywork/MyWork.jsx	1970-01-01 05:30:00
++++ r2b/frontend/src/features/mywork/MyWork.jsx	2026-10-21 01:40:26
+@@ -0,0 +1,156 @@
++import React from "react";
++import { useNavigate } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { hasCap } from "@/lib/access";
++import { PLAIN_EXCEPTION } from "@/lib/plain";
++import { inr, Light, timeLeftWords } from "@/features/ops/ui";
++import { useMatchActions, isFastTrack } from "@/features/match/matchActions";
++import { CheckCircle2, Hourglass, PartyPopper } from "lucide-react";
++import { toast } from "sonner";
++
++const TONE_ORDER = { red: 0, amber: 1, green: 2 };
++
++/**
++ * My Work — the one queue for daily users. Every row says, in plain words, what happened
++ * and has ONE main button. Red first, then amber, then green.
++ */
++export default function MyWork() {
++  const { collections, perms, personaUser, act, audit } = useStore();
++  const nav = useNavigate();
++  const { acceptSuggestion, dismissSuggestion, byId, credits, purchases } = useMatchActions();
++  const me = personaUser.name;
++  const first = me.split(" ")[0];
++  const exceptions = collections.exceptions || [];
++
++  const take = (e) => {
++    const res = act({ screen: "exceptions", cap: "edit", kind: "exceptions", id: e.id, patch: { owner: me, status: "in_progress" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Assign", comment: `Picked up by ${me}` } });
++    if (res.ok) toast.success("It's yours now. Open it when you're ready.");
++  };
++
++  const items = [];
++
++  // 1) Problem cases: mine, plus urgent ones nobody has picked up
++  if (hasCap(perms, "exceptions", "view")) {
++    exceptions.filter((e) => ["open", "in_progress"].includes(e.status) && (e.owner === me || (!e.owner && e.amount > 0 && e.interestHoursLeft < 24))).forEach((e) => {
++      const mine = e.owner === me;
++      const hasClock = e.amount > 0;
++      const tone = hasClock && e.interestHoursLeft < 24 ? "red" : hasClock && e.interestHoursLeft < 72 ? "amber" : "green";
++      items.push({
++        id: e.id, tone, sort: hasClock ? e.interestHoursLeft : 999,
++        kind: "Problem case",
++        title: PLAIN_EXCEPTION[e.type] || e.type,
++        detail: `${e.investor !== "—" ? e.investor + " · " : ""}${e.amount ? inr(e.amount) : e.bankName}`,
++        when: hasClock ? timeLeftWords(e.interestHoursLeft) : null,
++        hint: mine ? `What to do: ${e.suggestion.action.replace("Open in Match Workbench", "Find the matching purchase").replace("Open File Inbox", "Check the bank file")}` : "Nobody is working on this yet",
++        primary: mine ? { label: "Open case", run: () => nav(`/exceptions?case=${e.id}`) } : { label: "Take this case", run: () => take(e) },
++        canAct: hasCap(perms, "exceptions", "edit"),
++      });
++    });
++  }
++
++  // 2) Payments the system thinks it has matched — needs a yes / no
++  if (hasCap(perms, "match", "view")) {
++    (collections.suggestions || []).filter((s) => !s.decided).forEach((s) => {
++      const cs = s.credits.map((id) => byId(credits, id)).filter(Boolean);
++      const ps = s.purchases.map((id) => byId(purchases, id)).filter(Boolean);
++      if (!cs.length || !ps.length) return;
++      const amount = cs.reduce((a, c) => a + c.amount, 0);
++      const sure = s.confidence >= 0.9;
++      items.push({
++        id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100,
++        kind: "Match a payment",
++        title: cs.length > 1 ? `${cs.length} payments from ${cs[0].remitter} add up to ${ps[0].investor}'s purchase`
++          : ps.length > 1 ? `One payment from ${cs[0].remitter} covers ${ps.length} purchases by ${ps[0].investor}`
++          : `Payment from ${cs[0].remitter} looks like ${ps[0].investor}'s purchase`,
++        detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`,
++        light: sure ? "Very likely" : "Please check",
++        hint: isFastTrack(s.confidence, amount) ? "If you say yes, it's done — no approval needed" : "If you say yes, your team lead approves it",
++        primary: { label: "Yes, match", run: () => acceptSuggestion(s) },
++        secondary: { label: "Not a match", run: () => dismissSuggestion(s) },
++        more: { label: "See why", run: () => nav("/match") },
++        canAct: hasCap(perms, "match", "edit"),
++      });
++    });
++  }
++
++  // 3) PDFs / emails where the system wasn't sure of some values
++  if (hasCap(perms, "extraction", "view")) {
++    (collections.documents || []).filter((d) => d.status === "needs_review").forEach((d) => {
++      const flagged = d.fields.filter((f) => f.conf < 0.95 || (f.validator && !f.validator.ok)).length
++        + d.lines.reduce((n, l) => n + Object.values(l).filter((v) => v[1] < 0.95).length, 0);
++      items.push({
++        id: d.id, tone: "amber", sort: 600,
++        kind: "Check a document",
++        title: `Check ${flagged} value${flagged !== 1 ? "s" : ""} the system wasn't sure about`,
++        detail: `${d.docType} · ${d.name}`,
++        hint: "Everything else on it was read correctly",
++        primary: { label: "Check values", run: () => nav(`/extraction?doc=${d.id}`) },
++        canAct: hasCap(perms, "extraction", "edit"),
++      });
++    });
++  }
++
++  items.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || a.sort - b.sort);
++
++  const waiting = [
++    ...(collections.matches || []).filter((m) => m.status === "pending" && m.owner === first).map((m) => `Match of ${inr(m.amount)}`),
++    ...exceptions.filter((e) => e.status === "pending_approval" && (e.closedBy === first || e.owner === me)).map((e) => `${PLAIN_EXCEPTION[e.type] || e.type} (${e.ref})`),
++    ...(collections.documents || []).filter((d) => d.status === "pending_checker" && d.owner === first).map((d) => d.name),
++  ];
++
++  const today = new Date().toDateString();
++  const doneToday = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === today && /match|closure|extraction|Assign|Ran|Create refund|Mark/i.test(a.action)).length;
++  const hour = new Date().getHours();
++  const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
++  const reds = items.filter((i) => i.tone === "red").length;
++
++  return (
++    <div className="my-work" data-testid="my-work">
++      <div className="mw-hero">
++        <div>
++          <h1>{greet}, {first}</h1>
++          <p>{items.length === 0 ? "You're all caught up." : <>You have <b>{items.length} thing{items.length !== 1 ? "s" : ""} to do</b>{reds ? <>. Start with the <span className="mw-red">{reds} red one{reds !== 1 ? "s" : ""}</span> at the top</> : ""}.</>}</p>
++        </div>
++        <div className="mw-done"><CheckCircle2 size={18} /> <b>{doneToday}</b> done today</div>
++      </div>
++
++      <div className="mw-key">
++        <Light tone="red">Urgent — do first</Light>
++        <Light tone="amber">Please check</Light>
++        <Light tone="green">Quick — usually just say yes</Light>
++      </div>
++
++      <div className="mw-list">
++        {items.map((it, i) => (
++          <div key={it.id} className={"mw-item tone-" + it.tone} data-testid={"mw-item-" + it.id}>
++            <span className="mw-num">{i + 1}</span>
++            <div className="mw-body">
++              <div className="mw-kind">{it.kind}{it.light && <Light tone={it.tone}>{it.light}</Light>}</div>
++              <div className="mw-title">{it.title}</div>
++              <div className="mw-detail">{it.detail}</div>
++              <div className="mw-hint">{it.when && <span className={"mw-when " + it.tone}><Hourglass size={13} /> {it.when}</span>}{it.hint}</div>
++            </div>
++            {it.canAct ? (
++              <div className="mw-actions">
++                <button className="btn btn-primary mw-btn" onClick={it.primary.run} data-testid={"mw-do-" + it.id}>{it.primary.label}</button>
++                {it.secondary && <button className="btn btn-outline mw-btn-2" onClick={it.secondary.run} data-testid={"mw-no-" + it.id}>{it.secondary.label}</button>}
++                {it.more && <button className="link" onClick={it.more.run}>{it.more.label}</button>}
++              </div>
++            ) : <span className="muted">View only</span>}
++          </div>
++        ))}
++        {items.length === 0 && (
++          <div className="mw-empty"><PartyPopper size={32} /><h2>Nothing left to do</h2><p className="muted">New work appears here automatically.</p></div>
++        )}
++      </div>
++
++      {waiting.length > 0 && (
++        <div className="mw-waiting">
++          <h3>Waiting for your team lead ({waiting.length})</h3>
++          <p className="muted">You've done your part. These need approval. Nothing to do here.</p>
++          <ul>{waiting.map((w, i) => <li key={i}>{w}</li>)}</ul>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --color -ruN r2a/frontend/src/features/ops/ui.js r2b/frontend/src/features/ops/ui.js
+--- r2a/frontend/src/features/ops/ui.js	2026-10-21 01:40:26
++++ r2b/frontend/src/features/ops/ui.js	2026-10-21 01:40:26
+@@ -1,5 +1,6 @@
+ import React from "react";
+-import { Lock } from "lucide-react";
++import { Lock, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
++import { useStore } from "@/state/store";
+ 
+ /** ₹ in Indian short form: 2.15 Cr, 4.3 L, 12,500 */
+ export function inrShort(n) {
+@@ -18,7 +19,9 @@
+ 
+ /** Confidence meter 0–1 with threshold colouring. */
+ export function Conf({ value, auto = 0.95, review = 0.6, id }) {
++  const { simple } = useStore();
+   const tone = value >= auto ? "hi" : value >= review ? "mid" : "lo";
++  if (simple) return <Light tone={tone === "hi" ? "green" : tone === "mid" ? "amber" : "red"} id={id}>{tone === "hi" ? "High" : tone === "mid" ? "Check needed" : "Low — check carefully"}</Light>;
+   return (
+     <span className={"conf " + tone} data-testid={id} title={`Confidence ${(value * 100).toFixed(0)}%`}>
+       <i style={{ width: `${Math.round(value * 100)}%` }} />
+@@ -45,5 +48,21 @@
+ }
+ 
+ export function ReadOnlyNote({ what }) {
++  const { simple } = useStore();
++  if (simple) return <div className="note" style={{ marginBottom: 12 }}><Lock size={14} /><div>You can look at this page. Changes here are made by your team lead.</div></div>;
+   return <div className="note" style={{ marginBottom: 12 }}><Lock size={14} /><div>Read-only: your roles don't include the <b>{what}</b> capability on this screen.</div></div>;
++}
++
++/** Traffic light used by the simple view instead of numbers. */
++export function Light({ tone, children, id }) {
++  const Icon = tone === "green" ? CheckCircle2 : tone === "amber" ? AlertTriangle : XCircle;
++  return <span className={"light " + tone} data-testid={id}><Icon size={13} />{children}</span>;
++}
++
++/** Simple-view time left before delayed interest: words, not "1d 4h". */
++export function timeLeftWords(h) {
++  if (h <= 0) return "Late — penalty already running";
++  if (h < 24) return `Only ${Math.max(1, Math.round(h))} hours left`;
++  const d = Math.round(h / 24);
++  return `${d} day${d > 1 ? "s" : ""} left`;
+ }
+diff --color -ruN r2a/frontend/src/lib/access.js r2b/frontend/src/lib/access.js
+--- r2a/frontend/src/lib/access.js	2026-10-21 01:40:26
++++ r2b/frontend/src/lib/access.js	2026-10-21 01:40:26
+@@ -19,17 +19,18 @@
+   {
+     key: "recon", label: "Reconciliation", color: "#4f46e5",
+     screens: [
+-      { key: "command", label: "Ops Command Centre", path: "/command", group: "Operate", phase: "P1", caps: ["view", "export"] },
+-      { key: "ingestion", label: "File Inbox & Drift", path: "/ingestion", group: "Operate", phase: "P1", caps: ["view", "edit", "approve"] },
+-      { key: "match", label: "Match Workbench", path: "/match", group: "Operate", phase: "P2", caps: ["view", "edit", "approve"] },
+-      { key: "exceptions", label: "Exceptions", path: "/exceptions", group: "Operate", phase: "P2", caps: ["view", "edit", "approve", "export"] },
+-      { key: "extraction", label: "Document Extraction", path: "/extraction", group: "Operate", phase: "P3", caps: ["view", "edit", "approve"] },
++      { key: "my_work", label: "My Work", plain: "My Work", path: "/my-work", group: "Operate", caps: ["view"], simpleOnly: true },
++      { key: "command", label: "Ops Command Centre", plain: "Team overview", path: "/command", group: "Operate", phase: "P1", caps: ["view", "export"], analytics: true },
++      { key: "ingestion", label: "File Inbox & Drift", plain: "Bank files today", path: "/ingestion", group: "Operate", phase: "P1", caps: ["view", "edit", "approve"] },
++      { key: "match", label: "Match Workbench", plain: "Match payments", path: "/match", group: "Operate", phase: "P2", caps: ["view", "edit", "approve"] },
++      { key: "exceptions", label: "Exceptions", plain: "Problem cases", path: "/exceptions", group: "Operate", phase: "P2", caps: ["view", "edit", "approve", "export"] },
++      { key: "extraction", label: "Document Extraction", plain: "Read PDFs & emails", path: "/extraction", group: "Operate", phase: "P3", caps: ["view", "edit", "approve"] },
+       { key: "bank_setup", label: "Bank Statement Setup", path: "/bank-setup", group: "Setup", caps: ["view", "edit", "approve", "export"] },
+       { key: "credit_mis", label: "Credit MIS Setup", path: "/credit-mis", group: "Setup", caps: ["view", "edit", "approve", "export"] },
+       { key: "mapping", label: "Column Mapping", path: "/mapping", group: "Setup", caps: ["view", "edit", "approve"] },
+       { key: "rules", label: "Match Rules", path: "/rules", group: "Setup", phase: "P2", caps: ["view", "edit", "approve"] },
+       { key: "approvals", label: "Config Approvals", path: "/dashboard", group: "Review", caps: ["view", "approve"] },
+-      { key: "audit", label: "Audit History", path: "/audit", group: "Review", caps: ["view", "export"] },
++      { key: "audit", label: "Audit History", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
+     ],
+   },
+   {
+@@ -84,8 +85,8 @@
+       { users: ["view", "approve"], roles: ["view", "approve"] }),
+     r("role_recon_setup_maker", "Recon · Setup Maker", "recon", "Onboards banks and aggregators: setups, mappings, match rules.",
+       { command: ["view"], ingestion: ["view", "edit"], bank_setup: ["view", "edit", "export"], credit_mis: ["view", "edit", "export"], mapping: ["view", "edit"], rules: ["view", "edit"], approvals: ["view"], audit: ["view"] }),
+-    r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Works the daily queue: matching, exceptions and document review. No setup screens.",
+-      { command: ["view"], ingestion: ["view"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], audit: ["view"] }),
++    r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Works the daily queue: matching, exceptions and document review. No setup screens. Uses the simple view.",
++      { my_work: ["view"], command: ["view"], ingestion: ["view"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], audit: ["view"] }, { simple: true }),
+     r("role_recon_checker", "Recon · Checker", "recon", "Approves setups, mappings, rules, manual matches and exception closures.",
+       { command: ["view", "export"], ingestion: ["view", "approve"], match: ["view", "approve"], exceptions: ["view", "approve", "export"], extraction: ["view", "approve"], bank_setup: ["view", "approve"], credit_mis: ["view", "approve"], mapping: ["view", "approve"], rules: ["view", "approve"], approvals: ["view", "approve"], audit: ["view", "export"] }),
+     r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", all("recon", ["view", "export"])),
+@@ -139,10 +140,18 @@
+ /** A role is privileged if it can approve anything or administer users/roles. */
+ export const isPrivileged = (role) => Boolean(role) && (role.module === "admin" || Object.values(role.perms || {}).some((c) => c.includes("approve")));
+ 
++/** Daily users get the simple view: plain words, one queue, no analytics. */
++export function isSimpleUser(user, roles) {
++  return (user?.roles || []).some((rid) => roles.find((r) => r.id === rid)?.simple);
++}
++
++/** Screen label for the current mode. */
++export const screenLabel = (s, simple) => (simple && s.plain) || s.label;
++
+ /** Screens visible to a user, grouped by module → group, for the side nav. */
+-export function navFor(perms) {
++export function navFor(perms, simple = false) {
+   return MODULES.map((m) => {
+-    const screens = m.screens.filter((s) => hasCap(perms, s.key, "view"));
++    const screens = m.screens.filter((s) => hasCap(perms, s.key, "view") && (simple ? !s.analytics : !s.simpleOnly));
+     const groups = [];
+     screens.forEach((s) => {
+       let g = groups.find((x) => x.name === s.group);
+@@ -154,8 +163,8 @@
+ }
+ 
+ /** Home route: first visible screen. */
+-export function homePath(perms) {
+-  const nav = navFor(perms);
++export function homePath(perms, simple = false) {
++  const nav = navFor(perms, simple);
+   return nav[0]?.groups[0]?.screens[0]?.path || "/no-access";
+ }
+ 
+diff --color -ruN r2a/frontend/src/lib/plain.js r2b/frontend/src/lib/plain.js
+--- r2a/frontend/src/lib/plain.js	1970-01-01 05:30:00
++++ r2b/frontend/src/lib/plain.js	2026-10-21 01:40:26
+@@ -0,0 +1,71 @@
++// Plain-language wording for the simple view (daily back-office users).
++// Rule of thumb: say what happened and what to do, in everyday words. No jargon, no percentages.
++
++export const PLAIN_EXCEPTION = {
++  "Unmatched credit": "Money received, no matching purchase",
++  "Unmatched purchase": "Purchase made, money not received",
++  "Excess credit": "Investor paid too much",
++  "Short credit": "Investor paid too little",
++  "Duplicate credit": "Investor paid twice",
++  "NIGO rejection": "Application rejected — refund needed",
++  "Fundnet failure": "Payment system error",
++  "Cross collection": "Money meant for another AMC",
++  "Format drift": "Bank changed its file layout",
++  "Missing statement": "Bank file not received",
++};
++
++export const PLAIN_CASE_STATUS = {
++  open: ["To do", "pill-draft"],
++  in_progress: ["Working on it", "pill-pending"],
++  pending_approval: ["Waiting for approval", "pill-pending"],
++  closed: ["Done", "pill-active"],
++};
++
++export const PLAIN_FILE_STATUS = {
++  loaded: "Received — all good",
++  drift: "Bank changed its file layout",
++  drift_pending: "Layout change waiting for approval",
++  unknown: "File not recognised",
++  check_failed: "Balances don't add up",
++  duplicate: "Same file sent twice",
++  discarded: "Duplicate removed",
++  late: "Not received yet — late",
++  missing: "Not received",
++  retrying: "Trying again",
++};
++
++export const PLAIN_DOC_STATUS = {
++  needs_review: ["Please check", "pill-pending"],
++  auto_loaded: ["Done automatically", "pill-active"],
++  ignored: ["Not needed (junk)", "pill-inactive"],
++  approved: ["Done", "pill-active"],
++  pending_checker: ["Waiting for approval", "pill-pending"],
++};
++
++/** Drop technical bits in brackets, e.g. "(name similarity 0.89)" or "(rule window ±1)", and swap jargon for everyday words. */
++export const stripNumbers = (text) => String(text)
++  .replace(/\s*\([^)]*\)/g, "")
++  .replace(/Remitter IFSC \S+ = investor's registered bank/, "Paid from the investor's own bank account")
++  .replace(/Remitter IFSC ≠ registered bank/, "Not paid from the investor's own bank account")
++  .replace(/Remitter IFSC = registered bank/, "Paid from the investor's own bank account")
++  .replace(/No UTR on purchase record.*/, "The purchase has no payment reference, so the system couldn't be 100% sure")
++  .replace(/Remitter "(.+)" ≈ investor "(.+)"/, 'Name "$1" looks like "$2"')
++  .replace(/PAN \S+ found in narration/, "The investor's PAN is in the bank description")
++  .replace(/\bUTR\b/g, "payment reference")
++  .replace(/\bnarration\b/g, "bank description")
++  .replace(/\bCredit\b/g, "Payment")
++  .replace(/remitter account/g, "the account the money came from")
++  .replace(/PA settlement file/g, "payment company's file")
++  .replace(/re-push to Fundnet|Re-push to Fundnet/g, "Send again to the payment system")
++  .replace(/\bKYC\b/g, "KYC documents")
++  .replace(/Value date (\d+) day after application date/, (m, n) => `Paid ${n} day${n === "1" ? "" : "s"} after the purchase`);
++
++/** Field labels and checker messages on extracted documents. */
++const FIELD_LABELS = { UTR: "Payment reference", "Settlement ID": "Settlement number", "Settlement UTR": "Settlement reference", "Net settled": "Amount received", "Gross amount": "Total before fees", "Credited account": "Paid into account" };
++export const plainField = (label) => FIELD_LABELS[label] || label;
++export const plainCheck = (msg) => String(msg)
++  .replace("Invalid PAN format:", "PAN looks wrong —")
++  .replace("in a digit position", "where a number should be")
++  .replace("Candidate:", "Probably:")
++  .replace(/Σ SUCCESS lines .* ✓/, "Totals add up ✓")
++  .replace(/Σ \d+ lines − fees = net ✓/, "Totals add up ✓");
+diff --color -ruN r2a/frontend/src/ops.css r2b/frontend/src/ops.css
+--- r2a/frontend/src/ops.css	2026-10-21 01:40:26
++++ r2b/frontend/src/ops.css	2026-10-21 01:40:26
+@@ -274,3 +274,58 @@
+   .cc-grid, .rules-layout, .ex-layout, .split-pane, .xt-layout { grid-template-columns: 1fr; }
+   .ops-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+ }
++
++/* ============ Simple view (daily users) ============ */
++.light { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
++.light.green { background: hsl(var(--st-active) / .12); color: hsl(158 64% 28%); }
++.light.amber { background: hsl(var(--st-pending) / .15); color: hsl(32 90% 32%); }
++.light.red { background: hsl(var(--st-rejected) / .12); color: hsl(var(--st-rejected)); }
++.simple-tag { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: hsl(var(--primary)); border: 1px solid hsl(var(--primary) / .4); border-radius: 4px; padding: 0 5px; }
++.toggle-inline { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; padding: 10px 12px; border: 1px solid hsl(var(--border)); border-radius: 10px; cursor: pointer; }
++.toggle-inline .cb { margin-top: 3px; }
++
++/* Bigger, calmer type for daily users */
++.shell.simple .content { font-size: 14.5px; }
++.shell.simple .nav-item { font-size: 14px; padding: 10px 10px; }
++.shell.simple .grid td { font-size: 13.5px; }
++.shell.simple .page-head p { font-size: 15px; }
++
++.my-work { max-width: 980px; }
++.mw-hero { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 14px; }
++.mw-hero h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -.03em; }
++.mw-hero p { margin: 6px 0 0; font-size: 16px; color: hsl(var(--muted)); }
++.mw-hero p b { color: hsl(var(--text)); }
++.mw-red { color: hsl(var(--st-rejected)); font-weight: 700; }
++.mw-done { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; background: hsl(var(--st-active) / .1); color: hsl(158 64% 28%); padding: 8px 14px; border-radius: 999px; font-size: 14px; }
++.mw-key { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
++.mw-list { display: flex; flex-direction: column; gap: 10px; }
++.mw-item { display: flex; gap: 16px; align-items: center; background: #fff; border: 1px solid hsl(var(--border)); border-left: 6px solid hsl(var(--border-strong)); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow-card); }
++.mw-item.tone-red { border-left-color: hsl(var(--st-rejected)); }
++.mw-item.tone-amber { border-left-color: hsl(var(--st-pending)); }
++.mw-item.tone-green { border-left-color: hsl(var(--st-active)); }
++.mw-num { width: 30px; height: 30px; border-radius: 50%; background: hsl(220 25% 94%); display: grid; place-items: center; font-weight: 800; font-size: 13px; flex: 0 0 auto; }
++.mw-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
++.mw-kind { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: hsl(var(--muted)); }
++.mw-title { font-size: 16.5px; font-weight: 700; color: hsl(var(--text)); line-height: 1.3; }
++.mw-detail { font-size: 14px; color: hsl(var(--text) / .8); }
++.mw-hint { font-size: 13px; color: hsl(var(--muted)); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
++.mw-when { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
++.mw-when.red { color: hsl(var(--st-rejected)); }
++.mw-when.amber { color: hsl(32 90% 36%); }
++.mw-when.green { color: hsl(158 64% 30%); }
++.mw-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 160px; }
++.mw-btn { justify-content: center; font-size: 15px; padding: 12px 18px; }
++.mw-btn-2 { justify-content: center; }
++.mw-actions .link { align-self: center; font-size: 13px; }
++.mw-empty { text-align: center; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: hsl(var(--st-active)); }
++.mw-empty h2 { margin: 0; color: hsl(var(--text)); font-size: 18px; }
++.mw-waiting { margin-top: 22px; background: hsl(220 25% 97%); border: 1px dashed hsl(var(--border-strong)); border-radius: 12px; padding: 14px 18px; }
++.mw-waiting h3 { margin: 0; font-size: 14px; }
++.mw-waiting p { margin: 4px 0 8px; }
++.mw-waiting ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: hsl(var(--muted)); }
++
++.sc-q { color: hsl(var(--text)); font-size: 14px; }
++.sc-labels { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: hsl(var(--muted)); margin-bottom: -6px; }
++.shell.simple .sugg-card .btn-sm { font-size: 13.5px; padding: 9px 16px; }
++.ex-layout.single { grid-template-columns: 1fr; }
++@media (max-width: 760px) { .mw-item { flex-wrap: wrap; } .mw-actions { width: 100%; } .mw-hero { flex-wrap: wrap; } .mw-done { margin-left: 0; } }
+diff --color -ruN r2a/frontend/src/state/store.js r2b/frontend/src/state/store.js
+--- r2a/frontend/src/state/store.js	2026-10-21 01:40:26
++++ r2b/frontend/src/state/store.js	2026-10-21 01:40:26
+@@ -4,10 +4,10 @@
+ import { uid } from "../lib/format";
+ import { ACTIONS, authorize, INVITE_TTL_MS } from "../lib/rbac";
+ import { genTempPassword } from "../lib/credentials";
+-import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND } from "../lib/access";
++import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
+ import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments } from "../mock/opsSeed";
+ 
+-const KEY = "cams_recon_state_v7";
++const KEY = "cams_recon_state_v8";
+ 
+ function buildSeed() {
+   const configs = seedBankConfigs();
+@@ -32,6 +32,7 @@
+     },
+     audit,
+     persona: "usr_meera",
++    simpleOverride: {},
+     adminNotifications: [
+       { id: uid("notif"), message: "Meera added Kiran Das as Operator", ts: new Date(Date.now() - 3 * 3600000).toISOString() },
+     ],
+@@ -57,6 +58,7 @@
+ function reducer(state, action) {
+   switch (action.type) {
+     case "SET": return { ...state, ...action.payload };
++    case "SET_SIMPLE": return { ...state, simpleOverride: { ...(state.simpleOverride || {}), [action.id]: action.on } };
+     case "SWITCH_PERSONA": return { ...state, persona: action.id, bannerDismissed: false, sessionId: uid("ses") };
+     case "TOGGLE_SIDEBAR": return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
+     case "DISMISS_BANNER": return { ...state, bannerDismissed: true };
+@@ -89,6 +91,9 @@
+   // Short name ("Priya") is what records store as owner — keeps the existing screens' maker–checker checks working.
+   const activePersona = { id: personaUser.id, name: personaUser.name.split(" ")[0], fullName: personaUser.name };
+   const currentUser = activePersona.name;
++  // Simple view: on by default for daily users (role flag); anyone can switch it from the avatar menu.
++  const override = (state.simpleOverride || {})[personaUser.id];
++  const simple = override !== undefined ? override : isSimpleUser(personaUser, roles);
+   const roleNames = (personaUser.roles || []).map((rid) => roles.find((r) => r.id === rid)?.name).filter(Boolean);
+   const currentRole = roleNames.join(" + ") || "No roles";
+   // Legacy persona key for the original Phase-1 config screens (derived from screen permissions).
+@@ -460,6 +465,8 @@
+     perms,
+     roles,
+     roleNames,
++    simple,
++    setSimple: (on) => dispatch({ type: "SET_SIMPLE", id: personaUser.id, on }),
+     actor,
+     collections: state.collections,
+     users: state.collections.users || [],

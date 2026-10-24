@@ -1,0 +1,2210 @@
+diff --color -ruN a/frontend/src/components/CommandPalette.jsx frontend/src/components/CommandPalette.jsx
+--- a/frontend/src/components/CommandPalette.jsx	2026-10-22 11:17:32
++++ b/frontend/src/components/CommandPalette.jsx	2026-10-22 11:22:58
+@@ -2,9 +2,9 @@
+ import { Command } from "cmdk";
+ import { useNavigate } from "react-router-dom";
+ import { useStore } from "@/state/store";
+-import { navFor, screenLabel, PERSONAS } from "@/lib/access";
++import { navFor, screenLabel, PERSONAS, FUNCTIONS, hasCap } from "@/lib/access";
+ import { PLAIN_EXCEPTION } from "@/lib/plain";
+-import { Search, CornerDownLeft, ArrowRight, User } from "lucide-react";
++import { Search, CornerDownLeft, ArrowRight, User, Zap } from "lucide-react";
+ 
+ /** ⌘K: jump to any screen you can open, find a case or refund by reference, or switch demo persona. */
+ export default function CommandPalette({ open, onClose }) {
+@@ -17,22 +17,34 @@
+   }, [onClose]);
+   if (!open) return null;
+   const go = (path) => { nav(path); onClose(); };
+-  const screens = navFor(perms, simple).flatMap((m) => m.groups.flatMap((g) => g.screens.map((s) => ({ ...s, group: m.label }))));
++  // One entry per screen even when several roles grant it (navFor merges roles), grouped by module.
++  const modules = navFor(perms, simple);
++  const screens = modules.flatMap((m) => m.groups.flatMap((g) => g.screens.map((s) => ({ ...s, group: m.label }))));
++  const functions = FUNCTIONS.filter((f) => hasCap(perms, f.screen, f.cap));
+   const can = (k) => screens.some((s) => s.key === k);
+ 
+   return (
+     <div className="cmdk-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+       <Command className="cmdk" label="Search" loop>
+-        <div className="cmdk-input"><Search size={16} /><Command.Input autoFocus placeholder="Search screens, cases (EXC-…), refunds (RF-…)…" /><kbd>esc</kbd></div>
++        <div className="cmdk-input"><Search size={16} /><Command.Input autoFocus placeholder="Search any module, screen or task you have access to…" /><kbd>esc</kbd></div>
+         <Command.List className="cmdk-list">
+           <Command.Empty className="cmdk-empty">No results.</Command.Empty>
+-          <Command.Group heading="Go to">
+-            {screens.map((s) => (
+-              <Command.Item key={s.key} value={`${screenLabel(s, simple)} ${s.group}`} onSelect={() => go(s.path)} className="cmdk-item">
+-                <ArrowRight size={14} /><span>{screenLabel(s, simple)}</span><em>{s.group}</em>
++          {functions.length > 0 && <Command.Group heading="Do something">
++            {functions.map((f) => (
++              <Command.Item key={f.label} value={`${f.label} ${f.words}`} onSelect={() => go(f.path)} className="cmdk-item">
++                <Zap size={14} /><span>{f.label}</span>
+               </Command.Item>
+             ))}
+-          </Command.Group>
++          </Command.Group>}
++          {modules.map((m) => (
++            <Command.Group key={m.key} heading={`Go to · ${m.label}`}>
++              {m.groups.flatMap((g) => g.screens).map((s) => (
++                <Command.Item key={s.key} value={`${screenLabel(s, simple)} ${m.label} ${s.group}`} onSelect={() => go(s.path)} className="cmdk-item">
++                  <ArrowRight size={14} /><span>{screenLabel(s, simple)}</span><em>{m.label}</em>
++                </Command.Item>
++              ))}
++            </Command.Group>
++          ))}
+           {can("exceptions") && <Command.Group heading="Problem cases">
+             {(collections.exceptions || []).filter((e) => e.status !== "closed").slice(0, 40).map((e) => (
+               <Command.Item key={e.id} value={`${e.ref} ${e.investor} ${e.type}`} onSelect={() => go(`/exceptions?case=${e.id}`)} className="cmdk-item">
+diff --color -ruN a/frontend/src/features/admin/AddEditUserDrawer.jsx frontend/src/features/admin/AddEditUserDrawer.jsx
+--- a/frontend/src/features/admin/AddEditUserDrawer.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/admin/AddEditUserDrawer.jsx	2026-10-22 11:22:36
+@@ -1,4 +1,5 @@
+ import React, { useState, useEffect } from "react";
++import { AMCS, CYCLE_STEPS } from "@/lib/org";
+ import { Drawer } from "@/components/Drawer";
+ import { COMPANY_DOMAIN } from "@/lib/rbac";
+ import { MODULES, MODULE_BY_KEY, isPrivileged, sodConflicts } from "@/lib/access";
+@@ -67,6 +68,8 @@
+     email: "",
+     designation: "",
+     roles: [],
++    amcs: ["ALL"],
++    workflowSteps: [],
+   });
+   const [errors, setErrors] = useState({});
+   const [touched, setTouched] = useState({});
+@@ -80,6 +83,8 @@
+         email: editingUser.email || "",
+         designation: editingUser.designation || "",
+         roles: editingUser.roles || [],
++        amcs: editingUser.amcs || ["ALL"],
++        workflowSteps: editingUser.workflowSteps || [],
+       });
+       setErrors({});
+       setTouched({});
+@@ -91,6 +96,8 @@
+         email: "",
+         designation: "",
+         roles: [],
++        amcs: ["ALL"],
++        workflowSteps: [],
+       });
+       setErrors({});
+       setTouched({});
+@@ -403,6 +410,29 @@
+           {privilegedAdds.length > 0 && conflicts.length === 0 && (
+             <div className="note" data-testid="priv-note"><Info size={16} /><div>{privilegedAdds.map((r) => roleById[r]?.name).join(", ")} grant{privilegedAdds.length === 1 ? "s" : ""} Checker/Admin rights. {privilegedAdds.length === 1 ? "It" : "They"} will be <b>pending until a second admin approves</b> in Roles & Access. Other roles apply immediately.</div></div>
+           )}
++        </div>
++
++        <div className="field" data-testid="user-amcs">
++          <label className="field-label">AMC access <span className="muted" style={{ fontWeight: 500 }}>— which AMCs' records this person works on</span></label>
++          <div className="chip-row">
++            <button type="button" className={"filter-chip" + (form.amcs.includes("ALL") ? " on" : "")} onClick={() => setForm((f) => ({ ...f, amcs: ["ALL"] }))} data-testid="amc-all">All AMCs</button>
++            {AMCS.map((a) => {
++              const on = !form.amcs.includes("ALL") && form.amcs.includes(a);
++              return <button type="button" key={a} className={"filter-chip" + (on ? " on" : "")} data-testid={"amc-pick-" + a.split(" ")[0]}
++                onClick={() => setForm((f) => { const cur = f.amcs.includes("ALL") ? [] : f.amcs; const next = cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]; return { ...f, amcs: next.length ? next : ["ALL"] }; })}>{a}</button>;
++            })}
++          </div>
++        </div>
++
++        <div className="field" data-testid="user-steps">
++          <label className="field-label">Daily-cycle steps this person handles <span className="muted" style={{ fontWeight: 500 }}>— leave empty to follow their roles. Their Today stepper shows only these.</span></label>
++          <div className="chip-row">
++            {CYCLE_STEPS.map(([k, l]) => {
++              const on = form.workflowSteps.includes(k);
++              return <button type="button" key={k} className={"filter-chip" + (on ? " on" : "")} data-testid={"step-pick-" + k}
++                onClick={() => setForm((f) => ({ ...f, workflowSteps: on ? f.workflowSteps.filter((x) => x !== k) : [...f.workflowSteps, k] }))}>{l}</button>;
++            })}
++          </div>
+         </div>
+ 
+         {Object.keys(effective).length > 0 && (
+diff --color -ruN a/frontend/src/features/admin/RolesAccess.jsx frontend/src/features/admin/RolesAccess.jsx
+--- a/frontend/src/features/admin/RolesAccess.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/admin/RolesAccess.jsx	2026-10-22 11:21:48
+@@ -56,6 +56,10 @@
+   };
+ 
+   const describe = (req) => {
++    if (req.kind === "reactivate") {
++      const u = users.find((x) => x.id === req.userId);
++      return { title: `Reactivate ${u?.name || req.userId}${u?.autoDeactivated ? " (auto-deactivated, biometric)" : ""}`, sub: `${req.note}${req.biometricConfirmed ? " · biometric punch-in confirmed" : ""}`, changes: [] };
++    }
+     if (req.kind === "assign") {
+       const u = users.find((x) => x.id === req.userId);
+       return { title: `Grant ${req.roleIds.map((r) => roleById[r]?.name || r).join(", ")} to ${u?.name || req.userId}`, sub: req.note, changes: [] };
+diff --color -ruN a/frontend/src/features/admin/UserManagement.jsx frontend/src/features/admin/UserManagement.jsx
+--- a/frontend/src/features/admin/UserManagement.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/admin/UserManagement.jsx	2026-10-22 11:22:36
+@@ -5,12 +5,13 @@
+ import Pagination from "@/components/Pagination";
+ import { SkeletonRows, EmptyState } from "@/components/bits";
+ import { formatDate, timeAgo, highlight } from "@/lib/format";
+-import { formatPhone } from "@/lib/credentials";
+ import RolePermissionsDrawer from "./RolePermissionsDrawer";
+ import AddEditUserDrawer from "./AddEditUserDrawer";
+ import DeactivateUserModal from "./DeactivateUserModal";
+ import OnboardingModal from "./OnboardingModal";
+ import "./userManagement.css";
++import { Modal } from "@/components/Modal";
++import { amcLabel, userAmcs, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS, DORMANT_DAYS } from "@/lib/org";
+ 
+ import {
+   UserPlus, Search, Download, Shield, Pencil, Send, Power, PowerOff,
+@@ -23,7 +24,10 @@
+   { key: "active", label: "Active" },
+   { key: "invited", label: "Invited" },
+   { key: "invite_expired", label: "Invite expired" },
+-  { key: "deactivated", label: "Deactivated" },
++  { key: "deactivated", label: "Deactivated (all)" },
++  { key: "auto_deactivated", label: "Auto-deactivated · biometric" },
++  { key: "biometric_risk", label: `No punch-in 7+ days (still active)` },
++  { key: "dormant", label: `Not logged in ${60}+ days` },
+ ];
+ 
+ export default function UserManagement() {
+@@ -33,7 +37,8 @@
+     addUser,
+     updateUser,
+     deactivateUser,
+-    reactivateUser,
++    requestReactivation,
++    runBiometricCheck,
+     resendInvite,
+     activateOnboardedUser,
+     adminNotifications,
+@@ -103,7 +108,10 @@
+       if (roleFilter !== "all" && !(u.roles || []).includes(roleFilter)) return false;
+       if (moduleFilter !== "all" && !(u.roles || []).some((rid) => roleById[rid]?.module === moduleFilter)) return false;
+       // Status filter
+-      if (statusFilter !== "all" && u.status !== statusFilter) return false;
++      if (statusFilter === "auto_deactivated") { if (!(u.status === "deactivated" && u.autoDeactivated)) return false; }
++      else if (statusFilter === "dormant") { if (!isDormant(u)) return false; }
++      else if (statusFilter === "biometric_risk") { if (!(u.status === "active" && daysSince(u.lastBiometric) >= 7)) return false; }
++      else if (statusFilter !== "all" && u.status !== statusFilter) return false;
+       // Search
+       if (debouncedSearch) {
+         const q = debouncedSearch.toLowerCase();
+@@ -187,13 +195,12 @@
+     }
+   };
+ 
+-  const handleToggleReactivate = (user) => {
+-    const res = reactivateUser(user.id);
+-    if (res.ok) {
+-      toast.success(`Account for ${user.name} reactivated successfully.`);
+-    } else {
+-      toast.error(res.error || "Failed to reactivate");
+-    }
++  const [reactivating, setReactivating] = useState(null);
++  const pendingReactivation = useMemo(() => new Set((collections.access_requests || []).filter((r) => r.kind === "reactivate" && r.status === "pending").map((r) => r.userId)), [collections.access_requests]);
++  const handleToggleReactivate = (user) => setReactivating(user);
++  const runCheck = () => {
++    const n = runBiometricCheck();
++    toast(n ? `${n} ID${n > 1 ? "s" : ""} disabled: no biometric punch-in for ${BIOMETRIC_LIMIT_DAYS}+ consecutive days.` : `Nobody has crossed ${BIOMETRIC_LIMIT_DAYS} days without a biometric punch-in.`);
+   };
+ 
+   const visibleNotifs = adminNotifications.filter((n) => !dismissedNotifs.includes(n.id));
+@@ -209,6 +216,7 @@
+           <p>One identity layer for every CAMS module. Users hold one or more roles; each role grants screen-level View / Maker / Checker / Export.</p>
+         </div>
+         <div className="actions">
++          {canEdit && <button type="button" className="btn btn-outline" onClick={runCheck} data-testid="btn-biometric-check" title={`Disables IDs with no biometric punch-in for ${BIOMETRIC_LIMIT_DAYS} consecutive days. Policy to be confirmed with the identity management team.`}><Shield size={15} /> Run biometric check</button>}
+           {canEdit && <button
+             type="button"
+             className="btn btn-primary"
+@@ -269,9 +277,10 @@
+             ["Active users", users.filter((u) => u.status === "active").length, "green"],
+             ["Invites pending", users.filter((u) => u.status === "invited" || u.status === "invite_expired").length, "amber"],
+             ["Access changes to approve", (collections.access_requests || []).filter((r) => r.status === "pending").length, "blue"],
+-            ["Dormant 60+ days", users.filter((u) => u.status === "active" && u.lastLogin && Date.now() - new Date(u.lastLogin) > 60 * 86400000).length, "red"],
+-          ].map(([l, v, t]) => (
+-            <div key={l} className={"ah-tile tone-" + t}><span>{l}</span><b className="fx-num"><CountUp value={v} /></b></div>
++            [`Not logged in ${DORMANT_DAYS}+ days`, users.filter(isDormant).length, "red", "dormant"],
++            ["Auto-deactivated (biometric)", users.filter((u) => u.status === "deactivated" && u.autoDeactivated).length, "amber", "auto_deactivated"],
++          ].map(([l, v, t, f]) => (
++            <div key={l} className={"ah-tile tone-" + t + (f ? " clickable" : "")} onClick={f ? () => setStatusFilter(f) : undefined} role={f ? "button" : undefined}><span>{l}</span><b className="fx-num"><CountUp value={v} /></b></div>
+           ))}
+         </div>
+       </div>
+@@ -366,7 +375,7 @@
+                 <th style={{ width: 110 }}>Emp. No.</th>
+                 <th>Designation</th>
+                 <th>Work Email</th>
+-                <th>Phone</th>
++                <th style={{ width: 150 }}>AMC access</th>
+                 <th style={{ width: 260 }}>Roles</th>
+                 <th style={{ width: 130 }}>Status</th>
+                 <th style={{ width: 130 }}>Last Login</th>
+@@ -419,20 +428,24 @@
+                         {highlight(u.email, debouncedSearch)}
+                       </td>
+ 
+-                      {/* Phone */}
+-                      <td className="tnum" style={{ fontSize: 12 }}>
+-                        {formatPhone(u.phone)}
+-                      </td>
++                      {/* AMC access */}
++                      <td style={{ fontSize: 12 }} title={userAmcs(u).join(", ")} data-testid={`amc-${u.id}`}>{amcLabel(u)}</td>
+ 
+                       {/* Role */}
+                       <td>{renderRoles(u)}</td>
+ 
+                       {/* Status */}
+-                      <td>{renderStatusChip(u.status)}</td>
++                      <td>
++                        {renderStatusChip(u.status)}
++                        {u.status === "deactivated" && u.autoDeactivated && <div className="um-sub">Biometric rule · {daysSince(u.lastBiometric)}d no punch-in</div>}
++                        {pendingReactivation.has(u.id) && <div className="um-sub amber">Reactivation awaiting 2nd admin</div>}
++                        {isDormant(u) && <div className="um-sub red">Inactive {u.lastLogin ? daysSince(u.lastLogin) : daysSince(u.createdAt)} days</div>}
++                      </td>
+ 
+                       {/* Last Login */}
+                       <td className="tnum" style={{ color: "hsl(var(--muted))", fontSize: 12 }}>
+                         {u.lastLogin ? timeAgo(u.lastLogin) : "Never"}
++                        {u.lastBiometric && <div className={"um-sub" + (daysSince(u.lastBiometric) >= 7 ? " amber" : "")}>Punch-in {daysSince(u.lastBiometric) === 0 ? "today" : `${daysSince(u.lastBiometric)}d ago`}</div>}
+                       </td>
+ 
+                       {/* Actions */}
+@@ -483,7 +496,8 @@
+                             <button
+                               type="button"
+                               className="row-icon-btn"
+-                              title="Reactivate user"
++                              title={pendingReactivation.has(u.id) ? "Reactivation already requested" : "Request reactivation (second admin approves)"}
++                              disabled={pendingReactivation.has(u.id)}
+                               onClick={() => handleToggleReactivate(u)}
+                               data-testid={`action-reactivate-${u.id}`}
+                             >
+@@ -566,6 +580,12 @@
+       />
+ 
+       {/* Deactivate User Modal */}
++      {reactivating && <ReactivateModal user={reactivating} onClose={() => setReactivating(null)} onSubmit={(reason, ticket, bio) => {
++        const res = requestReactivation(reactivating.id, reason, ticket, bio);
++        if (!res.ok) { toast.error(res.error); return; }
++        toast.success(`Reactivation of ${reactivating.name} sent to a second admin (Roles & Access → Approvals).`);
++        setReactivating(null);
++      }} />}
+       <DeactivateUserModal
+         isOpen={Boolean(deactivatingUser)}
+         user={deactivatingUser}
+@@ -585,5 +605,25 @@
+         }}
+       />
+     </div>
++  );
++}
++
++/** Controlled reactivation: reason required; biometric cases also need an IDM ticket and confirmed punch-in. */
++function ReactivateModal({ user, onClose, onSubmit }) {
++  const [reason, setReason] = useState("");
++  const [ticket, setTicket] = useState("");
++  const [bio, setBio] = useState(false);
++  const auto = user.autoDeactivated;
++  const ready = reason.trim().length >= 10 && (!auto || (ticket.trim() && bio));
++  return (
++    <Modal id="reactivate-modal" title={`Reactivate ${user.name}?`} onClose={onClose}
++      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!ready} onClick={() => onSubmit(reason.trim(), ticket.trim(), bio)} data-testid="reactivate-submit">Send for approval</button></>}>
++      <p style={{ marginTop: 0 }}>{auto ? <>Disabled automatically: <b>{user.deactivationReason}</b>.</> : <>Deactivated by {user.deactivatedBy || "an admin"}{user.deactivationReason ? <>: <b>{user.deactivationReason}</b></> : ""}.</>} A second admin must approve before the ID works again.</p>
++      <div className="field"><label className="field-label">Why should this ID be reactivated? (10+ characters)</label><textarea className="textarea" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Back from medical leave on 20 Oct; manager confirmed" data-testid="reactivate-reason" /></div>
++      {auto && <>
++        <div className="field" style={{ marginTop: 10 }}><label className="field-label">Identity management ticket no.</label><input className="input tnum" value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="IDM-2026-…" data-testid="reactivate-ticket" /></div>
++        <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, fontSize: 13 }}><input type="checkbox" checked={bio} onChange={(e) => setBio(e.target.checked)} data-testid="reactivate-bio" /> The user has punched in on the biometric system again</label>
++      </>}
++    </Modal>
+   );
+ }
+diff --color -ruN a/frontend/src/features/approvals/useApprovals.js frontend/src/features/approvals/useApprovals.js
+--- a/frontend/src/features/approvals/useApprovals.js	2026-10-22 11:17:31
++++ b/frontend/src/features/approvals/useApprovals.js	2026-10-22 11:24:05
+@@ -1,5 +1,6 @@
+ import { useStore } from "@/state/store";
+ import { hasCap } from "@/lib/access";
++import { inScope } from "@/lib/org";
+ import { PLAIN_EXCEPTION } from "@/lib/plain";
+ import { inr, inrShort } from "@/features/ops/ui";
+ import { maskAccount } from "@/lib/format";
+@@ -11,11 +12,12 @@
+  * Simple items can be approved inline; ones that need a diff/impact review link to their screen.
+  */
+ export function useApprovals() {
+-  const { collections: c, perms, act, approve, reject, currentUser } = useStore();
++  const { collections: c, perms, act, approve, reject, currentUser, personaUser } = useStore();
+   const { setStatus } = useMatchActions();
+   const items = [];
+   const mine = (owner) => owner && (owner === currentUser || owner.split(" ")[0] === currentUser);
+-  const add = (screen, it) => { if (hasCap(perms, screen, "approve")) items.push({ screen, own: mine(it.owner), ...it }); };
++  // Checkers see only the AMCs they cover; items without an AMC (setups, access, day close) are shared.
++  const add = (screen, it) => { if (hasCap(perms, screen, "approve") && inScope(personaUser, it.amc)) items.push({ screen, own: mine(it.owner), ...it }); };
+ 
+   // Fund release first (it gates unit allotment); day close last (it signs off everything else)
+   (c.dayclose || []).filter((d) => d.status === "pending").forEach((d) => add("release", {
+@@ -31,20 +33,20 @@
+   (c.refunds || []).filter((r) => r.status === "pending").forEach((r) => {
+     const int = delayedInterest(r.amount, r.ageDays);
+     add("refunds", {
+-      id: r.id, kind: "Refund", title: `Refund ${inr(r.amount + int)} to ${r.investor}`, detail: `${r.reason} · ${r.bankAcct} · ${r.verified ? "account verified ✓" : "account NOT verified"}${int ? ` · incl. ${inr(int)} delayed interest` : ""}`, owner: r.owner, priority: 2, urgent: r.ageDays >= 4,
++      id: r.id, amc: r.amc, kind: "Refund", title: `Refund ${inr(r.amount + int)} to ${r.investor}`, detail: `${r.reason} · ${r.bankAcct} · ${r.verified ? "account verified ✓" : "account NOT verified"}${int ? ` · incl. ${inr(int)} delayed interest` : ""}`, owner: r.owner, priority: 2, urgent: r.ageDays >= 4,
+       approve: () => act({ screen: "refunds", cap: "approve", kind: "refunds", id: r.id, target: r, patch: { status: "approved", approvedBy: currentUser }, audit: { entityLabel: `${r.ref} · ${r.investor}`, action: "Approve refund", from: "Pending", to: "Approved", comment: inr(r.amount + int) } }),
+       reject: () => act({ screen: "refunds", cap: "approve", kind: "refunds", id: r.id, target: r, patch: { status: "draft" }, audit: { entityLabel: `${r.ref} · ${r.investor}`, action: "Return refund", from: "Pending", to: "Draft" } }),
+     });
+   });
+   (c.matches || []).filter((m) => m.status === "pending").forEach((m) => add("match", {
+-    id: m.id, kind: "Manual match", title: `Confirm ${m.type} match of ${inr(m.amount)}`, detail: `${m.source === "ai" ? `Suggested by the system (${Math.round(m.confidence * 100)}%), accepted` : "Matched by hand"} by ${m.owner}`, owner: m.owner, priority: 3,
++    id: m.id, amc: (c.credits || []).find((x) => x.id === m.credits[0])?.amc, kind: "Manual match", title: `Confirm ${m.type} match of ${inr(m.amount)}`, detail: `${m.source === "ai" ? `Suggested by the system (${Math.round(m.confidence * 100)}%), accepted` : "Matched by hand"} by ${m.owner}`, owner: m.owner, priority: 3,
+     approve: () => { const r = act({ screen: "match", cap: "approve", kind: "matches", id: m.id, target: m, patch: { status: "confirmed", decidedBy: currentUser }, audit: { entityLabel: `${m.type} match ${inr(m.amount)}`, action: "Approve match", from: "Pending checker", to: "Matched" } }); if (r.ok) { setStatus(m.credits, "credits", "matched"); setStatus(m.purchases, "purchases", "matched"); } return r; },
+     reject: () => { const r = act({ screen: "match", cap: "approve", kind: "matches", id: m.id, target: m, patch: { status: "rejected", decidedBy: currentUser }, audit: { entityLabel: `${m.type} match ${inr(m.amount)}`, action: "Reject match", from: "Pending checker", to: "Rejected" } }); if (r.ok) { setStatus(m.credits, "credits", "open"); setStatus(m.purchases, "purchases", "open"); } return r; },
+   }));
+   (c.exceptions || []).filter((e) => e.status === "pending_approval").forEach((e) => {
+     const owner = e.closedBy || e.owner;
+     add("exceptions", {
+-      id: e.id, kind: "Case closure", title: `Close ${e.ref}: ${PLAIN_EXCEPTION[e.type] || e.type}`, detail: `${e.investor} · ${e.amount ? inr(e.amount) : e.bankName} · reason: ${e.rootCause || "—"}`, owner, priority: 4,
++      id: e.id, amc: e.amc, kind: "Case closure", title: `Close ${e.ref}: ${PLAIN_EXCEPTION[e.type] || e.type}`, detail: `${e.investor} · ${e.amount ? inr(e.amount) : e.bankName} · reason: ${e.rootCause || "—"}`, owner, priority: 4,
+       approve: () => act({ screen: "exceptions", cap: "approve", kind: "exceptions", id: e.id, target: { ...e, owner }, patch: { status: "closed" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Approve closure", from: "Closure pending checker", to: "Closed" } }),
+       reject: () => act({ screen: "exceptions", cap: "approve", kind: "exceptions", id: e.id, target: { ...e, owner }, patch: { status: "in_progress" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Reopen case", from: "Closure pending checker", to: "In progress" } }),
+     });
+diff --color -ruN a/frontend/src/features/bankConfig/BankConfigWizard.js frontend/src/features/bankConfig/BankConfigWizard.js
+--- a/frontend/src/features/bankConfig/BankConfigWizard.js	2026-10-22 11:17:31
++++ b/frontend/src/features/bankConfig/BankConfigWizard.js	2026-10-22 11:38:03
+@@ -353,8 +353,8 @@
+                 {[
+                   ["isActive", "Is Active", "Configuration becomes Active on approval (otherwise Inactive)."],
+                   ["bulkUpload", "Bulk Upload", "Allow multiple accounts in one file; account derived from file."],
+-                  ["computeRunningBalance", "Compute Running Balance", "Derive running balance from debit/credit if absent."],
+-                  ["validateRunningBalance", "Validate Running Balance", "Cross-check computed balance against the file."],
++                  ["computeRunningBalance", "Compute Running Balance", "Use when the bank's file has NO closing balance: the system works it out from the opening balance and each credit/debit. Shown as \"computed, not bank-verified\"."],
++                  ["validateRunningBalance", "Validate Running Balance", "Use when the bank's file HAS a closing balance: each row is checked against opening balance ± transactions, and today's opening against yesterday's closing. Mismatches are flagged, never accepted silently."],
+                   ["runningBalanceCleanup", "Running Balance Cleanup", "Remove set characters (prefix or suffix) from the closing balance before processing."],
+                   ["directMatch", "Direct Match", "Match statement rows to CDT records by UTR / instrument number automatically."],
+                   ["descendingOrder", "Descending Order", "File is newest-first; process and validate balances bottom-to-top."],
+diff --color -ruN a/frontend/src/features/command/CommandCentre.jsx frontend/src/features/command/CommandCentre.jsx
+--- a/frontend/src/features/command/CommandCentre.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/command/CommandCentre.jsx	2026-10-22 11:24:05
+@@ -16,7 +16,7 @@
+ export default function CommandCentre() {
+   const { collections, perms } = useStore();
+   const nav = useNavigate();
+-  const { steps } = useCycle();
++  const { all: steps } = useCycle();
+   const [range, setRange] = React.useState(14);
+   const go = (screen, path) => (hasCap(perms, screen) ? () => nav(path) : undefined);
+   const files = collections.files || [];
+diff --color -ruN a/frontend/src/features/exceptions/Exceptions.jsx frontend/src/features/exceptions/Exceptions.jsx
+--- a/frontend/src/features/exceptions/Exceptions.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/exceptions/Exceptions.jsx	2026-10-22 11:27:00
+@@ -10,7 +10,14 @@
+ import { Siren, Hourglass, UserPlus, Check, X, Sparkles, MessageSquare, Download } from "lucide-react";
+ import { toast } from "sonner";
+ import { JourneyBar } from "@/features/today/Cycle";
++import { scopeToUser } from "@/lib/journey";
+ 
++const ageDays = (e) => Math.floor(e.ageHours / 24);
++const HIGH_VALUE = 1000000; // ₹10 lakh
++const THRESHOLD_DAYS = 5;
++/** Bucket edges, e.g. [5, 10, 20] → 0–5, 6–10, 11–20, over 20 days. */
++const bucketsFrom = (b) => [...b.map((hi, i) => ({ key: "b" + i, lo: i ? b[i - 1] + 1 : 0, hi, label: `${i ? b[i - 1] + 1 : 0}–${hi} days` })), { key: "b" + b.length, lo: b[b.length - 1] + 1, hi: 99999, label: `Over ${b[b.length - 1]} days` }];
++
+ const STATUS = { open: ["Open", "pill-draft"], in_progress: ["In progress", "pill-pending"], pending_approval: ["Closure pending checker", "pill-pending"], closed: ["Closed", "pill-active"] };
+ const priority = (e) => Math.round((Math.log10(Math.max(1000, e.amount)) * 10) * (e.interestHoursLeft < 24 ? 3 : e.interestHoursLeft < 48 ? 2 : 1) + e.ageHours / 6);
+ 
+@@ -20,7 +27,12 @@
+   const typeLabel = (t) => (simple && PLAIN_EXCEPTION[t]) || t;
+   const nav = useNavigate();
+   const [sp] = useSearchParams();
+-  const all = collections.exceptions || [];
++  const all = scopeToUser(collections, personaUser).exceptions; // this person's AMCs only
++  const bounds = (collections.settings || []).find((x) => x.id === "aging")?.bounds || [5, 10, 20];
++  const buckets = bucketsFrom(bounds);
++  const [age, setAge] = React.useState(sp.get("age") || null);
++  const [editBuckets, setEditBuckets] = React.useState(null);
++  const canConfigure = hasCap(perms, "exceptions", "approve") || hasCap(perms, "exceptions", "export") && hasCap(perms, "inbox", "approve");
+   const canEdit = hasCap(perms, "exceptions", "edit");
+   const canApprove = hasCap(perms, "exceptions", "approve");
+   const [view, setView] = React.useState(simple ? "mine" : sp.get("risk") ? "risk" : canApprove && !canEdit ? "approval" : "open");
+@@ -43,7 +55,20 @@
+     ["closed", "Closed", (e) => e.status === "closed"],
+   ];
+   const vf = (VIEWS.find((v) => v[0] === view) || VIEWS[0])[2];
+-  const rows = all.filter(vf).filter((e) => type === "all" || e.type === type).sort((a, b) => priority(b) - priority(a));
++  const ageFilter = (e) => !age || (age === "over5" ? ageDays(e) > THRESHOLD_DAYS : (() => { const b = buckets.find((x) => x.key === age); return b && ageDays(e) >= b.lo && ageDays(e) <= b.hi; })());
++  // With an aging filter on, oldest and highest-value first; otherwise the usual priority score.
++  const rows = all.filter(vf).filter((e) => type === "all" || e.type === type).filter(ageFilter)
++    .sort((a, b) => (age ? ageDays(b) - ageDays(a) || b.amount - a.amount : priority(b) - priority(a)));
++  const saveBuckets = () => {
++    const b = editBuckets.map(Number);
++    if (b.some((x) => !Number.isInteger(x) || x < 1) || b.some((x, i) => i && x <= b[i - 1])) { toast.error("Use whole days in increasing order, e.g. 5, 10, 20"); return; }
++    upsert("settings", { id: "aging", bounds: b, by: currentUser, at: new Date().toISOString() });
++    toast.success(`Aging buckets set to ${bucketsFrom(b).map((x) => x.label).join(" · ")}`); setEditBuckets(null);
++  };
++  const followUp = (e, kind) => {
++    const text = kind === "remit" ? `Asked ${e.bankName} for remittance details (remitter name, account, purpose) for ${inr(e.amount)}` : kind === "amc" ? "Asked the AMC / distributor whether this payment belongs to one of their investors" : "";
++    if (update(e, { status: "in_progress", owner: e.owner || personaUser.name, followUps: [...(e.followUps || []), { kind, at: new Date().toISOString(), by: personaUser.name }], notes: [...(e.notes || []), { by: personaUser.name, at: new Date().toISOString(), text }] }, kind === "remit" ? "Request remittance details" : "Ask AMC / distributor", text)) toast.success("Follow-up recorded on the case");
++  };
+   const open = all.find((e) => e.id === openId);
+ 
+   const update = (e, patch, action, comment, cap = "edit") => {
+@@ -73,7 +98,7 @@
+       const refId = "rf_" + e.id;
+       if ((collections.refunds || []).some((r) => r.id === refId)) return nav(`/refunds?refund=${refId}`);
+       const amount = e.type === "Excess credit" ? Math.round(e.amount * 0.2) : e.amount;
+-      const reason = { "Excess credit": "Investor paid too much", "Duplicate credit": "Investor paid twice", "NIGO rejection": "Application rejected — refund needed" }[e.type] || "Refund";
++      const reason = { "Unmatched credit": "Unidentified credit — returned to source", "Cross collection": "Unidentified credit — returned to source", "Excess credit": "Investor paid too much", "Duplicate credit": "Investor paid twice", "NIGO rejection": "Application rejected — refund needed" }[e.type] || "Refund";
+       upsert("refunds", { id: refId, ref: "RF-" + e.ref.slice(4), investor: e.investor, pan: "—", amount, reason, ageDays: Math.floor(e.ageHours / 24), bankAcct: "XXXX" + String(1000 + (e.ref.charCodeAt(6) * 37) % 9000), ifsc: "—", verified: null, status: "draft", owner: personaUser.name, sourceCase: e.id, createdAt: new Date().toISOString() });
+       update(e, { status: "in_progress", owner: e.owner || personaUser.name, notes: [...(e.notes || []), { by: personaUser.name, at: new Date().toISOString(), text: `Refund ${"RF-" + e.ref.slice(4)} created for ${inr(amount)}` }] }, "Create refund", `Refund of ${inr(amount)}`);
+       toast.success(simple ? "Refund created. Finish it on the Refunds page." : "Refund drafted and linked to this case", { action: { label: "Open refund", onClick: () => nav(`/refunds?refund=${refId}`) } });
+@@ -108,6 +133,10 @@
+         <Stat label="Closure pending checker" value={all.filter((e) => e.status === "pending_approval").length} sub="Maker–checker on closure" tone="blue" onClick={() => setView("approval")} />
+       </div>}
+ 
++      <AgingPanel list={openList} buckets={buckets} active={age} onPick={(k) => { setAge(age === k ? null : k); setView(simple ? "unassigned" : "open"); }}
++        canConfigure={canConfigure} editing={editBuckets} setEditing={setEditBuckets} bounds={bounds} onSave={saveBuckets} showBreach={canApprove || hasCap(perms, "exceptions", "export")} />
++      {age && <div className="age-chip-row"><span className="pill pill-pending"><span className="dot" />Showing {age === "over5" ? `cases past the ${THRESHOLD_DAYS}-day threshold` : buckets.find((b) => b.key === age)?.label} · oldest and largest first</span><button className="link" onClick={() => setAge(null)}>Clear</button></div>}
++
+       <div className={"ex-layout" + (simple ? " single" : "")}>
+         <div className="card">
+           <div className="toolbar" style={{ flexWrap: "wrap" }}>
+@@ -121,7 +150,7 @@
+               {rows.map((e) => (
+                 <tr key={e.id} onClick={() => setOpenId(e.id)} style={{ cursor: "pointer" }} data-testid={"ex-row-" + e.id}>
+                   <td onClick={(ev) => ev.stopPropagation()}><input type="checkbox" className="cb" disabled={!canEdit} checked={sel.includes(e.id)} onChange={() => setSel((s) => s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id])} /></td>
+-                  <td className="tnum">{e.ref}</td>
++                  <td className="tnum">{e.ref}{ageDays(e) > THRESHOLD_DAYS && e.amount > 0 && <span className="age-tag" title={`${ageDays(e)} days old`}>{ageDays(e)}d</span>}{e.amount >= HIGH_VALUE && <span className="hv-tag">High value</span>}</td>
+                   <td>{typeLabel(e.type)}</td>
+                   <td>{e.investor}<div className="muted">{e.bankName}</div></td>
+                   <td className="tnum" style={{ textAlign: "right" }}>{e.amount ? inrShort(e.amount) : "—"}</td>
+@@ -154,6 +183,20 @@
+           <div className="kv-line"><span>{simple ? "Who" : "Owner"}</span>{open.owner || (simple ? "Nobody yet" : "Unassigned")}</div>
+           <div className="kv-line"><span>Status</span><span className={"pill " + ST[open.status][1]}><span className="dot" />{ST[open.status][0]}</span></div>
+ 
++          <div className="kv-line"><span>Age</span><b className={ageDays(open) > THRESHOLD_DAYS ? "age-red" : ""}>{ageDays(open)} day{ageDays(open) !== 1 ? "s" : ""}{ageDays(open) > THRESHOLD_DAYS ? ` · past the ${THRESHOLD_DAYS}-day threshold` : ""}</b></div>
++          {["Unmatched credit", "Excess credit", "Cross collection"].includes(open.type) && (
++            <div className="fd-section" data-testid="investigate">
++              <h4>Find out who sent this money</h4>
++              <p className="muted" style={{ marginTop: 0 }}>Nothing on our side matches this credit. Ask for the remittance details; if nobody claims it, return it to the source account.</p>
++              <ul className="ph-list small">{(open.followUps || []).map((f, i) => <li key={i} className="ok"><i /><div>{f.kind === "remit" ? "Remittance details requested from the bank" : "AMC / distributor asked"} · {f.by} · {timeAgo(f.at)}</div></li>)}</ul>
++              {canEdit && open.status !== "closed" && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
++                <button className="btn btn-outline btn-sm" onClick={() => followUp(open, "remit")} data-testid="ask-remittance">Ask bank for remittance details</button>
++                <button className="btn btn-outline btn-sm" onClick={() => followUp(open, "amc")}>Ask AMC / distributor</button>
++                {ageDays(open) > THRESHOLD_DAYS && <button className="btn btn-outline btn-sm" onClick={() => runSuggestion({ ...open, suggestion: { action: "Create refund (unidentified)" } })} data-testid="refund-source">Return to source account</button>}
++              </div>}
++            </div>
++          )}
++
+           <div className="fd-section suggestion-box">
+             <h4><Sparkles size={14} /> {simple ? "What to do" : "Suggested resolution"} {!simple && <Conf value={open.suggestion.conf} />}</h4>
+             <p>{simple ? stripNumbers(open.suggestion.text) : open.suggestion.text}</p>
+@@ -187,6 +230,42 @@
+           </div>
+         </Drawer>
+       )}
++    </div>
++  );
++}
++
++/** Aging of unresolved cases: count and ₹ per bucket, the 5-day threshold, and a breach summary for managers. */
++function AgingPanel({ list, buckets, active, onPick, canConfigure, editing, setEditing, bounds, onSave, showBreach }) {
++  const money = list.filter((e) => e.amount > 0);
++  const cells = buckets.map((b) => { const l = money.filter((e) => ageDays(e) >= b.lo && ageDays(e) <= b.hi); return { ...b, n: l.length, amt: l.reduce((s, e) => s + e.amount, 0), past: b.lo > THRESHOLD_DAYS || b.hi > THRESHOLD_DAYS }; });
++  const breach = money.filter((e) => ageDays(e) > THRESHOLD_DAYS);
++  const oldest = breach.reduce((m, e) => Math.max(m, ageDays(e)), 0);
++  const maxN = Math.max(1, ...cells.map((c) => c.n));
++  return (
++    <div className="card aging-card" data-testid="aging">
++      <div className="card-head">
++        <h3>How old are unresolved payments?</h3>
++        <span className="muted">Count and amount per age band · click a band to list those cases, oldest and largest first</span>
++        {canConfigure && !editing && <button className="link" style={{ marginLeft: "auto" }} onClick={() => setEditing(bounds.map(String))} data-testid="edit-buckets">Change bands</button>}
++      </div>
++      {editing && <div className="bucket-edit">Band edges (days):{editing.map((v, i) => <input key={i} className="input tnum" value={v} onChange={(e) => setEditing(editing.map((x, j) => (j === i ? e.target.value : x)))} data-testid={"bucket-" + i} />)}<button className="btn btn-primary btn-sm" onClick={onSave}>Save</button><button className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>Cancel</button></div>}
++      <div className="aging-grid">
++        {cells.map((c) => (
++          <button key={c.key} className={"aging-cell" + (c.lo > THRESHOLD_DAYS ? " past" : "") + (active === c.key ? " on" : "")} onClick={() => onPick(c.key)} data-testid={"age-" + c.key}>
++            <span className="ac-label">{c.label}</span>
++            <b className="tnum">{c.n}</b>
++            <span className="tnum">{inrShort(c.amt)}</span>
++            <i style={{ width: `${(c.n / maxN) * 100}%` }} />
++          </button>
++        ))}
++      </div>
++      {showBreach && (
++        <div className="breach-row" data-testid="breach-summary">
++          <span><b>{breach.length}</b> case{breach.length !== 1 ? "s" : ""} past the {THRESHOLD_DAYS}-day threshold · <b>{inrShort(breach.reduce((s, e) => s + e.amount, 0))}</b> · oldest {oldest} days · {breach.filter((e) => e.amount >= HIGH_VALUE).length} high-value (₹10 L+)</span>
++          <button className="btn btn-outline btn-sm" onClick={() => onPick("over5")} data-testid="show-breaches">Show breaches</button>
++        </div>
++      )}
++      <div className="muted aging-note">The 5-day threshold and how age is counted (calendar vs business days, by transaction type) must be checked against the applicable SEBI requirements before production.</div>
+     </div>
+   );
+ }
+diff --color -ruN a/frontend/src/features/ingestion/FileInbox.jsx frontend/src/features/ingestion/FileInbox.jsx
+--- a/frontend/src/features/ingestion/FileInbox.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/ingestion/FileInbox.jsx	2026-10-22 11:37:55
+@@ -12,6 +12,8 @@
+ import { toast } from "sonner";
+ import { JourneyBar } from "@/features/today/Cycle";
+ import { PLAIN_FILE_STATUS } from "@/lib/plain";
++import { scopeToUser } from "@/lib/journey";
++import { uiStatus, StatusStrip, FileIdentity, TxnDupSection, DismissModal, SftpTab, ManualUploadModal, ManualLog } from "./ingestionBits";
+ 
+ const STATUS = {
+   loaded: { label: "Loaded", cls: "pill-active" },
+@@ -37,7 +39,8 @@
+  * file type, layout, account number, statement date, duplicate, balance continuity.
+  */
+ function UploadModal({ file, corrected, onClose }) {
+-  const { act, currentUser, collections } = useStore();
++  const { act, currentUser, collections, upsert } = useStore();
++  const [reason, setReason] = React.useState(file.channel === "manual" ? "Bank has no automated channel for this account" : "");
+   const acct = file.accountNumber.slice(-4);
+   const otherAcct = String((Number(acct) + 4729) % 10000).padStart(4, "0");
+   const choices = [
+@@ -69,8 +72,9 @@
+ 
+   const load = () => {
+     const rows = 600 + (acct.charCodeAt(0) * 37) % 1800;
++    if (!reason) { toast.error("Pick why you're uploading by hand — it's recorded for audit"); return; }
+     const res = act({
+-      screen: "ingestion", cap: "edit", kind: "files", id: file.id,
++      screen: "manual_upload", cap: "edit", kind: "files", id: file.id,
+       patch: (f) => ({
+         ...f, status: "loaded", fileName: picked, receivedAt: new Date().toISOString(), rows, credits: Math.floor(rows * 0.8), creditAmount: rows * 21000,
+         checks: f.checks.map((c) => ({ ...c, ok: true, detail: null })), corrected: true, uploadedBy: currentUser, attempts: (f.attempts || 0) + 1, drift: f.drift,
+@@ -79,6 +83,7 @@
+       audit: { entityLabel: `${file.bankName} ·${acct}`, action: corrected ? "Upload corrected statement" : "Upload statement", from: STATUS[file.status]?.label, to: "Loaded", comment: picked },
+     });
+     if (!res.ok) { toast.error(res.error); return; }
++    upsert("manual_uploads", { id: "mu_" + Date.now(), at: new Date().toISOString(), by: currentUser, reason, source: "Browser upload", accounts: [`${file.bankName} ·${acct}`], outcome: `${picked}: loaded` });
+     toast.success(`${file.bankName} ·${acct} loaded. ${Math.floor(rows * 0.8)} credits are ready for matching.`);
+     onClose();
+   };
+@@ -95,6 +100,8 @@
+         {doneChecking && failed.length === 0 && <button className="btn btn-primary" onClick={load} data-testid="upload-load"><CheckCircle2 size={14} /> Load statement</button>}
+         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+       </>}>
++      <div className="field" style={{ marginBottom: 12 }}><label className="field-label">Why by hand? (recorded for audit)</label>
++        <select className="select" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="upload-reason"><option value="">Pick a reason…</option>{["Bank has no automated channel for this account", "SFTP outage", "Bank API / portal outage", "Statement missing from the normal channel", "Urgent processing requested", "Corrected statement from the bank"].map((r) => <option key={r}>{r}</option>)}</select></div>
+       <div className="up-expect">
+         <div><span>Bank · account</span><b>{file.bankName} ·{acct}</b></div>
+         <div><span>Statement date</span><b>{new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</b></div>
+@@ -169,13 +176,20 @@
+   );
+ }
+ 
++/** Technical failures in words an operator can act on. */
++const plainError = (c) => c.authIssue ? "The bank refused our login — the access token has expired. The setup maker renews it." : c.captcha ? "The bank's website now asks for a human check (CAPTCHA). We never bypass it — download the statement yourself and upload it." : c.status === "degraded" ? "The bank's service is slow, so some pulls time out. Pulls retry on their own." : c.error;
++
+ export default function FileInbox() {
+-  const { collections, perms, act, currentUser, simple } = useStore();
++  const { collections: rawCollections, perms, act, currentUser, simple, personaUser } = useStore();
++  const collections = { ...rawCollections, files: scopeToUser(rawCollections, personaUser).files }; // this person's AMCs
+   const statusText = (st) => (simple ? PLAIN_FILE_STATUS[st] : STATUS[st]?.label) || st;
+   const nav = useNavigate();
+   const [sp] = useSearchParams();
+   const [tab, setTab] = React.useState(sp.get("tab") || "files");
+   const [filter, setFilter] = React.useState("attention");
++  const [stFilter, setStFilter] = React.useState(null);
++  const [manualOpen, setManualOpen] = React.useState(sp.get("manual") === "1");
++  const [dismissing, setDismissing] = React.useState(null);
+   const [openId, setOpenId] = React.useState(sp.get("file"));
+   const [uploadFor, setUploadFor] = React.useState(sp.get("upload") && sp.get("file") ? { id: sp.get("file"), corrected: false } : null);
+   const [reprocessId, setReprocessId] = React.useState(null);
+@@ -188,8 +202,17 @@
+   const canEdit = hasCap(perms, "ingestion", "edit");
+   const canApprove = hasCap(perms, "ingestion", "approve");
+   const canSetup = hasCap(perms, "bank_setup", "edit");
++  const canManual = hasCap(perms, "manual_upload", "edit");
++  const sftp = rawCollections.sftp || [];
++  const loadedIdsAll = files.filter((f) => ["loaded", "nil"].includes(f.status)).map((f) => f.id);
++  // A rejected email stops being an alert once the statement arrived some other way, or someone dismissed it.
++  const emailResolved = (e) => e.dismissed ? `Dismissed by ${e.dismissed.by}: ${e.dismissed.why}` : (e.reason === "duplicate" || (e.suggestFileId && loadedIdsAll.includes(e.suggestFileId))) ? "Resolved — the statement is already loaded through another channel" : e.waiting ? `Waiting for a corrected email (${e.waiting.by})` : null;
+ 
+-  const rows = files.filter((f) => filter === "all" || (filter === "loaded" ? f.status === "loaded" : !["loaded", "discarded"].includes(f.status)));
++  const rows = files.filter((f) => {
++    const st = uiStatus(f, conns.find((c) => c.fileId === f.id)).key;
++    if (stFilter && stFilter !== "all") return stFilter === "received" ? st !== "not_received" : st === stFilter;
++    return filter === "all" || (filter === "loaded" ? st === "success" : !["loaded", "discarded", "nil"].includes(f.status));
++  });
+   const open = files.find((f) => f.id === openId);
+   const uploadFile = uploadFor && files.find((f) => f.id === uploadFor.id);
+   const reprocessFile = files.find((f) => f.id === reprocessId);
+@@ -197,9 +220,10 @@
+   const label = (f) => `${f.bankName} ·${f.accountNumber.slice(-4)}`;
+   const connFor = (f) => conns.find((c) => c.fileId === f.id);
+   const manualWaiting = files.filter((f) => f.channel === "manual" && ["late", "missing"].includes(f.status));
++  const markNil = (f) => run(f, (x) => ({ ...x, status: "nil", nilBy: currentUser, history: [...(x.history || []), stamp(currentUser, "No transactions today", "Bank confirmed there is no statement / no transactions for today")] }), "Mark: no transactions today", "Bank confirmed");
+   const counts = {
+     files: files.filter((f) => !["loaded", "discarded"].includes(f.status)).length,
+-    email: emails.filter((e) => e.status === "rejected").length,
++    email: emails.filter((e) => e.status === "rejected" && !emailResolved(e)).length,
+     conns: conns.filter((c) => ["failing", "degraded"].includes(c.status)).length,
+   };
+ 
+@@ -214,10 +238,20 @@
+   // ---- Channel-specific "get the file" actions ----
+   const pullNow = (c) => {
+     if (c.status === "paused") { toast.error("This connection is paused. Resume it first."); return; }
+-    if (c.authIssue) { updConn(c, { lastAttempt: new Date().toISOString() }, "Pull now (failed)", c.error); toast.error("Pull failed again: 401 — the API token has expired. It has to be renewed in Bank statement setup › Connection."); return; }
+-    if (c.captcha) { updConn(c, { lastAttempt: new Date().toISOString() }, "Run bot now (failed)", c.error); toast.error("The bot hit the CAPTCHA again. Download the statement from the portal by hand and upload it."); return; }
++    if (c.job) { toast(`Already running — started by ${c.job.by} at ${formatDateTime(c.job.at).split(", ")[1]}. Showing its progress instead of starting another.`); return; }
++    if (c.userTrigger === false) { updConn(c, { itRequest: { by: currentUser, at: new Date().toISOString() } }, "Request run via IT support", "Direct triggering not permitted for this integration"); toast.success("Request sent to IT support. They run this integration; you'll see the result here."); return; }
++    updConn(c, { job: { by: currentUser, at: new Date().toISOString() } }, c.type === "auto" ? "Start bot run" : "Start pull", "Job started");
++    setTimeout(() => finishPull(c), 2200);
++  };
++  const finishPull = (c) => {
++    const done = (ok, msg) => updConn(c, { job: null, lastRun: { ok, at: new Date().toISOString(), by: currentUser, msg } }, ok ? "Pull finished" : "Pull failed", msg);
++    if (c.authIssue) { done(false, "The bank refused the login — the access token has expired"); toast.error("Pull failed: the bank refused the login (access token expired). It has to be renewed in Bank statement setup."); return; }
++    if (c.captcha) { done(false, "The bank's website asked for a human check (CAPTCHA)"); toast.error("The bank's website asked for a human check. We never bypass that — download the statement yourself and upload it."); return; }
++    pullDone(c, { job: null, lastRun: { ok: true, at: new Date().toISOString(), by: currentUser, msg: "Statement received" } });
++  };
++  const pullDone = (c, extra = {}) => {
+     const added = c.type === "auto" ? 0 : 40 + (c.acct.charCodeAt(1) % 60);
+-    updConn(c, { lastPull: new Date().toISOString(), recordsToday: c.recordsToday + added, status: c.status === "degraded" ? "degraded" : "healthy", successRate: [...c.successRate.slice(1), 100] }, c.type === "auto" ? "Run bot now" : "Pull now", `${added} new records`);
++    updConn(c, { lastPull: new Date().toISOString(), recordsToday: c.recordsToday + added, status: c.status === "degraded" ? "degraded" : "healthy", successRate: [...c.successRate.slice(1), 100], ...extra }, c.type === "auto" ? "Run bot now" : "Pull now", `${added} new records`);
+     const f = files.find((x) => x.id === c.fileId);
+     if (f && ["late", "missing"].includes(f.status)) {
+       run(f, (x) => ({ ...x, status: "loaded", receivedAt: new Date().toISOString(), rows: 900, credits: 720, creditAmount: 720 * 23000, checks: x.checks.map((k) => ({ ...k, ok: true })), attempts: (x.attempts || 0) + 1, history: [...(x.history || []), stamp(currentUser, "Pulled now", `Manual pull via ${CHANNEL_LABEL[c.type]}`), stamp("System", "Loaded", "720 credits loaded for matching")] }), "Statement pulled and loaded", c.endpoint);
+@@ -267,22 +301,26 @@
+           <p>{simple ? "Every bank statement we expect today, how it reaches us, and what to do when it doesn't." : "Today's statements, arriving through each bank's approved setup: manual upload, email, API or portal bot. Check them, fix them, reprocess them."}
+             {hasCap(perms, "bank_setup") && <> To change <i>how</i> a bank is connected or read, use <button className="link" onClick={() => nav("/bank-setup")}>Bank statement setup</button>.</>}</p>
+         </div>
+-        {canEdit && manualWaiting.length > 0 && <div className="actions"><button className="btn btn-primary" onClick={() => (manualWaiting.length === 1 ? setUploadFor({ id: manualWaiting[0].id }) : setPickUpload(true))} data-testid="upload-statement-btn"><UploadCloud size={15} /> Upload a statement ({manualWaiting.length} waiting)</button></div>}
++        {canManual && <div className="actions" style={{ marginRight: 8 }}><button className="btn btn-outline" onClick={() => setManualOpen(true)} data-testid="btn-manual-upload"><UploadCloud size={15} /> Manual upload (exception)</button></div>}
++        {canEdit && canManual && manualWaiting.length > 0 && <div className="actions"><button className="btn btn-primary" onClick={() => (manualWaiting.length === 1 ? setUploadFor({ id: manualWaiting[0].id }) : setPickUpload(true))} data-testid="upload-statement-btn"><UploadCloud size={15} /> Upload a statement ({manualWaiting.length} waiting)</button></div>}
+       </div>
+ 
+       <div className="fi-tabs">
+-        {[["files", "Files today", Inbox, counts.files], ["email", "Email intake", Mail, counts.email], ["conns", "Bank connections", Plug, counts.conns]].map(([k, l, I, n]) => (
++        {[["files", "Files today", Inbox, counts.files], ["sftp", "SFTP folders", Server, sftp.reduce((n, fo) => n + fo.accounts.filter((a) => a.state === "error").length, 0)], ["email", "Email intake", Mail, counts.email], ["conns", "API & portal", Plug, counts.conns]].map(([k, l, I, n]) => (
+           <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)} data-testid={"fi-tab-" + k}><I size={14} /> {l}{n > 0 && <span className="fi-count">{n}</span>}</button>
+         ))}
+       </div>
+ 
++      {tab === "sftp" && <SftpTab folders={sftp} files={files} canEdit={canEdit} onOpenFile={(id) => { setTab("files"); setOpenId(id); }} />}
++
+       {tab === "files" && <>
++        <StatusStrip files={files} conns={conns} active={stFilter} onPick={(k) => setStFilter(stFilter === k ? null : k)} />
+         <div className="segmented" style={{ marginBottom: 12 }}>
+           {[["attention", "Needs attention"], ["all", "All files today"], ["loaded", "Loaded"]].map(([k, l]) => <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)} data-testid={"fi-filter-" + k}>{l}</button>)}
+         </div>
+         <div className="card">
+           <table className="grid" data-testid="file-table">
+-            <thead><tr><th>Bank · account</th><th>How it arrives</th><th>Expected by</th><th>Received</th><th>Status</th><th className="r">Credits</th><th>Next step</th></tr></thead>
++            <thead><tr><th>Bank · account</th><th>How it arrives</th><th>Expected by</th><th>Received</th><th>Status</th><th>Status remarks</th><th className="r">Credits</th><th>Next step</th></tr></thead>
+             <tbody>
+               {rows.map((f) => {
+                 const Icon = CHANNEL_ICON[f.channel] || FileText;
+@@ -295,16 +333,18 @@
+                     <td><span className="chan"><Icon size={13} /> {CHANNEL_LABEL[f.channel]}</span></td>
+                     <td className="tnum">{formatDateTime(f.expectedBy).split(", ")[1]}</td>
+                     <td className="tnum">{f.receivedAt ? formatDateTime(f.receivedAt).split(", ")[1] : <span className="muted">—</span>}</td>
+-                    <td><span className={"pill " + (STATUS[f.status]?.cls || "")}><span className="dot" />{statusText(f.status)}</span></td>
++                    <td>{(() => { const u = uiStatus(f, c); return <span className={"pill " + u.cls} data-testid={"ui-status-" + f.id}><span className="dot" />{u.label}</span>; })()}</td>
++                    <td className="remark-cell">{uiStatus(f, c).remark}</td>
+                     <td className="tnum r">{f.creditAmount ? inrShort(f.creditAmount) : "—"}</td>
+                     <td className={next === "—" ? "muted" : "next-cell"}>{next}{next !== "—" && <ArrowRight size={12} />}</td>
+                   </tr>
+                 );
+               })}
+-              {rows.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 30 }}>All of today's files are clean.</td></tr>}
++              {rows.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 30 }}>All of today's files are clean.</td></tr>}
+             </tbody>
+           </table>
+         </div>
++        <ManualLog entries={rawCollections.manual_uploads || []} />
+       </>}
+ 
+       {tab === "email" && <>
+@@ -326,7 +366,7 @@
+                   <td>{e.from}</td>
+                   <td>{e.subject}</td>
+                   <td>{e.attachment.name ? <span className="chan"><Paperclip size={12} /> {e.attachment.name}</span> : <span className="muted">none</span>}</td>
+-                  <td><span className={"pill " + EMAIL_STATUS[e.status][1]}><span className="dot" />{EMAIL_STATUS[e.status][0]}</span>{e.status === "rejected" && <div className="muted em-why">{e.reasonText}</div>}{e.status === "matched" && <div className="muted em-why">→ {e.setup}</div>}</td>
++                  <td><span className={"pill " + EMAIL_STATUS[e.status][1]}><span className="dot" />{EMAIL_STATUS[e.status][0]}</span>{e.status === "rejected" && emailResolved(e) && <div className="em-resolved">{emailResolved(e)}</div>}{e.status === "rejected" && <div className="muted em-why">{e.reasonText}</div>}{e.status === "matched" && <div className="muted em-why">→ {e.setup}</div>}</td>
+                 </tr>
+               ))}
+             </tbody>
+@@ -350,10 +390,15 @@
+                   <div><span>Response time</span><b>{c.latencyMs ? (c.latencyMs >= 1000 ? `${(c.latencyMs / 1000).toFixed(1)} s` : `${c.latencyMs} ms`) : "—"}</b></div>
+                 </div>
+                 <div className="cc-spark"><span className="muted">Last 7 pulls</span><Spark values={c.successRate} width={120} height={24} bad={c.status !== "healthy"} />{c.tokenExpires && <span className={"muted" + (new Date(c.tokenExpires) < Date.now() ? " neg" : "")}><KeyRound size={11} /> token {new Date(c.tokenExpires) < Date.now() ? "expired" : `expires ${new Date(c.tokenExpires).toLocaleDateString("en-IN")}`}</span>}</div>
+-                {c.error && <div className="note warn cc-err"><div>{c.error}</div></div>}
++                {c.job ? <div className="cc-run" data-testid={"job-" + c.id}><Loader2 size={13} className="spin" /> Running — started by {c.job.by} at {formatDateTime(c.job.at).split(", ")[1]}<i /></div>
++                  : c.lastRun ? <div className={"cc-last " + (c.lastRun.ok ? "ok" : "bad")}>{c.lastRun.ok ? <CheckCircle2 size={13} /> : <XCircle size={13} />} Last run: {c.lastRun.ok ? "Success" : "Failed"} at {formatDateTime(c.lastRun.at).split(", ")[1]} by {c.lastRun.by}{c.lastRun.msg ? ` — ${c.lastRun.msg}` : ""}</div> : null}
++                {c.itRequest && <div className="muted cc-file">Run requested from IT support by {c.itRequest.by} at {formatDateTime(c.itRequest.at).split(", ")[1]}</div>}
++                {c.error && <div className="note warn cc-err"><div>{plainError(c)}<details><summary>Technical detail</summary>{c.error}</details></div></div>}
++                {c.dismissed && <div className="em-resolved">Alert dismissed by {c.dismissed.by}: {c.dismissed.why}. The connection itself is unchanged.</div>}
+                 {f && <div className="muted cc-file">Today's file: <button className="link" onClick={() => { setTab("files"); setOpenId(f.id); }}>{statusText(f.status)}</button></div>}
+                 {canEdit && <div className="cc-actions">
+-                  <button className="btn btn-primary btn-sm" onClick={() => pullNow(c)} data-testid={"pull-" + c.id}><RefreshCw size={13} /> {c.type === "auto" ? "Run bot now" : "Pull now"}</button>
++                  <button className="btn btn-primary btn-sm" onClick={() => pullNow(c)} disabled={!!c.job} data-testid={"pull-" + c.id}>{c.job ? <><Loader2 size={13} className="spin" /> Running…</> : c.userTrigger === false ? <><Send size={13} /> Ask IT to run it</> : <><RefreshCw size={13} /> {c.type === "auto" ? "Run bot now" : "Pull now"}</>}</button>
++                  {["failing", "degraded"].includes(c.status) && !c.dismissed && <button className="btn btn-ghost btn-sm" onClick={() => setDismissing({ kind: "conn", item: c })} data-testid={"dismiss-" + c.id}>Dismiss alert</button>}
+                   {c.authIssue && (canSetup ? <button className="btn btn-outline btn-sm" onClick={() => renewToken(c)} data-testid={"renew-" + c.id}><KeyRound size={13} /> Renew token</button> : <span className="muted">Ask the setup maker to renew the token</span>)}
+                   {c.captcha && f && <button className="btn btn-outline btn-sm" onClick={() => setUploadFor({ id: f.id, corrected: f.status === "check_failed" })}><UploadCloud size={13} /> Download by hand & upload</button>}
+                   <button className="btn btn-ghost btn-sm" onClick={() => togglePause(c)}>{c.status === "paused" ? <><PlayCircle size={13} /> Resume</> : <><PauseCircle size={13} /> Pause</>}</button>
+@@ -367,25 +412,28 @@
+       {open && (
+         <Drawer id="file-drawer" title={`${label(open)} — ${open.fileName}`} subtitle={`${CHANNEL_LABEL[open.channel]} · expected by ${formatDateTime(open.expectedBy)}`} onClose={() => setOpenId(null)}>
+           {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
+-          {simple ? <div className="kv-line"><span>Status</span><span className={"pill " + (STATUS[open.status]?.cls || "")}><span className="dot" />{statusText(open.status)}</span></div> : <div className="fd-section">
++          {(() => { const u = uiStatus(open, connFor(open)); return <div className="kv-line"><span>Status</span><span><span className={"pill " + u.cls}><span className="dot" />{u.label}</span> <span className="muted">{u.remark}</span></span></div>; })()}
++          {!simple && <div className="fd-section">
+             <h4><Fingerprint size={14} /> Structure fingerprint</h4>
+             <div className="kv-line"><span>Fingerprint</span><code>{open.fingerprint || "—"}</code></div>
+-            <div className="kv-line"><span>Status</span><span className={"pill " + (STATUS[open.status]?.cls || "")}><span className="dot" />{statusText(open.status)}</span></div>
+           </div>}
+ 
+           <div className="fd-section">
+             <h4>{simple ? "Checks" : "Completeness checks"}</h4>
+             {open.receivedAt ? open.checks.map((c) => (
+-              <div key={c.key} className={"check-row " + (c.ok ? "ok" : "bad")}>
+-                {c.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
++              <div key={c.key} className={"check-row " + (c.info ? "info" : c.ok ? "ok" : "bad")}>
++                {c.info ? <Clock size={14} /> : c.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                 <div><div>{c.label}</div>{c.detail && <div className="muted">{c.detail}</div>}</div>
+               </div>
+-            )) : <div className="muted">Not received yet. Expected by {formatDateTime(open.expectedBy)}.</div>}
++            )) : <div className="muted">Not received yet (expected by {formatDateTime(open.expectedBy).split(", ")[1]}). This isn't counted as a failure: the bank may not have published it, or there may have been no transactions. A reminder went out 15 minutes after the expected time.</div>}
+           </div>
++          {open.receivedAt && <FileIdentity file={open} />}
++          {open.receivedAt && <TxnDupSection file={open} />}
+ 
+           {open.drift && open.status !== "loaded" && (
+             <div className="fd-section">
+               <h4><Wand2 size={14} /> {simple ? "The bank changed its file layout" : `Drift detected · ${open.drift.summary}`}</h4>
++              <div className="muted" style={{ marginBottom: 8 }}>Compared with the approved fingerprint: column names and order, added / missing columns, header row, and the data type of each column's values. Nothing changes until a checker approves.</div>
+               <div className="col-compare">
+                 <div><div className="muted">Approved structure</div>{open.drift.oldColumns.map((c) => <span key={c} className={"col-pill" + (open.drift.newColumns.includes(c) ? "" : " gone")}>{c}</span>)}</div>
+                 <div><div className="muted">Today's file</div>{open.drift.newColumns.map((c) => <span key={c} className={"col-pill" + (open.drift.oldColumns.includes(c) ? "" : " new")}>{c}</span>)}</div>
+@@ -405,9 +453,11 @@
+               <button className="btn btn-primary" onClick={() => getFile(open)} data-testid="fd-get-file">
+                 {open.channel === "manual" ? <><UploadCloud size={14} /> Upload statement</> : open.channel === "email" ? <><Mail size={14} /> Check mailbox now</> : <><RefreshCw size={14} /> {open.channel === "auto" ? "Run bot now" : "Pull now"}</>}
+               </button>
+-              {open.channel !== "manual" && <button className="btn btn-outline" onClick={() => setUploadFor({ id: open.id })}><UploadCloud size={14} /> Upload it by hand instead</button>}
++              {open.channel !== "manual" && canManual && <button className="btn btn-outline" onClick={() => setUploadFor({ id: open.id })}><UploadCloud size={14} /> Upload it by hand (exception)</button>}
+               <button className="btn btn-ghost" onClick={() => toast.success("Chaser email drafted to the bank's relationship manager")}><Send size={14} /> Chase bank RM</button>
++              <button className="btn btn-ghost" onClick={() => markNil(open)} data-testid="fd-nil">Bank confirmed: no transactions today</button>
+             </>}
++            {["drift", "drift_pending"].includes(open.status) && hasCap(perms, "mapping") && <button className="btn btn-outline" onClick={() => { const m = (rawCollections.bank_mapping || []).find((x) => x.type === "bank" && x.bankName === open.bankName && !x.standard); nav(m ? `/mapping/bank/${m.id}?proposal=${open.id}` : "/mapping"); }} data-testid="fd-review-mapping"><ArrowRight size={14} /> Review proposal in Column mapping</button>}
+             {open.status === "drift" && (canEdit && canSetup ? <button className="btn btn-primary" data-testid="fd-submit-mapping" onClick={() => run(open, { status: "drift_pending", owner: currentUser }, "Submit mapping change", open.drift.summary)}><Send size={14} /> Submit mapping change for approval</button> : <span className="muted">The setup maker confirms the new layout; a checker approves it.</span>)}
+             {open.status === "drift_pending" && canApprove && <button className="btn btn-success" data-testid="fd-approve-mapping" onClick={() => run(open, { status: "loaded", fingerprint: open.fingerprint + "·v2", checks: open.checks.map((c) => ({ ...c, ok: true })) }, "Approve mapping change", `${num(open.drift.rowsHeld)} held rows released`, "approve")}><CheckCircle2 size={14} /> Approve & release {num(open.drift.rowsHeld)} rows</button>}
+             {open.status === "drift_pending" && !canApprove && <span className="muted">Waiting for a checker to approve the mapping change.</span>}
+@@ -439,6 +489,7 @@
+           <div className="kv-line"><span>Attachment</span><span>{email.attachment.name ? `${email.attachment.name} · ${email.attachment.size}${email.attachment.passwordProtected ? " · password-protected" : ""}` : "none"}</span></div>
+           <div className="kv-line"><span>Result</span><span className={"pill " + EMAIL_STATUS[email.status][1]}><span className="dot" />{EMAIL_STATUS[email.status][0]}</span></div>
+           {email.setup && <div className="kv-line"><span>Setup</span><span>{email.setup}</span></div>}
++          {emailResolved(email) && <div className="em-resolved" style={{ marginTop: 10 }}>{emailResolved(email)}</div>}
+           {email.reasonText && <div className={"note " + (email.status === "rejected" ? "warn" : "")} style={{ marginTop: 12 }}><div><b>{email.status === "rejected" ? "Why it was rejected: " : ""}</b>{email.reasonText}</div></div>}
+           <div className="fd-section"><h4>How the mailbox decides</h4>
+             <ol className="ph-list small">
+@@ -455,10 +506,13 @@
+                 : <button className="btn btn-primary" onClick={() => assignEmail(email, email.suggestFileId)} data-testid="email-assign"><CheckCircle2 size={14} /> Use this attachment for {label(files.find((x) => x.id === email.suggestFileId))}</button>)}
+               {email.reason === "no_setup" && canSetup && <button className="btn btn-outline" onClick={() => nav("/bank-setup/new")}><ArrowRight size={14} /> Create an email setup for this sender</button>}
+               {email.reason === "zip_password" && <>
+-                <button className="btn btn-primary" onClick={() => retryZip(email)} data-testid="email-retry-zip"><RefreshCw size={14} /> Retry with vault password</button>
++                <button className="btn btn-primary" onClick={() => retryZip(email)} data-testid="email-retry-zip"><RefreshCw size={14} /> Open the attachment again with the vault password</button>
+                 {canSetup && !email.vaultUpdated && <button className="btn btn-outline" onClick={() => { updEmail(email, { vaultUpdated: true }, "Update ZIP password in vault", "New password stored; setup change goes through maker–checker"); toast.success("New ZIP password stored in the vault."); }}><KeyRound size={14} /> Update ZIP password</button>}
+               </>}
+               {["no_attachment", "bad_type"].includes(email.reason) && <button className="btn btn-outline" onClick={() => { updEmail(email, { chased: true }, "Ask bank to resend", `Reply sent to ${email.from}`); toast.success(`Reply drafted to ${email.from} asking for the statement as CSV/XLSX.`); }}><Send size={14} /> Ask the bank to resend</button>}
++              {!emailResolved(email) && email.suggestFileId && canManual && <button className="btn btn-outline" onClick={() => { setEmailId(null); setUploadFor({ id: email.suggestFileId }); }} data-testid="email-manual"><UploadCloud size={14} /> Upload the statement by hand instead</button>}
++              {!emailResolved(email) && <button className="btn btn-outline" onClick={() => { updEmail(email, { waiting: { by: currentUser, at: new Date().toISOString() } }, "Wait for corrected email", "Bank asked to resend"); toast("OK — it stays out of your focus list until a new email arrives."); }} data-testid="email-wait">Wait for a corrected email</button>}
++              {!email.dismissed && <button className="btn btn-ghost" onClick={() => setDismissing({ kind: "email", item: email })} data-testid="email-dismiss">Dismiss alert</button>}
+               <button className="btn btn-ghost" onClick={() => { updEmail(email, { status: "discarded" }, "Discard email", email.reasonText); toast("Email discarded (kept in the audit trail)."); setEmailId(null); }}><Trash2 size={14} /> Discard</button>
+             </div>
+           )}
+@@ -470,6 +524,9 @@
+           {manualWaiting.map((f) => <button key={f.id} className="un-row" onClick={() => { setPickUpload(false); setUploadFor({ id: f.id }); }}><UploadCloud size={14} /><span className="un-title">{label(f)}<small>{STATUS[f.status].label} · expected by {formatDateTime(f.expectedBy).split(", ")[1]}</small></span><ArrowRight size={13} /></button>)}
+         </Modal>
+       )}
++      {manualOpen && canManual && <ManualUploadModal files={files} folders={sftp} onClose={() => setManualOpen(false)} />}
++      {dismissing && <DismissModal what={dismissing.kind === "email" ? `email from ${dismissing.item.from}` : `${dismissing.item.bankName} ${CHANNEL_LABEL[dismissing.item.type]}`} onClose={() => setDismissing(null)}
++        onSubmit={(why) => { const d = { by: currentUser, at: new Date().toISOString(), why }; if (dismissing.kind === "email") updEmail(dismissing.item, { dismissed: d }, "Dismiss alert", why); else updConn(dismissing.item, { dismissed: d }, "Dismiss alert", why); toast("Alert dismissed and recorded. The underlying work is not marked complete."); setDismissing(null); }} />}
+       {uploadFile && <UploadModal file={uploadFile} corrected={uploadFor.corrected} onClose={() => setUploadFor(null)} />}
+       {reprocessFile && <ReprocessModal file={reprocessFile} onClose={() => setReprocessId(null)} onUpload={() => { setReprocessId(null); setUploadFor({ id: reprocessFile.id, corrected: true }); }} />}
+     </div>
+diff --color -ruN a/frontend/src/features/ingestion/ingestionBits.jsx frontend/src/features/ingestion/ingestionBits.jsx
+--- a/frontend/src/features/ingestion/ingestionBits.jsx	1970-01-01 05:30:00
++++ b/frontend/src/features/ingestion/ingestionBits.jsx	2026-10-22 11:39:59
+@@ -0,0 +1,220 @@
++import React from "react";
++import { useStore } from "@/state/store";
++import { Modal } from "@/components/Modal";
++import { formatDateTime, timeAgo, uid } from "@/lib/format";
++import { num } from "@/features/ops/ui";
++import { CheckCircle2, XCircle, Folder, FolderOpen, Fingerprint, Layers, UploadCloud, AlertTriangle, Loader2, Clock } from "lucide-react";
++import { toast } from "sonner";
++
++const time = (iso) => formatDateTime(iso).split(", ")[1];
++
++/**
++ * The three user-facing statuses (Pending / Success / Failed) plus "Not received yet", which is tracked
++ * separately: a statement that hasn't arrived is not a failed attempt.
++ */
++export function uiStatus(f, conn) {
++  const failedConn = conn && conn.status === "failing";
++  switch (f.status) {
++    case "loaded": return { key: "success", label: "Success", cls: "pill-active", remark: f.balanceMode === "computed" ? "Loaded. Closing balance computed (bank file has none), so not bank-verified." : f.txnDup?.overlap ? `Loaded. ${f.txnDup.overlap} rows already loaded earlier were skipped.` : f.corrected ? "Loaded after a corrected file or reprocess." : "Loaded. All checks passed." };
++    case "nil": return { key: "success", label: "Success", cls: "pill-active", remark: `No transactions today — confirmed by ${f.nilBy || "the bank"}.` };
++    case "retrying": return { key: "pending", label: "Pending", cls: "pill-pending", remark: "Fresh copy fetched — reprocess to load it." };
++    case "drift_pending": return { key: "pending", label: "Pending", cls: "pill-pending", remark: "New layout waiting for a checker. Rows are held, not rejected." };
++    case "drift": return { key: "failed", label: "Failed", cls: "pill-rejected", remark: `Format mismatch: the bank changed its layout (${f.drift?.summary || "columns changed"}).` };
++    case "unknown": return { key: "failed", label: "Failed", cls: "pill-rejected", remark: "Unknown format: no approved layout matches this file." };
++    case "check_failed": return { key: "failed", label: "Failed", cls: "pill-rejected", remark: "Balance mismatch: the running balance doesn't add up." };
++    case "duplicate": return { key: "failed", label: "Failed", cls: "pill-rejected", remark: "Duplicate file: same content as a file already loaded at 8:52 AM." };
++    case "discarded": return { key: "failed", label: "Failed", cls: "pill-inactive", remark: "Duplicate file — discarded (resolved, kept in history)." };
++    case "late": case "missing":
++      return { key: "not_received", label: "Not received yet", cls: "pill-draft", remark: failedConn ? `Connectivity failure: ${conn.error}` : "Not here yet. The bank may not have published it, or there were no transactions. A reminder has gone out." };
++    default: return { key: "pending", label: "Pending", cls: "pill-pending", remark: "Retrieval or checks in progress." };
++  }
++}
++
++/** Expected vs received, and the three statuses, as one clickable strip. */
++export function StatusStrip({ files, conns, active, onPick }) {
++  const s = files.map((f) => uiStatus(f, conns.find((c) => c.fileId === f.id)).key);
++  const n = (k) => s.filter((x) => x === k).length;
++  const cells = [
++    ["all", "Expected today", files.length, ""], ["received", "Received", files.length - n("not_received"), ""],
++    ["not_received", "Not received yet", n("not_received"), "amber"], ["success", "Success", n("success"), "green"],
++    ["pending", "Pending", n("pending"), "blue"], ["failed", "Failed", n("failed"), "red"],
++  ];
++  return (
++    <div className="st-strip" data-testid="status-strip">
++      {cells.map(([k, l, v, t]) => (
++        <button key={k} className={"st-cell tone-" + t + (active === k ? " on" : "")} onClick={() => onPick(k)} data-testid={"st-" + k}><span>{l}</span><b className="fx-num">{v}</b></button>
++      ))}
++    </div>
++  );
++}
++
++/** Level 1: file-level duplicate detection on the content hash. */
++export function FileIdentity({ file }) {
++  return (
++    <div className="fd-section" data-testid="file-identity">
++      <h4><Fingerprint size={14} /> File identity (duplicate check, level 1)</h4>
++      <div className="kv-line"><span>SHA-256 of content</span><code className="hash">{file.hash ? file.hash.slice(0, 32) + "…" : "—"}</code></div>
++      {file.status === "duplicate" || file.status === "discarded" ? (
++        <div className="note warn"><div>Identical content was first ingested at <b>8:52 AM</b> by <b>email</b> as <code>KKBK_statement_0852.csv</code> and loaded successfully. Only the file name differs, so nothing was loaded twice.</div></div>
++      ) : <div className="muted">Same content under any file name is caught here, before anything is read.</div>}
++    </div>
++  );
++}
++
++/** Level 2: transaction-level duplicate detection on a composite business key. */
++export function TxnDupSection({ file }) {
++  const d = file.txnDup;
++  if (!d) return null;
++  const fresh = d.rowsRead - d.overlap - d.repeatsHeld;
++  return (
++    <div className="fd-section" data-testid="txn-dup">
++      <h4><Layers size={14} /> Transaction duplicate check (level 2)</h4>
++      <div className="muted" style={{ marginBottom: 6 }}>Key: bank account + transaction reference (UTR / cheque no.) + value date + amount + credit/debit. Tested on this account's last 90 days: no two different transactions shared a key.</div>
++      <table className="grid compact">
++        <tbody>
++          <tr><td>Rows read</td><td className="tnum r">{num(d.rowsRead)}</td></tr>
++          <tr><td>New rows loaded</td><td className="tnum r">{num(fresh)}</td></tr>
++          <tr><td>Already loaded earlier — skipped (statements overlapped)</td><td className="tnum r">{d.overlap}</td></tr>
++          <tr><td>Reversals — kept; they cancel an earlier row and both reconcile</td><td className="tnum r">{d.reversals}</td></tr>
++          <tr><td>Same key twice in this file — held for a person to confirm (e.g. two identical SIP debits)</td><td className="tnum r">{d.repeatsHeld}</td></tr>
++        </tbody>
++      </table>
++      <div className="muted" style={{ marginTop: 6 }}>Enforced by a unique index in the database, so a retry or two uploads at the same time can't insert a row twice.</div>
++    </div>
++  );
++}
++
++/** Dismiss a non-actionable alert. Records who, when and why; never marks the work as done. */
++export function DismissModal({ what, onSubmit, onClose }) {
++  const [why, setWhy] = React.useState("");
++  const [note, setNote] = React.useState("");
++  const reasons = ["Resolved through another channel", "Bank confirmed no statement today", "Bank maintenance window — nothing to do", "Duplicate alert", "Other"];
++  return (
++    <Modal id="dismiss-modal" title={`Dismiss alert: ${what}`} onClose={onClose}
++      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!why || (why === "Other" && note.trim().length < 10)} onClick={() => onSubmit(why + (note.trim() ? ` — ${note.trim()}` : ""))} data-testid="dismiss-submit">Dismiss alert</button></>}>
++      <div className="note warn" style={{ marginTop: 0 }}><AlertTriangle size={14} /><div>Dismissing only takes this alert out of focus lists. It does <b>not</b> mark the statement as received or the reconciliation as complete.</div></div>
++      <div className="field" style={{ marginTop: 12 }}><label className="field-label">Why?</label>
++        <select className="select" value={why} onChange={(e) => setWhy(e.target.value)} data-testid="dismiss-reason"><option value="">Pick a reason…</option>{reasons.map((r) => <option key={r}>{r}</option>)}</select></div>
++      <div className="field" style={{ marginTop: 10 }}><label className="field-label">Note {why === "Other" ? "(required, 10+ characters)" : "(optional)"}</label><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} /></div>
++    </Modal>
++  );
++}
++
++/** SFTP: one folder per bank, a sub-folder per account; files are discovered, validated and processed automatically. */
++export function SftpTab({ folders, files, canEdit, onOpenFile }) {
++  const { act, currentUser } = useStore();
++  const STATE = { completed: ["Completed", "ok"], in_progress: ["In progress", "prog"], error: ["Error", "bad"], waiting: ["Nothing yet", "wait"] };
++  const scan = (fo) => {
++    if (fo.scanning) { toast(`A scan of ${fo.root} is already running (started by ${fo.scanning.by}). Showing its progress.`); return; }
++    act({ screen: "ingestion", cap: "edit", kind: "sftp", id: fo.id, patch: { scanning: { by: currentUser, at: new Date().toISOString() } }, audit: { entityLabel: `SFTP ${fo.root}`, action: "Scan SFTP folder now" } });
++    setTimeout(() => act({ screen: "ingestion", cap: "edit", kind: "sftp", id: fo.id, patch: { scanning: null, lastScan: new Date().toISOString() } }), 2500);
++  };
++  return (
++    <div className="sftp-grid" data-testid="sftp-tab">
++      <div className="note" style={{ gridColumn: "1 / -1" }}><Folder size={14} /><div>SFTP is the main channel: banks drop statements into <code>/inbound/&lt;bank&gt;/&lt;account&gt;/</code>. Every 10 minutes the system picks up new files, checks them and loads them. Nobody has to upload them by hand.</div></div>
++      {folders.map((f0) => ({ ...f0, accounts: f0.accounts.filter((a) => files.some((x) => x.id === a.fileId)) })).filter((fo) => fo.accounts.length).map((fo) => {
++        const counts = Object.fromEntries(Object.keys(STATE).map((k) => [k, fo.accounts.filter((a) => a.state === k).length]));
++        return (
++          <div key={fo.id} className="card sftp-card" data-testid={"sftp-" + fo.id}>
++            <div className="cc-head"><span className="cc-ico"><FolderOpen size={16} /></span><div><b>{fo.bankName}</b><span className="muted"><code>{fo.root}</code> · scanned {timeAgo(fo.lastScan)} · every {fo.every} min</span></div></div>
++            <div className="sftp-counts">{Object.entries(STATE).map(([k, [l, c]]) => <span key={k} className={"sc " + c}>{l} <b>{counts[k]}</b></span>)}</div>
++            <ul className="sftp-list">
++              {fo.accounts.map((a) => {
++                const f = files.find((x) => x.id === a.fileId);
++                return <li key={a.fileId} className={STATE[a.state][1]} onClick={() => onOpenFile(a.fileId)}><Folder size={13} /><code>{a.folder}</code><span>{f ? f.fileName : "—"}</span><em>{STATE[a.state][0]}</em></li>;
++              })}
++            </ul>
++            {canEdit && <div className="cc-actions">
++              <button className="btn btn-outline btn-sm" onClick={() => scan(fo)} data-testid={"scan-" + fo.id}>{fo.scanning ? <><Loader2 size={13} className="spin" /> Scanning… (started by {fo.scanning.by})</> : <><Clock size={13} /> Scan now</>}</button>
++            </div>}
++          </div>
++        );
++      })}
++    </div>
++  );
++}
++
++const MANUAL_REASONS = ["SFTP outage", "Bank API / portal outage", "Statement missing from the normal channel", "Urgent processing requested", "Other approved exception"];
++
++/**
++ * Manual upload as a restricted exception: a reason, the accounts it covers, and the same duplicate,
++ * completeness and balance checks as every other channel. Several accounts in one go.
++ */
++export function ManualUploadModal({ files, folders, preselect, onClose }) {
++  const { act, upsert, currentUser } = useStore();
++  const [reason, setReason] = React.useState("");
++  const [note, setNote] = React.useState("");
++  const [picked, setPicked] = React.useState(preselect ? [preselect] : files.filter((f) => ["late", "missing"].includes(f.status)).map((f) => f.id));
++  const [result, setResult] = React.useState(null);
++  const label = (f) => `${f.bankName} ·${f.accountNumber.slice(-4)}`;
++  const sftpHealthy = (f) => f.channel === "sftp" && folders.some((fo) => fo.bankName === f.bankName && !fo.accounts.some((a) => a.state === "error"));
++  const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
++
++  const run = () => {
++    const out = picked.map((id) => {
++      const f = files.find((x) => x.id === id);
++      const dup = f.status === "loaded";
++      const checks = [
++        { label: "Not already loaded (SHA-256 + transaction key)", ok: !dup },
++        { label: "Statement date is today and complete (no date gap)", ok: true },
++        { label: f.balanceMode === "computed" ? "Closing balance computed (bank gives none) — not bank-verified" : "Opening = yesterday's closing; closing balance adds up", ok: true },
++      ];
++      return { f, ok: checks.every((c) => c.ok), checks };
++    });
++    out.filter((o) => o.ok).forEach(({ f }) => act({
++      screen: "manual_upload", cap: "edit", kind: "files", id: f.id,
++      patch: (x) => ({ ...x, status: "loaded", receivedAt: new Date().toISOString(), rows: x.rows || 900, credits: x.credits || 720, creditAmount: x.creditAmount || 720 * 23000, hash: x.hash || uid("h") + "e3b0c44298fc1c149afbf4c8996fb924", checks: x.checks.map((k) => ({ ...k, ok: true, detail: k.info ? k.detail : null })), uploadedBy: currentUser, manualReason: reason, attempts: (x.attempts || 0) + 1,
++        history: [...(x.history || []), { at: new Date().toISOString(), by: currentUser, step: "Manual upload (exception)", text: `Reason: ${reason}${note ? " — " + note : ""}` }, { at: new Date().toISOString(), by: "System", step: "Loaded", text: "Checks passed" }] }),
++      audit: { entityLabel: label(f), action: "Manual upload (exception)", to: "Loaded", comment: reason },
++    }));
++    upsert("manual_uploads", { id: uid("mu"), at: new Date().toISOString(), by: currentUser, reason: reason + (note ? ` — ${note}` : ""), source: "Browser upload", accounts: out.map((o) => label(o.f)), outcome: out.map((o) => `${label(o.f)}: ${o.ok ? "loaded" : "rejected (already loaded)"}`).join("; ") });
++    setResult(out);
++  };
++
++  return (
++    <Modal id="manual-upload" size="lg" title="Manual upload — exception only" onClose={onClose}
++      footer={result ? <button className="btn btn-primary" onClick={onClose}>Done</button> : <>
++        <span className="muted" style={{ marginRight: "auto" }}>Recorded with your name, the time, the reason and the outcome.</span>
++        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
++        <button className="btn btn-primary" disabled={!reason || !picked.length || (reason.startsWith("Other") && note.trim().length < 10)} onClick={run} data-testid="manual-run"><UploadCloud size={14} /> Upload {picked.length} statement{picked.length !== 1 ? "s" : ""}</button>
++      </>}>
++      {!result ? <>
++        <div className="note warn" style={{ marginTop: 0 }}><AlertTriangle size={14} /><div>Use this only when the normal channel can't deliver: an outage, a missing file or an urgent request. Statements that arrive by SFTP load by themselves.</div></div>
++        <div className="form-grid" style={{ marginTop: 12 }}>
++          <div className="field"><label className="field-label">Reason (required)</label><select className="select" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="manual-reason"><option value="">Pick a reason…</option>{MANUAL_REASONS.map((r) => <option key={r}>{r}</option>)}</select></div>
++          <div className="field"><label className="field-label">Note {reason.startsWith("Other") ? "(required)" : "(optional)"}</label><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. SFTP server down since 9:10, ticket INC-4471" /></div>
++        </div>
++        <div className="field" style={{ marginTop: 12 }}><label className="field-label">Which accounts? Tick every statement you're uploading.</label>
++          <div className="mu-list">
++            {files.map((f) => (
++              <label key={f.id} className={"mu-row" + (picked.includes(f.id) ? " on" : "")}>
++                <input type="checkbox" className="cb" checked={picked.includes(f.id)} onChange={() => toggle(f.id)} data-testid={"mu-" + f.id} />
++                <b>{label(f)}</b><span className="muted">{f.channel === "sftp" ? "SFTP" : f.channel}</span>
++                {["late", "missing"].includes(f.status) ? <span className="pill pill-draft"><span className="dot" />Not received</span> : f.status === "loaded" ? <span className="pill pill-active"><span className="dot" />Already loaded</span> : null}
++                {picked.includes(f.id) && sftpHealthy(f) && f.status !== "loaded" && <em className="mu-warn">SFTP folder is healthy — it will probably arrive by itself</em>}
++              </label>
++            ))}
++          </div>
++        </div>
++      </> : (
++        <div data-testid="manual-result">
++          {result.map((o) => (
++            <div key={o.f.id} className={"check-row " + (o.ok ? "ok" : "bad")}>{o.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}<div><b>{label(o.f)}</b> — {o.ok ? "loaded" : "not loaded: this statement is already loaded (duplicate)"}<div className="muted">{o.checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.label}`).join(" · ")}</div></div></div>
++          ))}
++        </div>
++      )}
++    </Modal>
++  );
++}
++
++/** Log of every manual upload: who, when, why, which accounts, outcome. */
++export function ManualLog({ entries }) {
++  if (!entries.length) return null;
++  return (
++    <div className="card" style={{ marginTop: 16 }} data-testid="manual-log">
++      <div className="card-head"><h3>Manual uploads today</h3><span className="muted">Exceptions are logged for audit</span></div>
++      <table className="grid compact"><thead><tr><th>When</th><th>By</th><th>Reason</th><th>Accounts</th><th>Outcome</th></tr></thead>
++        <tbody>{entries.slice().reverse().map((e) => <tr key={e.id}><td className="tnum">{time(e.at)}</td><td>{e.by}</td><td>{e.reason}</td><td>{e.accounts.join(", ")}</td><td className="muted">{e.outcome}</td></tr>)}</tbody></table>
++    </div>
++  );
++}
+diff --color -ruN a/frontend/src/features/mapping/MappingEditor.js frontend/src/features/mapping/MappingEditor.js
+--- a/frontend/src/features/mapping/MappingEditor.js	2026-10-22 11:17:31
++++ b/frontend/src/features/mapping/MappingEditor.js	2026-10-22 11:37:55
+@@ -1,5 +1,5 @@
+ import React from "react";
+-import { useNavigate, useParams } from "react-router-dom";
++import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+ import { ArrowLeft, Check, AlertTriangle, RotateCcw, Save, Send, Sparkles, FileText, CheckCircle2, Clock, Ban, KeyRound, Scale, ShieldCheck } from "lucide-react";
+ import { useStore } from "@/state/store";
+ import StepIndicator from "@/components/StepIndicator";
+@@ -21,8 +21,12 @@
+   const { get, saveDraft, submit, collections, act, currentUser } = useStore();
+ 
+   const rec = get("bank_mapping", id);
++  const [sp] = useSearchParams();
++  // A format change detected in Bank files arrives here as a proposal for review — never applied automatically.
++  const proposalFile = sp.get("proposal") ? (collections.files || []).find((f) => f.id === sp.get("proposal")) : null;
++  const proposal = proposalFile?.drift;
+   const [mapping, setMapping] = React.useState(() => rec ? { ...JSON.parse(JSON.stringify(rec)), baseline: ["active", "inactive"].includes(rec.status) ? JSON.parse(JSON.stringify(rec)) : rec.baseline || null } : null);
+-  const [step, setStep] = React.useState(0);
++  const [step, setStep] = React.useState(() => (new URLSearchParams(window.location.search).get("proposal") ? 2 : 0));
+   const [headerConfirmed, setHeaderConfirmed] = React.useState(rec?.headerConfirmed || false);
+   const [dateFormat, setDateFormat] = React.useState(rec?.dateFormat || "DD/MM/YYYY");
+   const [dialog, setDialog] = React.useState(null);
+@@ -47,7 +51,7 @@
+   const meta = detectFor(sampleFile);
+   const preview = buildPreview(sampleFile);
+   const table = sampleTable(sampleFile);
+-  const columns = preview?.rows[preview.headerIdx]?.filter((c) => c && c.trim()) || [];
++  const columns = proposal ? proposal.newColumns : preview?.rows[preview.headerIdx]?.filter((c) => c && c.trim()) || [];
+   const fields = mapping.fields;
+   const isMapped = (sf) => fields.some((f) => f.systemField === sf && f.status === "mapped");
+   const amountCombined = isMapped("INSTRM_AMOUNT");
+@@ -201,6 +205,11 @@
+ 
+           {step === 2 && (<>
+             <div className="step-title">Map Columns</div>
++            {proposal && <ProposalCard file={proposalFile} proposal={proposal} isView={isView} onApply={() => {
++              const byField = Object.fromEntries(proposal.changes.filter((c) => proposal.newColumns.includes(c.proposed)).map((c) => [c.field, c.proposed]));
++              setMapping((m) => ({ ...m, fields: m.fields.map((f) => byField[f.systemField] ? { ...f, mappedColumn: byField[f.systemField], source: "pattern", status: "mapped", note: null } : f), narrationSplit: m.narrationSplit || Object.keys(byField).some((k) => k.startsWith("EXTRACT_")) }));
++              toast.success("Proposal filled in. Check it, then submit — a checker must approve before it's used.");
++            }} />}
+             {actionBar}
+             {mapping.baseline && <ChangesCard base={{ ...mapping.baseline, kind: "bank_mapping" }} cur={{ ...mapping, kind: "bank_mapping" }} compact />}
+             <div className="summary-banner" data-testid="map-summary-banner"><Sparkles size={16} /> {prevCount} from the last approved mapping, {headerCount} by header name, {pendingCount} pending.
+@@ -314,6 +323,18 @@
+             );
+           })}</tbody></table>
+       )}
++    </div>
++  );
++}
++
++/** Format-change proposal from Bank files: old vs proposed, why, and confidence. Pre-fills the form; approval still required. */
++function ProposalCard({ file, proposal, onApply, isView }) {
++  return (
++    <div className="proposal-card" data-testid="proposal-card">
++      <div className="pc-head"><AlertTriangle size={15} /> <b>{file.bankName} changed its file layout</b> <span className="muted">— {proposal.summary} · {proposal.rowsHeld.toLocaleString("en-IN")} rows held in Bank files</span></div>
++      <table className="grid compact"><thead><tr><th>Field</th><th>Approved layout</th><th>Proposed</th><th>Confidence</th></tr></thead>
++        <tbody>{proposal.changes.map((c) => <tr key={c.field}><td className="tnum">{c.field}</td><td>{c.old || <span className="muted">not mapped</span>}</td><td><b>{c.proposed}</b><div className="muted">{c.reason}</div></td><td className="tnum">{Math.round(c.confidence * 100)}%</td></tr>)}</tbody></table>
++      <div className="pc-foot"><span className="muted">The system suggests; it never switches the mapping on by itself. Submit, and a checker approves before held rows load.</span>{!isView && <button className="btn btn-primary btn-sm" onClick={onApply} data-testid="apply-proposal">Pre-fill the proposal</button>}</div>
+     </div>
+   );
+ }
+diff --color -ruN a/frontend/src/features/match/MatchWorkbench.jsx frontend/src/features/match/MatchWorkbench.jsx
+--- a/frontend/src/features/match/MatchWorkbench.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/match/MatchWorkbench.jsx	2026-10-22 11:39:14
+@@ -8,7 +8,8 @@
+ import { ArrowRight, Combine, Sparkles, Check, X, HelpCircle, CheckCircle2, XCircle, Zap, Search } from "lucide-react";
+ import { toast } from "sonner";
+ import { JourneyBar } from "@/features/today/Cycle";
+-import { useMatchActions, FAST_TRACK } from "./matchActions";
++import { useMatchActions, FAST_TRACK, isAmbiguous } from "./matchActions";
++import { bizGap, calGap, SIP_ALLOWANCE } from "@/lib/bizdays";
+ 
+ 
+ const tokens = (s) => new Set(String(s).toUpperCase().replace(/[^A-Z ]/g, " ").split(/\s+/).filter((t) => t.length > 1));
+@@ -21,7 +22,6 @@
+ 
+ export default function MatchWorkbench() {
+   const { collections, perms, act, currentUser, simple } = useStore();
+-  const [byHand, setByHand] = React.useState(false);
+   const [selSug, setSelSug] = React.useState(null);
+   const liveSugg = (collections.suggestions || []).filter((x) => !x.decided);
+   const curSug = liveSugg.some((x) => x.id === selSug) ? selSug : liveSugg[0]?.id;
+@@ -57,15 +57,17 @@
+   const explain = (c) => {
+     const cands = purchases.filter((p) => p.status === "open").map((p) => {
+       const sim = nameSim(c.remitter, p.investor);
+-      const days = Math.abs(new Date(c.valueDate) - new Date(p.txnDate)) / 86400000;
++      const days = bizGap(c.valueDate, p.txnDate); const cal = calGap(c.valueDate, p.txnDate);
++      const window = /SIP/i.test(p.scheme + p.channel + c.narration) ? 2 + SIP_ALLOWANCE : 2;
+       return { p, sim, checks: [
+         { ok: p.amount === c.amount, text: p.amount === c.amount ? "Amount equal" : `Amount differs by ${inr(Math.abs(p.amount - c.amount))}` },
+         { ok: Boolean(p.utr) && c.narration.includes(p.utr), text: p.utr ? (c.narration.includes(p.utr) ? "UTR found in narration" : `UTR ${p.utr} not in narration`) : "Purchase has no UTR" },
+-        { ok: days <= 2, text: simple ? (days <= 2 ? "Dates are close" : `Dates are ${days.toFixed(0)} days apart`) : `Date gap ${days.toFixed(0)} day(s) (window ±2)` },
++        { ok: days <= window, text: simple ? (days <= window ? "Dates are close (weekends and holidays don't count)" : `Dates are ${days} working days apart`) : `Date gap ${days} business day(s)${cal !== days ? ` (${cal} calendar — weekend/holiday)` : ""} · window ±${window}${window > 2 ? " incl. SIP settlement delay" : ""}` },
++        ...(c.chequeNo ? [{ ok: p.chequeNo === c.chequeNo && p.drawee === c.drawee && p.drawerAcct === c.drawerAcct, text: p.chequeNo !== c.chequeNo ? "Different cheque number" : p.drawee === c.drawee && p.drawerAcct === c.drawerAcct ? `Cheque ${c.chequeNo}, drawn on ${c.drawee} ${c.drawerAcct} — same cheque` : `Same cheque number ${c.chequeNo}, but drawn on ${p.drawee} ${p.drawerAcct}, not ${c.drawee} ${c.drawerAcct} — cheque numbers repeat across banks` }] : []),
+         { ok: sim >= 0.85, text: simple ? (sim >= 0.85 ? "Names match" : "Names don't match") : `Name similarity ${sim.toFixed(2)} (needs ≥ 0.85)` },
+         { ok: p.regBank === c.remitterIfsc, text: p.regBank === c.remitterIfsc ? "Remitter IFSC = registered bank" : "Remitter IFSC ≠ registered bank" },
+       ] };
+-    }).sort((a, b) => b.checks.filter((x) => x.ok).length - a.checks.filter((x) => x.ok).length || Math.abs(a.p.amount - c.amount) - Math.abs(b.p.amount - c.amount)).slice(0, 3);
++    }).sort((a, b) => b.checks.filter((x) => x.ok).length - a.checks.filter((x) => x.ok).length || Math.abs(a.p.amount - c.amount) - Math.abs(b.p.amount - c.amount)).slice(0, 4);
+     setWhy({ c, cands });
+   };
+ 
+@@ -79,8 +81,7 @@
+           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Combine size={24} /> {simple ? "Match payments" : "Match Workbench"}</h1>
+           <p>{simple ? "The system found these likely matches. Check each one and say yes or no." : "What rules couldn't match with certainty: AI suggestions with reasons, N:M selection with a live difference, and an explainer for anything left over."}</p>
+         </div>
+-        {simple ? (canEdit && <div className="actions"><button className="btn btn-outline" onClick={() => setByHand((v) => !v)} data-testid="toggle-by-hand">{byHand ? "Hide match by hand" : "Match by hand"}</button></div>)
+-          : <div className="actions"><PhaseBadge phase="P2">split-pane matching · P3: AI suggestions</PhaseBadge></div>}
++        {!simple && <div className="actions"><PhaseBadge phase="P2">split-pane matching · P3: AI suggestions</PhaseBadge></div>}
+       </div>
+       {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
+ 
+@@ -104,6 +105,37 @@
+         </div>
+       )}
+ 
++      <div className="mw-section-head" data-testid="manual-first"><h3>Match by hand</h3><span className="muted">The main way to match. Tick money received on the left and purchases on the right — any number on each side — until the amounts agree.</span></div>
++      <div className="split-pane">
++        <div className="card">
++          <div className="card-head"><h3>{simple ? "Money received (not matched yet)" : "Open bank credits"}</h3><span className="muted">{openC.length}</span>
++            <div className="search" style={{ marginLeft: "auto", maxWidth: 220 }}><Search /><input className="input" placeholder="Filter both sides…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
++          <div className="pane-list">
++            {openC.map((c) => (
++              <label key={c.id} className={"pane-row" + (selC.includes(c.id) ? " on" : "")} data-testid={"credit-" + c.id}>
++                <input type="checkbox" className="cb" disabled={!canEdit} checked={selC.includes(c.id)} onChange={() => setSelC((s) => s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id])} />
++                <div className="pr-main"><b className="tnum">{inr(c.amount)}</b><span className="muted">{c.bankName} · {formatDate(c.valueDate)}</span><div className="pr-narr tnum">{c.narration}</div></div>
++                <button className="row-icon-btn" title={simple ? "Why no match?" : "Why not matched?"} onClick={(e) => { e.preventDefault(); explain(c); }} data-testid={"why-" + c.id}><HelpCircle size={15} /></button>
++              </label>
++            ))}
++            {openC.length === 0 && <div className="muted card-pad">No open credits.</div>}
++          </div>
++        </div>
++        <div className="card">
++          <div className="card-head"><h3>{simple ? "Purchases waiting for money" : "Open purchases"}</h3><span className="muted">{openP.length}</span></div>
++          <div className="pane-list">
++            {openP.map((p) => (
++              <label key={p.id} className={"pane-row" + (selP.includes(p.id) ? " on" : "")} data-testid={"purchase-" + p.id}>
++                <input type="checkbox" className="cb" disabled={!canEdit} checked={selP.includes(p.id)} onChange={() => setSelP((s) => s.includes(p.id) ? s.filter((x) => x !== p.id) : [...s, p.id])} />
++                <div className="pr-main"><b className="tnum">{inr(p.amount)}</b><span className="muted">{p.appNo} · {p.channel} · {formatDate(p.txnDate)}</span><div className="pr-narr">{p.investor} · {p.pan} · {p.scheme}</div></div>
++              </label>
++            ))}
++            {openP.length === 0 && <div className="muted card-pad">No open purchases.</div>}
++          </div>
++        </div>
++      </div>
++
++      {suggestions.length > 0 && <div className="mw-section-head" style={{ marginTop: 20 }}><h3>System suggestions — review each one</h3><span className="muted">Found by the system, not confirmed. Anything based only on amount and name always goes to a checker.</span></div>}
+       {suggestions.length > 0 && (
+         <div className="sugg-focus" data-testid="ai-suggestions">
+           {suggestions.filter((s) => s.id === curSug).map((s) => {
+@@ -113,13 +145,15 @@
+               <div key={s.id} className="card sugg-card focus" data-testid={"sugg-" + s.id}>
+                 <div className="sf-pos">{suggestions.findIndex((x) => x.id === s.id) + 1} <em>of {suggestions.length}</em></div>
+                 <div className="sc-head"><Sparkles size={14} />{simple ? <b className="sc-q">Is this a match?</b> : <span className="strat">{s.type}</span>}<Conf value={s.confidence} auto={FAST_TRACK.conf} />
+-                  {s.confidence >= FAST_TRACK.conf && cs.reduce((a, c) => a + c.amount, 0) <= FAST_TRACK.amount && <span className="fast"><Zap size={11} /> {simple ? "no approval needed" : "fast-track"}</span>}</div>
++                  {!isAmbiguous(s) && s.confidence >= FAST_TRACK.conf && cs.reduce((a, c) => a + c.amount, 0) <= FAST_TRACK.amount && <span className="fast"><Zap size={11} /> {simple ? "no approval needed" : "fast-track"}</span>}</div>
+                 {simple && <div className="sc-labels"><span>Money received</span><span>Purchase</span></div>}
+                 <div className="sc-sides">
+                   <div>{cs.map((c) => <div key={c.id}><b>{inr(c.amount)}</b> <span className="muted">{c.ref} · {c.remitter}</span></div>)}</div>
+                   <div>{ps.map((p) => <div key={p.id}><b>{inr(p.amount)}</b> <span className="muted">{p.appNo} · {p.investor}</span></div>)}</div>
+                 </div>
+                 <ul className="reasons">{s.reasons.map((r, i) => <li key={i} className={r.ok ? "ok" : "bad"}>{r.ok ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{txt(r.text)}</li>)}</ul>
++                {isAmbiguous(s) && <div className="amb-note" data-testid={"ambiguous-" + s.id}>Based on amount and name only — nothing like a UTR or PAN ties them together. Even if you say yes, a checker must confirm it.</div>}
++                <Similar cs={cs} ps={ps} purchases={purchases} />
+                 {canEdit && <div className="sc-actions">
+                   <button className={"btn btn-sm " + (simple ? "btn-outline" : "btn-ghost")} onClick={() => dismissSuggestion(s)}>{simple ? "Not a match" : "Dismiss"}</button>
+                   <button className="btn btn-primary btn-sm" onClick={() => acceptSuggestion(s)} data-testid={"accept-" + s.id}><Check size={13} /> {simple ? "Yes, match" : "Accept"}</button>
+@@ -144,37 +178,9 @@
+       )}
+ 
+       {simple && suggestions.length === 0 && <div className="card card-pad mw-empty" style={{ marginBottom: 16 }}><h2>No suggested matches right now</h2><p className="muted">New ones appear here automatically.</p></div>}
+-      {(!simple || byHand) && <div className="split-pane">
+-        <div className="card">
+-          <div className="card-head"><h3>{simple ? "Money received (not matched yet)" : "Open bank credits"}</h3><span className="muted">{openC.length}</span>
+-            <div className="search" style={{ marginLeft: "auto", maxWidth: 220 }}><Search /><input className="input" placeholder="Filter both sides…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
+-          <div className="pane-list">
+-            {openC.map((c) => (
+-              <label key={c.id} className={"pane-row" + (selC.includes(c.id) ? " on" : "")} data-testid={"credit-" + c.id}>
+-                <input type="checkbox" className="cb" disabled={!canEdit} checked={selC.includes(c.id)} onChange={() => setSelC((s) => s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id])} />
+-                <div className="pr-main"><b className="tnum">{inr(c.amount)}</b><span className="muted">{c.bankName} · {formatDate(c.valueDate)}</span><div className="pr-narr tnum">{c.narration}</div></div>
+-                <button className="row-icon-btn" title={simple ? "Why no match?" : "Why not matched?"} onClick={(e) => { e.preventDefault(); explain(c); }} data-testid={"why-" + c.id}><HelpCircle size={15} /></button>
+-              </label>
+-            ))}
+-            {openC.length === 0 && <div className="muted card-pad">No open credits.</div>}
+-          </div>
+-        </div>
+-        <div className="card">
+-          <div className="card-head"><h3>{simple ? "Purchases waiting for money" : "Open purchases"}</h3><span className="muted">{openP.length}</span></div>
+-          <div className="pane-list">
+-            {openP.map((p) => (
+-              <label key={p.id} className={"pane-row" + (selP.includes(p.id) ? " on" : "")} data-testid={"purchase-" + p.id}>
+-                <input type="checkbox" className="cb" disabled={!canEdit} checked={selP.includes(p.id)} onChange={() => setSelP((s) => s.includes(p.id) ? s.filter((x) => x !== p.id) : [...s, p.id])} />
+-                <div className="pr-main"><b className="tnum">{inr(p.amount)}</b><span className="muted">{p.appNo} · {p.channel} · {formatDate(p.txnDate)}</span><div className="pr-narr">{p.investor} · {p.pan} · {p.scheme}</div></div>
+-              </label>
+-            ))}
+-            {openP.length === 0 && <div className="muted card-pad">No open purchases.</div>}
+-          </div>
+-        </div>
+-      </div>}
+-
+       {(selC.length > 0 || selP.length > 0) && (
+         <div className="match-bar" data-testid="match-bar">
++          {selC.length > 0 && selP.length > 0 && <Compare cs={credits.filter((c) => selC.includes(c.id))} ps={purchases.filter((p) => selP.includes(p.id))} />}
+           <span>{selC.length} {simple ? "payment" : "credit"}{selC.length !== 1 ? "s" : ""} <b className="tnum">{inr(sumC)}</b></span>
+           <span>↔</span>
+           <span>{selP.length} purchase{selP.length !== 1 ? "s" : ""} <b className="tnum">{inr(sumP)}</b></span>
+@@ -198,4 +204,38 @@
+       )}
+     </div>
+   );
++}
++
++/** Other open purchases that look alike, with what tells them apart — so a person can pick the right one. */
++function Similar({ cs, ps, purchases }) {
++  const amount = cs.reduce((a, c) => a + c.amount, 0);
++  const c0 = cs[0];
++  const alike = purchases.filter((p) => p.status === "open" && !ps.some((x) => x.id === p.id) && Math.abs(p.amount - amount) <= amount * 0.01).slice(0, 3);
++  if (!alike.length) return null;
++  const row = (p, chosen) => (
++    <tr key={p.id} className={chosen ? "chosen" : ""}><td>{chosen ? "Suggested" : "Also possible"}</td><td className="tnum">{p.appNo}</td><td>{p.investor}</td><td className="tnum">{inr(p.amount)}</td>
++      <td className="tnum">{bizGap(c0.valueDate, p.txnDate)} bd</td><td>{p.regBank === c0.remitterIfsc ? "✓ same bank" : "different bank"}</td><td>{p.utr && c0.narration.includes(p.utr) ? "✓ UTR" : "—"}</td></tr>
++  );
++  return (
++    <div className="similar" data-testid="similar">
++      <div className="muted" style={{ marginBottom: 4 }}>{alike.length} other open purchase{alike.length > 1 ? "s have" : " has"} the same amount. Compare before you decide:</div>
++      <table className="grid compact"><thead><tr><th /><th>Application</th><th>Investor</th><th>Amount</th><th>Date gap</th><th>Remitter bank</th><th>Reference</th></tr></thead>
++        <tbody>{ps.map((p) => row(p, true))}{alike.map((p) => row(p, false))}</tbody></table>
++    </div>
++  );
++}
++
++/** Field-to-field comparison of whatever is ticked on each side (sums, business-day gap, references, names, cheques). */
++function Compare({ cs, ps }) {
++  const gap = Math.max(...cs.flatMap((c) => ps.map((p) => bizGap(c.valueDate, p.txnDate))));
++  const utr = ps.some((p) => p.utr && cs.some((c) => c.narration.includes(p.utr)));
++  const pan = ps.some((p) => cs.some((c) => c.narration.includes(p.pan)));
++  const cheque = cs.find((c) => c.chequeNo);
++  const chequeOk = cheque && ps.some((p) => p.chequeNo === cheque.chequeNo && p.drawee === cheque.drawee && p.drawerAcct === cheque.drawerAcct);
++  const items = [
++    [gap <= 2, `Dates ${gap} business day${gap !== 1 ? "s" : ""} apart`],
++    [utr || pan, utr ? "UTR found in narration" : pan ? "PAN found in narration" : "No UTR / PAN link"],
++    ...(cheque ? [[chequeOk, chequeOk ? "Cheque no. + bank + account all agree" : "Cheque no. matches only part — check drawee bank and account"]] : []),
++  ];
++  return <div className="cmp-row" data-testid="compare">{items.map(([ok, t]) => <span key={t} className={ok ? "ok" : "bad"}>{ok ? "✓" : "✗"} {t}</span>)}</div>;
+ }
+diff --color -ruN a/frontend/src/features/match/matchActions.js frontend/src/features/match/matchActions.js
+--- a/frontend/src/features/match/matchActions.js	2026-10-22 11:17:31
++++ b/frontend/src/features/match/matchActions.js	2026-10-22 11:38:27
+@@ -7,6 +7,12 @@
+ 
+ export const isFastTrack = (confidence, amount) => confidence >= FAST_TRACK.conf && amount <= FAST_TRACK.amount;
+ 
++/**
++ * A suggestion is ambiguous when nothing deterministic (UTR, PAN, cheque + bank + account) backs it —
++ * amount and name alone. Ambiguous matches are never confirmed automatically, whatever the confidence.
++ */
++export const isAmbiguous = (s) => !(s.reasons || []).some((r) => r.ok && /UTR|PAN|cheque/i.test(r.text));
++
+ /** Shared by Match Workbench and My Work, so a match proposed from either place behaves the same. */
+ export function useMatchActions() {
+   const { collections, act, upsert, currentUser, simple } = useStore();
+@@ -16,9 +22,9 @@
+ 
+   const setStatus = (ids, kind, status) => ids.forEach((id) => { const x = byId(kind === "credits" ? credits : purchases, id); if (x) upsert(kind, { ...x, status }); });
+ 
+-  const propose = (creditIds, purchaseIds, source, confidence) => {
++  const propose = (creditIds, purchaseIds, source, confidence, ambiguous = false) => {
+     const amount = creditIds.reduce((s, id) => s + (byId(credits, id)?.amount || 0), 0);
+-    const fast = source === "ai" && isFastTrack(confidence, amount);
++    const fast = source === "ai" && !ambiguous && isFastTrack(confidence, amount);
+     const m = { id: uid("m"), credits: creditIds, purchases: purchaseIds, amount, source, confidence, status: fast ? "confirmed" : "pending", owner: currentUser, createdAt: new Date().toISOString(), type: `${creditIds.length > 1 ? "N" : "1"}:${purchaseIds.length > 1 ? "N" : "1"}` };
+     const res = act({ screen: "match", cap: "edit", audit: { entityLabel: `${m.type} match ${inr(amount)}`, action: fast ? "Match confirmed (fast-track)" : "Propose match", to: fast ? "Matched" : "Pending checker", comment: source === "ai" ? `AI suggestion, confidence ${(confidence * 100).toFixed(0)}%` : "Manual selection" } });
+     if (!res.ok) { toast.error(res.error); return false; }
+@@ -30,7 +36,7 @@
+     return true;
+   };
+ 
+-  const acceptSuggestion = (s) => { if (propose(s.credits, s.purchases, "ai", s.confidence)) upsert("suggestions", { ...s, decided: "accepted" }); };
++  const acceptSuggestion = (s) => { if (propose(s.credits, s.purchases, "ai", s.confidence, isAmbiguous(s))) upsert("suggestions", { ...s, decided: "accepted" }); };
+   const dismissSuggestion = (s) => {
+     upsert("suggestions", { ...s, decided: "dismissed" });
+     toast(simple ? "OK — marked as not a match." : "Suggestion dismissed — it stays visible in the 'Why not matched' explainer");
+diff --color -ruN a/frontend/src/features/today/Cycle.jsx frontend/src/features/today/Cycle.jsx
+--- a/frontend/src/features/today/Cycle.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/today/Cycle.jsx	2026-10-22 11:23:38
+@@ -1,14 +1,16 @@
+ import React from "react";
+ import { Link } from "react-router-dom";
+ import { useStore } from "@/state/store";
+-import { dailyCycle, nextStepFor } from "@/lib/journey";
++import { dailyCycle, nextStepFor, stepsForUser, scopeToUser } from "@/lib/journey";
+ import { hasCap } from "@/lib/access";
+ import { Check, Clock, Hourglass, ArrowRight, AlertTriangle } from "lucide-react";
+ 
++/** Today's cycle for the signed-in person: their AMCs, their steps. `all` is the whole team's cycle. */
+ export function useCycle() {
+-  const { collections, perms } = useStore();
+-  const steps = dailyCycle(collections);
+-  return { steps, next: nextStepFor(steps, perms) };
++  const { collections, perms, personaUser } = useStore();
++  const all = dailyCycle(scopeToUser(collections, personaUser));
++  const { mine, others } = stepsForUser(all, perms, personaUser);
++  return { steps: mine, all, others, next: nextStepFor(mine, perms) };
+ }
+ 
+ function StateIcon({ s }) {
+@@ -38,14 +40,16 @@
+ 
+ /** Compact "where am I in the day" bar shown at the top of every daily-cycle screen. */
+ export function JourneyBar({ current }) {
+-  const { steps } = useCycle();
++  const { steps: mine, all } = useCycle();
+   const { perms } = useStore();
++  // Only the person's own steps (plus the page they're on, if it isn't one of theirs).
++  const steps = mine.some((s) => s.key === current) ? mine : [...mine, ...all.filter((s) => s.key === current)].sort((a, b) => all.indexOf(all.find((x) => x.key === a.key)) - all.indexOf(all.find((x) => x.key === b.key)));
+   const idx = steps.findIndex((s) => s.key === current);
+   const after = steps.slice(idx + 1).find((s) => s.state !== "done" && hasCap(perms, s.screen));
+   const cur = steps[idx];
+   return (
+     <div className="journey-bar" data-testid="journey-bar">
+-      <span className="jb-label">Today's cycle</span>
++      <span className="jb-label">Your steps today</span>
+       <div className="jb-steps">
+         {steps.map((s) => (
+           <Link key={s.key} to={s.cta.path} className={"jb-step " + s.state + (s.key === current ? " current" : "")} title={`${s.title} — ${s.summary}`}>
+diff --color -ruN a/frontend/src/features/today/Today.jsx frontend/src/features/today/Today.jsx
+--- a/frontend/src/features/today/Today.jsx	2026-10-22 11:17:31
++++ b/frontend/src/features/today/Today.jsx	2026-10-22 11:25:38
+@@ -21,17 +21,28 @@
+   return Math.round((new Date(RELEASE_CUTOFF) - now) / 60000);
+ }
+ 
++const STEP_KEY = { 1: "files", 2: "match", 3: "cases", 4: "release", 5: "refunds", 6: "close" };
++const SHORT = { files: "Bank files", match: "Match payments", cases: "Problem cases", release: "Release money", refunds: "Send refunds", close: "Close the day" };
++
+ /** The day as a glowing track: six stations, progress line up to the last finished one. */
+-function CycleTrack({ steps, mine, onPick }) {
++function CycleTrack({ steps, others, mine, onPick, assigned, checker }) {
+   const doneIdx = steps.reduce((m, s, i) => (s.state === "done" ? i : m), -1);
++  const done = steps.filter((s) => s.state === "done").length;
++  const pending = steps.filter((s) => s.state !== "done").reduce((n, s) => n + ((checker ? s.waitingOn : s.count) || 0), 0);
++  if (!steps.length) return null;
+   return (
+     <div className="track card" data-testid="daily-cycle">
+-      <ol>
+-        <div className="track-line"><motion.i initial={{ width: 0 }} animate={{ width: `${(Math.max(0, doneIdx) / (steps.length - 1)) * 100}%` }} transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }} /></div>
++      <div className="track-head">
++        <b>Your steps today</b>
++        <span className="muted">{done} of {steps.length} done · {pending} item{pending !== 1 ? "s" : ""} {checker ? "waiting for your approval" : "pending"}{assigned ? " · steps assigned to you by your admin" : " · from your roles"}</span>
++        {others.length > 0 && <span className="track-others" title={others.map((s) => s.title).join(", ")}>Other teams handle: {others.map((s) => SHORT[s.key]).join(", ")}</span>}
++      </div>
++      <ol style={{ "--n": steps.length }}>
++        <div className="track-line"><motion.i initial={{ width: 0 }} animate={{ width: `${steps.length > 1 ? (Math.max(0, doneIdx) / (steps.length - 1)) * 100 : done ? 100 : 0}%` }} transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }} /></div>
+         {steps.map((s) => (
+           <li key={s.key} className={"st " + s.state + (s.late ? " late" : "") + (mine === s.key ? " mine" : "")} onClick={() => onPick(s)} data-testid={"cycle-" + s.key} title={s.why}>
+             <span className="st-node">{s.state === "done" ? <Check size={14} strokeWidth={3} /> : s.state === "waiting" ? <Hourglass size={12} /> : s.n}</span>
+-            <b>{{ files: "Bank files", match: "Match payments", cases: "Problem cases", release: "Release money", refunds: "Send refunds", close: "Close the day" }[s.key]}</b>
++            <b>{SHORT[s.key]}</b>
+             <small>{s.late && s.state !== "done" ? "late · was due " : "by "}{s.by}</small>
+             {mine === s.key && <em>You're here</em>}
+           </li>
+@@ -45,7 +56,7 @@
+   const { collections, perms, personaUser, act, audit, currentUser } = useStore();
+   const nav = useNavigate();
+   const loc = useLocation();
+-  const { steps, next } = useCycle();
++  const { steps, others, next } = useCycle();
+   const work = useWorkItems();
+   const approvals = useApprovals().filter((a) => !a.own);
+   const isChecker = hasCap(perms, "inbox", "approve");
+@@ -83,25 +94,33 @@
+         more: { label: "Open in Approvals", run: () => nav("/approvals") },
+       }));
+     } else {
+-      if (hasCap(perms, "release", "edit") && release.status === "not_started") {
++      if (hasCap(perms, "release", "edit") && release.status === "not_started" && steps.some((s) => s.key === "release")) {
+         q.push({ id: "release", tone: mins < 120 ? "red" : "amber", kind: "Release money", step: 4, title: "Prepare today's fund release", detail: "Matched, realised money goes to Transaction Posting so units can be allotted", when: mins > 0 ? `Cut-off in ${Math.floor(mins / 60)}h ${mins % 60}m` : "Cut-off passed", hint: "One click — your checker releases it", primary: { label: "Prepare release", run: () => nav("/release") } });
+       }
+-      work.forEach((w) => q.push(w));
++      const myKeys = steps.map((s) => s.key);
++      work.filter((w) => !w.step || myKeys.includes(STEP_KEY[w.step])).forEach((w) => q.push(w));
+     }
+-    if ((canSubmitClose && close.status === "open") || (canSignClose && close.status === "pending" && !(close.submittedBy || "").startsWith(first))) {
++    if (steps.some((s) => s.key === "close") && (canSubmitClose && close.status === "open") || (canSignClose && close.status === "pending" && !(close.submittedBy || "").startsWith(first))) {
+       q.push({ id: "close", tone: "green", kind: "Close the day", step: 6, title: close.status === "pending" ? "Sign off today's reconciliation" : "Close the day when you're done", detail: close.status === "pending" ? `Submitted by ${close.submittedBy}` : `${carried} open items will carry forward`, hint: "Produces the day summary for the AMCs", primary: { label: close.status === "pending" ? "Sign off" : "Close the day", run: () => setCloseOpen(true) } });
+     }
+     const order = { red: 0, amber: 1, green: 2 };
+     return q.sort((a, b) => (a.id === "close") - (b.id === "close") || order[a.tone] - order[b.tone]);
+-  }, [isChecker, approvals, work, perms, release.status, mins, canSubmitClose, canSignClose, close.status, close.submittedBy, carried, first, nav]);
++  }, [isChecker, approvals, work, perms, release.status, mins, canSubmitClose, canSignClose, close.status, close.submittedBy, carried, first, nav, steps]);
+ 
+   const i = Math.min(idx, Math.max(0, queue.length - 1));
+   const focus = queue[i];
+   const upNext = queue.slice(i + 1, i + 4);
+   const doneSteps = steps.filter((s) => s.state === "done").length;
+-  const STEP_KEY = { 1: "files", 2: "match", 3: "cases", 4: "release", 5: "refunds", 6: "close" };
+-  const mine = isChecker ? null : (focus?.step ? STEP_KEY[focus.step] : next?.key);
++  const mine = isChecker ? steps.find((s) => s.waitingOn)?.key || null : (focus?.step ? STEP_KEY[focus.step] : next?.key);
+ 
++  // "Welcome back": what changed in this person's queue since they last opened Today (after a break or a new login).
++  const seenKey = `cams_seen_${personaUser.id}`;
++  const since = React.useMemo(() => { try { return JSON.parse(localStorage.getItem(seenKey) || "null"); } catch (e) { return null; } }, [seenKey]); // eslint-disable-line react-hooks/exhaustive-deps
++  React.useEffect(() => { try { localStorage.setItem(seenKey, JSON.stringify({ at: Date.now(), ids: queue.map((q) => q.id) })); } catch (e) { /* storage unavailable */ } }, [seenKey, queue]);
++  const [hideBack, setHideBack] = React.useState(false);
++  const newSince = since ? queue.filter((q) => !since.ids.includes(q.id)) : [];
++  const clearedSince = since ? since.ids.filter((id) => !queue.some((q) => q.id === id)).length : 0;
++
+   const submitClose = () => {
+     const res = act({ screen: "release", cap: "edit", kind: "dayclose", id: "day_today", patch: { status: "pending", submittedBy: currentUser, carried, note: note.trim(), submittedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Submit day close", from: "Open", to: "Pending", comment: `${carried} items carried forward` } });
+     if (res.ok) { toast.success("Sent to your checker to sign off the day."); setCloseOpen(false); } else toast.error(res.error);
+@@ -122,17 +141,26 @@
+         <span className={"cutoff-chip" + (mins < 60 ? " hot" : "")}><Clock size={13} /> Fund release cut-off {mins > 0 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : "passed"}</span>
+       </div>
+ 
++      {since && !hideBack && (newSince.length > 0 || clearedSince > 0) && (
++        <div className="welcome-back" data-testid="welcome-back">
++          <Sun size={15} />
++          <span>Welcome back. Since {new Date(since.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}: <b>{newSince.length} new</b> item{newSince.length !== 1 ? "s" : ""} in your queue{clearedSince ? `, ${clearedSince} cleared` : ""}. You have {queue.length} in total.</span>
++          <button className="link" onClick={() => setQueueOpen(true)} data-testid="wb-open-queue">See my full queue</button>
++          <button className="icon-btn" onClick={() => setHideBack(true)} aria-label="Dismiss"><X size={14} /></button>
++        </div>
++      )}
++
+       <div className="deck-hero">
+         {/* 1 — The one thing to do now */}
+         <TiltCard className={"focus-card tone-" + (focus?.tone || "green")} max={4} data-testid="next-action">
+           <div className="fc-top">
+-            <span className="fc-eyebrow"><Sparkles size={13} /> {isChecker ? "Your next approval" : "Your focus"}</span>
++            <span className="fc-eyebrow"><Sparkles size={13} /> {isChecker ? "Your focus for today: approvals" : "Your focus for today"}</span>
+             {focus && <span className="fc-count">{i + 1} <em>of {queue.length}</em></span>}
+           </div>
+           <AnimatePresence mode="wait">
+             {focus ? (
+               <motion.div key={focus.id} className="fc-body" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.25 }}>
+-                <div className="fc-kind">{focus.step && <span className="step-chip">Step {focus.step}</span>}{focus.kind}{focus.light && <Light tone={focus.tone}>{focus.light}</Light>}</div>
++                <div className="fc-kind">{focus.step && <span className="step-chip">{SHORT[STEP_KEY[focus.step]]}</span>}{focus.kind}{focus.light && <Light tone={focus.tone}>{focus.light}</Light>}</div>
+                 <h2>{focus.title}</h2>
+                 <p>{focus.detail}</p>
+                 <div className="fc-hint">{focus.when && <span className={"mw-when " + focus.tone}><Hourglass size={13} /> {focus.when}</span>}{focus.hint}</div>
+@@ -156,7 +184,7 @@
+ 
+         {/* 2 — Where the day stands */}
+         <div className="day-panel card">
+-          <RingProgress value={doneSteps} max={6} label="steps done today" size={132} />
++          <RingProgress value={doneSteps} max={Math.max(1, steps.length)} label={`of your ${steps.length} steps done`} size={132} />
+           <div className="dp-stats">
+             <div><span>Done by you</span><b className="fx-num"><CountUp value={doneToday} /></b></div>
+             <div><span>{isChecker ? "Waiting for you" : "In your queue"}</span><b className="fx-num"><CountUp value={queue.length} /></b></div>
+@@ -166,7 +194,7 @@
+         </div>
+       </div>
+ 
+-      <CycleTrack steps={steps} mine={mine} onPick={(s) => (s.key === "close" ? setCloseOpen(true) : hasCap(perms, s.screen) ? nav(s.cta.path) : toast(s.summary))} />
++      <CycleTrack checker={isChecker} steps={steps} others={others} assigned={!!personaUser.workflowSteps?.length} mine={mine} onPick={(s) => (s.key === "close" ? setCloseOpen(true) : hasCap(perms, s.screen) ? nav(s.cta.path) : toast(s.summary))} />
+ 
+       {/* 3 — Only the next three, never an endless list */}
+       <div className="upnext card" data-testid="up-next">
+diff --color -ruN a/frontend/src/features/today/workItems.js frontend/src/features/today/workItems.js
+--- a/frontend/src/features/today/workItems.js	2026-10-22 11:17:31
++++ b/frontend/src/features/today/workItems.js	2026-10-22 11:38:39
+@@ -1,17 +1,19 @@
+ import { useNavigate } from "react-router-dom";
+ import { useStore } from "@/state/store";
+ import { hasCap } from "@/lib/access";
++import { scopeToUser } from "@/lib/journey";
+ import { PLAIN_EXCEPTION } from "@/lib/plain";
+ import { maskAccount } from "@/lib/format";
+ import { inr, timeLeftWords } from "@/features/ops/ui";
+-import { useMatchActions, isFastTrack } from "@/features/match/matchActions";
++import { useMatchActions, isFastTrack, isAmbiguous } from "@/features/match/matchActions";
+ import { toast } from "sonner";
+ 
+ /** Everything a maker could do right now, as one prioritised list (red → amber → green). */
+ const TONE_ORDER = { red: 0, amber: 1, green: 2 };
+ 
+ export function useWorkItems() {
+-  const { collections, perms, personaUser, act, currentUser } = useStore();
++  const { collections: raw, perms, personaUser, act, currentUser } = useStore();
++  const collections = scopeToUser(raw, personaUser); // only this person's AMCs
+   const nav = useNavigate();
+   const { acceptSuggestion, dismissSuggestion, byId, credits, purchases } = useMatchActions();
+   const me = personaUser.name;
+@@ -44,8 +46,8 @@
+       items.push({
+         id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100, kind: "Match a payment", step: 2,
+         title: cs.length > 1 ? `${cs.length} payments from ${cs[0].remitter} add up to ${ps[0].investor}'s purchase` : ps.length > 1 ? `One payment from ${cs[0].remitter} covers ${ps.length} purchases by ${ps[0].investor}` : `Payment from ${cs[0].remitter} looks like ${ps[0].investor}'s purchase`,
+-        detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`, light: sure ? "Very likely" : "Please check",
+-        hint: isFastTrack(s.confidence, amount) ? "Say yes and it's done — no approval needed" : "Say yes and your checker approves it",
++        detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`, light: sure && !isAmbiguous(s) ? "Very likely" : "Please check",
++        hint: isAmbiguous(s) ? "Based on amount and name only — check carefully; a checker confirms it" : isFastTrack(s.confidence, amount) ? "Say yes and it's done — no approval needed" : "Say yes and your checker approves it",
+         primary: { label: "Yes, match", run: () => acceptSuggestion(s) }, secondary: { label: "Not a match", run: () => dismissSuggestion(s) }, more: { label: "See why", run: () => nav("/match") },
+       });
+     });
+@@ -76,14 +78,16 @@
+         primary: { label: { upload: "Upload statement", pull: "Get the file", corrected: "Upload corrected file", refetch: "Open file", reprocess: "Reprocess", onboard: "Open file", drift: "Review new layout" }[how], run: () => nav(`/ingestion?file=${f.id}${["upload", "corrected"].includes(how) ? "&upload=1" : ""}`) },
+       });
+     });
+-    const loadedIds = (collections.files || []).filter((f) => f.status === "loaded").map((f) => f.id);
+-    (collections.emails || []).filter((e) => e.status === "rejected").forEach((e) => { const useful = e.suggestFileId && !loadedIds.includes(e.suggestFileId); items.push({
++    const loadedIds = (collections.files || []).filter((f) => ["loaded", "nil"].includes(f.status)).map((f) => f.id);
++    // An email alert leaves the focus list once the statement is loaded another way, or it was dismissed / parked.
++    const emailOpen = (e) => e.status === "rejected" && !e.dismissed && !e.waiting && e.reason !== "duplicate" && !(e.suggestFileId && loadedIds.includes(e.suggestFileId));
++    (collections.emails || []).filter(emailOpen).forEach((e) => { const useful = e.suggestFileId && !loadedIds.includes(e.suggestFileId); items.push({
+       id: e.id, tone: useful ? "red" : "amber", sort: 150, kind: "Rejected email", step: 1,
+       title: useful ? "A statement email was rejected, but it's the one we're missing" : `Email from ${e.from} was rejected`,
+       detail: e.reasonText, hint: e.attachment.name ? `Attachment: ${e.attachment.name}` : "No attachment",
+       primary: { label: useful ? "Use this attachment" : "Open email", run: () => nav(`/ingestion?tab=email&email=${e.id}`) },
+     }); });
+-    (collections.connections || []).filter((x) => x.status === "failing").forEach((x) => items.push({
++    (collections.connections || []).filter((x) => x.status === "failing" && !x.dismissed).forEach((x) => items.push({
+       id: x.id, tone: "amber", sort: 160, kind: "Bank connection", step: 1, title: `${x.bankName} ${x.type === "api" ? "API" : "portal bot"} is failing`, detail: x.error,
+       hint: x.captcha ? "Download the statement by hand and upload it" : "The token needs renewing in Bank statement setup",
+       primary: { label: "Open connection", run: () => nav("/ingestion?tab=conns") },
+diff --color -ruN a/frontend/src/future.css frontend/src/future.css
+--- a/frontend/src/future.css	2026-10-22 11:17:31
++++ b/frontend/src/future.css	2026-10-22 11:39:14
+@@ -568,3 +568,82 @@
+ .note.info { background: rgba(47, 140, 240, .1); border-color: rgba(47, 140, 240, .3); color: #cfe2ff; }
+ .note.info svg { color: var(--cams-cyan); }
+ .map-group .note { margin-bottom: 10px; }
++
++/* ── Round 8: role-specific stepper, users, search ── */
++.track ol { grid-template-columns: repeat(var(--n, 6), 1fr); }
++.track-line { left: calc(100% / (var(--n, 6) * 2)); right: calc(100% / (var(--n, 6) * 2)); top: 15px; }
++.track ol .track-line { top: 15px; }
++.track-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
++.track-head b { color: #fff; font-size: 14px; }
++.track-others { margin-left: auto; font-size: 12px; color: #8aa3cc; padding: 3px 10px; border-radius: 999px; border: 1px dashed var(--edge-strong); }
++.welcome-back { display: flex; gap: 10px; align-items: center; padding: 10px 14px; margin-bottom: 14px; border-radius: 12px; background: linear-gradient(90deg, rgba(57, 208, 255, .12), rgba(47, 140, 240, .06)); border: 1px solid rgba(57, 208, 255, .3); font-size: 13px; }
++.welcome-back > svg { color: var(--cams-cyan); flex: none; }
++.welcome-back span { flex: 1; }
++.um-sub { font-size: 11px; color: #8aa3cc; margin-top: 3px; }
++.um-sub.amber { color: hsl(var(--st-pending)); }
++.um-sub.red { color: hsl(var(--st-rejected)); }
++.ah-tile.clickable { cursor: pointer; }
++.ah-tile.clickable:hover { border-color: var(--edge-strong); }
++.access-health { grid-template-rows: repeat(5, 1fr); gap: 8px; }
++.aging-card { margin-bottom: 16px; }
++.aging-card .card-head { flex-wrap: wrap; gap: 10px; }
++.aging-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 0 16px 12px; }
++.aging-cell { position: relative; overflow: hidden; text-align: left; display: grid; gap: 2px; padding: 12px 14px; border-radius: 12px; background: rgba(8, 18, 40, .55); border: 1px solid var(--edge); color: hsl(var(--text)); cursor: pointer; font: inherit; }
++.aging-cell b { font-size: 22px; color: #fff; }
++.aging-cell .ac-label { font-size: 12px; color: #8aa3cc; }
++.aging-cell i { position: absolute; left: 0; bottom: 0; height: 3px; background: #39d0ff; box-shadow: 0 0 10px #39d0ff; }
++.aging-cell.past { border-color: rgba(255, 107, 134, .35); }
++.aging-cell.past i { background: #ff6b86; box-shadow: 0 0 10px #ff6b86; }
++.aging-cell.past .ac-label { color: #ff9fb1; }
++.aging-cell.on { border-color: var(--cams-cyan); box-shadow: var(--glow); }
++.breach-row { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin: 0 16px 10px; padding: 10px 12px; border-radius: 10px; background: rgba(255, 107, 134, .08); border: 1px solid rgba(255, 107, 134, .3); font-size: 13px; }
++.aging-note { font-size: 11.5px; padding: 0 16px 14px; }
++.bucket-edit { display: flex; gap: 8px; align-items: center; padding: 0 16px 12px; font-size: 13px; }
++.bucket-edit .input { width: 64px; }
++.age-chip-row { display: flex; gap: 10px; align-items: center; margin: -6px 0 12px; }
++.age-tag, .hv-tag { margin-left: 6px; font-size: 10.5px; padding: 1px 6px; border-radius: 6px; font-weight: 600; }
++.age-tag { background: rgba(255, 107, 134, .15); color: #ff9fb1; }
++.hv-tag { background: rgba(255, 197, 107, .15); color: #ffd28f; }
++.age-red { color: #ff9fb1; }
++.st-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 12px; }
++.st-cell { text-align: left; padding: 10px 14px; border-radius: 12px; background: var(--glass); border: 1px solid var(--edge); color: hsl(var(--text)); cursor: pointer; font: inherit; display: grid; gap: 2px; }
++.st-cell span { font-size: 12px; color: #8aa3cc; }
++.st-cell b { font-size: 22px; color: #fff; }
++.st-cell.tone-green b { color: #4ff0b4; } .st-cell.tone-amber b { color: #ffc56b; } .st-cell.tone-red b { color: #ff6b86; } .st-cell.tone-blue b { color: #7fc4ff; }
++.st-cell.on { border-color: var(--cams-cyan); box-shadow: var(--glow); }
++.remark-cell { font-size: 12px; color: #9aa9c4; max-width: 320px; }
++.em-resolved { font-size: 12px; color: #4ff0b4; margin-top: 4px; }
++.check-row.info { color: #7fc4ff; }
++code.hash { font-size: 11px; word-break: break-all; }
++.cc-run { position: relative; overflow: hidden; display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: #7fc4ff; padding: 6px 10px; border-radius: 8px; background: rgba(47, 140, 240, .1); margin-top: 8px; }
++.cc-run i { position: absolute; left: 0; bottom: 0; height: 2px; width: 40%; background: #39d0ff; animation: ccrun 1.2s linear infinite; }
++@keyframes ccrun { from { left: -40%; } to { left: 100%; } }
++.cc-last { display: flex; gap: 6px; align-items: center; font-size: 12.5px; margin-top: 8px; }
++.cc-last.ok { color: #4ff0b4; } .cc-last.bad { color: #ff9fb1; }
++.cc-err details { margin-top: 4px; font-size: 11.5px; opacity: .8; }
++.sftp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
++.sftp-card { padding: 14px; }
++.sftp-counts { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
++.sftp-counts .sc { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: rgba(120, 165, 255, .1); }
++.sc.ok, .sftp-list li.ok em { color: #4ff0b4; } .sc.bad, .sftp-list li.bad em { color: #ff6b86; } .sc.prog, .sftp-list li.prog em { color: #7fc4ff; } .sc.wait, .sftp-list li.wait em { color: #ffc56b; }
++.sftp-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
++.sftp-list li { display: grid; grid-template-columns: 16px 50px 1fr auto; gap: 8px; align-items: center; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
++.sftp-list li:hover { background: rgba(47, 140, 240, .1); }
++.sftp-list em { font-style: normal; font-size: 11.5px; }
++.mu-list { display: grid; gap: 6px; max-height: 300px; overflow: auto; }
++.mu-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--edge); font-size: 13px; cursor: pointer; }
++.mu-row.on { border-color: var(--cams-cyan); }
++.mu-warn { font-style: normal; font-size: 11.5px; color: #ffc56b; width: 100%; padding-left: 26px; }
++@media (max-width: 1100px) { .st-strip { grid-template-columns: repeat(3, 1fr); } }
++.proposal-card { margin: 8px 0 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255, 197, 107, .07); border: 1px solid rgba(255, 197, 107, .35); }
++.pc-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
++.pc-head svg { color: #ffc56b; }
++.pc-foot { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 10px; font-size: 12px; }
++.mw-section-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin: 4px 0 10px; }
++.mw-section-head h3 { margin: 0; color: #fff; font-size: 16px; }
++.amb-note { margin-top: 8px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; background: rgba(255, 197, 107, .1); border: 1px solid rgba(255, 197, 107, .3); color: #ffe0ad; }
++.similar { margin-top: 10px; font-size: 12.5px; }
++.similar tr.chosen td { color: #fff; font-weight: 600; }
++.match-bar { flex-wrap: wrap; }
++.cmp-row { width: 100%; display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; }
++.cmp-row .ok { color: #4ff0b4; } .cmp-row .bad { color: #ffc56b; }
+diff --color -ruN a/frontend/src/lib/access.js frontend/src/lib/access.js
+--- a/frontend/src/lib/access.js	2026-10-22 11:17:32
++++ b/frontend/src/lib/access.js	2026-10-22 11:22:58
+@@ -23,6 +23,7 @@
+       { key: "inbox", label: "Approvals", plain: "Approvals", path: "/approvals", group: "Home", caps: ["view", "approve"] },
+       { key: "command", label: "Dashboard", plain: "Team overview", path: "/command", group: "Home", caps: ["view", "export"], analytics: true },
+       { key: "ingestion", label: "Bank files", plain: "Bank files", path: "/ingestion", group: "Daily cycle", step: 1, caps: ["view", "edit", "approve"] },
++      { key: "manual_upload", label: "Manual upload (exception)", plain: "Manual upload", path: "/ingestion?manual=1", group: "Daily cycle", caps: ["view", "edit"], hidden: true },
+       { key: "match", label: "Match payments", plain: "Match payments", path: "/match", group: "Daily cycle", step: 2, phase: "P2", caps: ["view", "edit", "approve"] },
+       { key: "extraction", label: "Documents", plain: "Read PDFs & emails", path: "/extraction", group: "Daily cycle", step: 2, phase: "P3", caps: ["view", "edit", "approve"] },
+       { key: "exceptions", label: "Exceptions", plain: "Problem cases", path: "/exceptions", group: "Daily cycle", step: 3, phase: "P2", caps: ["view", "edit", "approve", "export"] },
+@@ -54,6 +55,14 @@
+     ],
+   },
+   {
++    key: "sip", label: "SIP", color: "#7c3aed",
++    screens: [
++      { key: "sip_reg", label: "SIP registrations", path: "/m/sip/registrations", group: "SIP", caps: ["view", "edit", "approve", "export"] },
++      { key: "sip_fail", label: "SIP debit failures", path: "/m/sip/failures", group: "SIP", caps: ["view", "edit", "approve", "export"] },
++      { key: "sip_mandate", label: "Mandates", path: "/m/sip/mandates", group: "SIP", caps: ["view", "edit", "approve"] },
++    ],
++  },
++  {
+     key: "admin", label: "Administration", color: "#0f766e",
+     screens: [
+       { key: "users", label: "Users", path: "/admin/users", group: "Administration", caps: ["view", "edit", "approve", "export"] },
+@@ -84,10 +93,13 @@
+     r("role_recon_setup_maker", "Recon · Setup Maker", "recon", "Onboards banks and aggregators: setups, mappings, match rules.",
+       { today: ["view"], command: ["view"], ingestion: ["view", "edit"], bank_setup: ["view", "edit", "export"], credit_mis: ["view", "edit", "export"], mapping: ["view", "edit"], rules: ["view", "edit"], approvals: ["view"], reports: ["view", "export"], audit: ["view"] }),
+     r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Runs the daily cycle: uploads and reprocesses bank files, matching, problem cases, documents, fund release and refunds. No setup screens. Uses the simple view.",
+-      { today: ["view"], command: ["view"], ingestion: ["view", "edit"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], release: ["view", "edit"], refunds: ["view", "edit", "export"], reports: ["view", "export"], audit: ["view"] }, { simple: true }),
++      { today: ["view"], command: ["view"], ingestion: ["view", "edit"], manual_upload: ["view", "edit"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], release: ["view", "edit"], refunds: ["view", "edit", "export"], reports: ["view", "export"], audit: ["view"] }, { simple: true }),
+     r("role_recon_checker", "Recon · Checker", "recon", "Approves everything makers submit: setups, rules, matches, case closures, fund release, refunds and day close.",
+       { today: ["view"], inbox: ["view", "approve"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], reports: ["view", "export"], command: ["view", "export"], ingestion: ["view", "approve"], match: ["view", "approve"], exceptions: ["view", "approve", "export"], extraction: ["view", "approve"], bank_setup: ["view", "approve"], credit_mis: ["view", "approve"], mapping: ["view", "approve"], rules: ["view", "approve"], approvals: ["view", "approve"], audit: ["view", "export"] }),
+     r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", all("recon", ["view", "export"])),
++    r("role_functional_manager", "Recon · Functional Manager", "recon", "Sees every process across Reconciliation and Brokerage. Acts only through dashboards, approvals and authorisation screens — never as a maker.",
++      { today: ["view"], command: ["view", "export"], inbox: ["view", "approve"], ingestion: ["view"], match: ["view"], extraction: ["view"], exceptions: ["view", "export"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], bank_setup: ["view"], credit_mis: ["view"], mapping: ["view"], rules: ["view"], reports: ["view", "export"], audit: ["view", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"], brk_master: ["view"] }),
++    r("role_sip_viewer", "SIP · Viewer", "sip", "Read-only view of SIP registrations, failures and mandates.", all("sip", ["view"])),
+     r("role_brk_maker", "Brokerage · Maker", "brokerage", "Computes brokerage and prepares payout batches.", all("brokerage", ["view", "edit", "export"])),
+     r("role_brk_checker", "Brokerage · Checker", "brokerage", "Approves brokerage computations and payouts.", all("brokerage", ["view", "approve", "export"])),
+     r("role_pst_maker", "Posting · Maker", "posting", "Posts realised transactions and reviews NIGO cases.", all("posting", ["view", "edit"])),
+@@ -181,6 +193,26 @@
+   { id: "usr_priya", label: "Priya · Recon Setup Maker" },
+   { id: "usr_deepa", label: "Deepa · Recon Ops Maker" },
+   { id: "usr_arun", label: "Arun · Recon Checker" },
++  { id: "usr_kavita", label: "Kavita · Functional Manager" },
+   { id: "usr_sanjay", label: "Sanjay · Auditor" },
+   { id: "usr_farhan", label: "Farhan · Brokerage + Posting" },
++];
++
++/** Functions (actions) the global search can jump to. Each needs a capability, so nobody sees a function they can't use. */
++export const FUNCTIONS = [
++  { label: "Upload a statement by hand (exception)", screen: "manual_upload", cap: "edit", path: "/ingestion?manual=1", words: "manual upload statement outage" },
++  { label: "Check SFTP folders", screen: "ingestion", cap: "view", path: "/ingestion?tab=sftp", words: "sftp folder bulk ingestion" },
++  { label: "Rejected emails", screen: "ingestion", cap: "view", path: "/ingestion?tab=email", words: "email intake rejected attachment" },
++  { label: "Bank API & portal connections", screen: "ingestion", cap: "view", path: "/ingestion?tab=conns", words: "api portal bot pull" },
++  { label: "Match a payment by hand", screen: "match", cap: "edit", path: "/match", words: "manual match credit purchase" },
++  { label: "Problem cases older than 5 days", screen: "exceptions", cap: "view", path: "/exceptions?age=over5", words: "aging ageing breach unidentified credit" },
++  { label: "Prepare today's fund release", screen: "release", cap: "edit", path: "/release", words: "fund release allotment" },
++  { label: "Approve waiting items", screen: "inbox", cap: "approve", path: "/approvals", words: "approve checker authorise" },
++  { label: "New bank statement setup", screen: "bank_setup", cap: "edit", path: "/bank-setup/new", words: "onboard bank account setup" },
++  { label: "New Credit MIS setup", screen: "credit_mis", cap: "edit", path: "/credit-mis/new", words: "payment aggregator mis" },
++  { label: "Add a user", screen: "users", cap: "edit", path: "/admin/users", words: "user create invite" },
++  { label: "Reactivate a disabled ID", screen: "users", cap: "edit", path: "/admin/users", words: "reactivate deactivated biometric" },
++  { label: "Transaction status standardisation", screen: "status_std", cap: "view", path: "/admin/status-standardisation", words: "credit debit cr dr status" },
++  { label: "SIP debit failures", screen: "sip_fail", cap: "view", path: "/m/sip/failures", words: "sip failure mandate" },
++  { label: "Brokerage payout batches", screen: "brk_payout", cap: "view", path: "/m/brokerage/payout", words: "brokerage payout distributor" },
+ ];
+diff --color -ruN a/frontend/src/lib/bizdays.js frontend/src/lib/bizdays.js
+--- a/frontend/src/lib/bizdays.js	1970-01-01 05:30:00
++++ b/frontend/src/lib/bizdays.js	2026-10-22 11:38:27
+@@ -0,0 +1,17 @@
++// Business-day arithmetic for matching: weekends and bank holidays don't count.
++// Sample holiday list — production reads the RBI / NSE settlement-holiday calendar.
++export const HOLIDAYS = ["2026-10-02", "2026-10-20", "2026-11-09", "2026-11-24", "2026-12-25"];
++const key = (d) => d.toISOString().slice(0, 10);
++export const isBusinessDay = (d) => d.getDay() !== 0 && d.getDay() !== 6 && !HOLIDAYS.includes(key(d));
++
++/** Business days between two dates (0 = same business day). */
++export function bizGap(a, b) {
++  let x = new Date(Math.min(new Date(a), new Date(b))); const y = new Date(Math.max(new Date(a), new Date(b)));
++  x.setHours(0, 0, 0, 0); y.setHours(0, 0, 0, 0);
++  let n = 0;
++  while (x < y) { x = new Date(x.getTime() + 86400000); if (isBusinessDay(x)) n++; }
++  return n;
++}
++export const calGap = (a, b) => Math.round(Math.abs(new Date(a) - new Date(b)) / 86400000);
++/** SIP debits can settle a few business days after the instalment date. */
++export const SIP_ALLOWANCE = 3;
+diff --color -ruN a/frontend/src/lib/journey.js frontend/src/lib/journey.js
+--- a/frontend/src/lib/journey.js	2026-10-22 11:17:32
++++ b/frontend/src/lib/journey.js	2026-10-22 11:37:03
+@@ -1,6 +1,7 @@
+ // The daily reconciliation cycle (PRD v4 §4.1 "a day in the life" + §2.4 stages 2–6),
+ // computed live from the data so every screen can say where the day stands and what to do next.
+ import { hasCap } from "./access";
++import { inScope } from "./org";
+ import { RELEASE_CUTOFF } from "../mock/opsSeed";
+ 
+ const at = (h, m = 0) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
+@@ -14,8 +15,9 @@
+   const files = c.files || [];
+   const fileIssues = files.filter((f) => ["late", "missing", "drift", "unknown", "check_failed", "duplicate"].includes(f.status));
+   const filePending = files.filter((f) => f.status === "drift_pending");
+-  const emailRejected = (c.emails || []).filter((e) => e.status === "rejected").length;
+-  const connFailing = (c.connections || []).filter((x) => x.status === "failing").length;
++  const loaded = new Set(files.filter((f) => ["loaded", "nil"].includes(f.status)).map((f) => f.id));
++  const emailRejected = (c.emails || []).filter((e) => e.status === "rejected" && !e.dismissed && !e.waiting && e.reason !== "duplicate" && !(e.suggestFileId && loaded.has(e.suggestFileId))).length;
++  const connFailing = (c.connections || []).filter((x) => x.status === "failing" && !x.dismissed).length;
+   const sugg = (c.suggestions || []).filter((s) => !s.decided).length;
+   const docs = (c.documents || []).filter((d) => d.status === "needs_review").length;
+   const matchPending = (c.matches || []).filter((m) => m.status === "pending").length;
+@@ -88,4 +90,35 @@
+ export function nextStepFor(steps, perms) {
+   const canDo = (s) => hasCap(perms, s.screen, "edit") || (s.waitingOn && hasCap(perms, s.screen, "approve")) || (s.key === "close" && (hasCap(perms, "match", "edit") || hasCap(perms, "release", "approve")));
+   return steps.find((s) => s.state !== "done" && canDo(s)) || null;
++}
++
++/** Can this person act on a step at all (as maker or checker)? */
++export const canActOn = (s, perms) => hasCap(perms, s.screen, "edit") || hasCap(perms, s.screen, "approve")
++  || (s.key === "close" && (hasCap(perms, "match", "edit") || hasCap(perms, "release", "edit") || hasCap(perms, "release", "approve")));
++
++/**
++ * The person's own stepper: only the steps their roles let them act on, narrowed to the steps an admin
++ * assigned them (small AMCs: one person, many steps; large AMCs: steps split across teams).
++ * Re-numbered 1..n, and "active" is the first unfinished step of *theirs*.
++ */
++export function stepsForUser(steps, perms, user) {
++  const assigned = user?.workflowSteps?.length ? user.workflowSteps : null;
++  const mine = steps.filter((s) => canActOn(s, perms) && (!assigned || assigned.includes(s.key))).map((s) => ({ ...s }));
++  let activeSet = false;
++  mine.forEach((s, i) => {
++    s.n = i + 1;
++    if (s.state === "done" || s.state === "waiting") return;
++    s.state = activeSet ? "todo" : "active";
++    activeSet = true;
++  });
++  return { mine, others: steps.filter((s) => !mine.some((m) => m.key === s.key)) };
++}
++
++/** Collections narrowed to the AMCs this person works on. Records without an AMC stay visible. */
++export function scopeToUser(c, user) {
++  const keep = (list) => (list || []).filter((x) => inScope(user, x.amc));
++  const credits = keep(c.credits);
++  const ids = new Set(credits.map((x) => x.id));
++  return { ...c, files: keep(c.files), exceptions: keep(c.exceptions), refunds: keep(c.refunds), credits, purchases: keep(c.purchases),
++    suggestions: (c.suggestions || []).filter((s) => s.credits.some((id) => ids.has(id))), matches: (c.matches || []).filter((m) => m.credits.some((id) => ids.has(id))) };
+ }
+diff --color -ruN a/frontend/src/lib/org.js frontend/src/lib/org.js
+--- a/frontend/src/lib/org.js	1970-01-01 05:30:00
++++ b/frontend/src/lib/org.js	2026-10-22 11:20:37
+@@ -0,0 +1,22 @@
++// Organisation-level rules shared by user management, Today and the daily dashboard.
++import { AMC_BREAKDOWN } from "../mock/opsSeed";
++
++export const AMCS = AMC_BREAKDOWN.map((a) => a.amc);
++export const ALL_AMCS = "ALL";
++/** A user's AMC scope; "ALL" (or nothing set) means every AMC their roles cover. */
++export const userAmcs = (u) => (!u?.amcs || u.amcs.includes(ALL_AMCS) ? AMCS : u.amcs);
++export const amcLabel = (u) => (!u?.amcs || u.amcs.includes(ALL_AMCS) ? "All AMCs" : u.amcs.length === 1 ? u.amcs[0] : `${u.amcs.length} AMCs`);
++export const inScope = (u, amc) => !amc || userAmcs(u).includes(amc);
++
++// Existing CAMS policy: ID disabled after 10 consecutive days without a biometric punch-in.
++// To be confirmed with the identity management team before production.
++export const BIOMETRIC_LIMIT_DAYS = 10;
++// Prolonged inactivity is tracked separately from the biometric rule.
++export const DORMANT_DAYS = 60;
++const DAY = 86400000;
++export const daysSince = (iso) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / DAY) : null);
++export const isDormant = (u) => u.status === "active" && (u.lastLogin ? daysSince(u.lastLogin) >= DORMANT_DAYS : daysSince(u.createdAt) >= DORMANT_DAYS);
++export const biometricBreach = (u) => u.status === "active" && u.lastBiometric && daysSince(u.lastBiometric) >= BIOMETRIC_LIMIT_DAYS;
++
++/** Daily-cycle steps a person can be assigned. Small AMCs: one person does several; large AMCs split them across teams. */
++export const CYCLE_STEPS = [["files", "Bank files"], ["match", "Match payments"], ["cases", "Problem cases"], ["release", "Release money"], ["refunds", "Send refunds"], ["close", "Close the day"]];
+diff --color -ruN a/frontend/src/mock/opsSeed.js frontend/src/mock/opsSeed.js
+--- a/frontend/src/mock/opsSeed.js	2026-10-22 11:17:31
++++ b/frontend/src/mock/opsSeed.js	2026-10-22 11:38:27
+@@ -38,6 +38,11 @@
+ const SCHEMES = ["Liquid Fund – DG", "Bluechip Equity – RG", "Midcap Opp – DG", "Gilt Fund – RG", "Balanced Adv – DG", "Short Term Bond – RG"];
+ const CHANNELS = ["Direct", "BSE StAR", "NSE NMF", "MFU", "Razorpay", "CAMSPay"];
+ 
++// AMC that a record belongs to (drives each user's AMC scope).
++const AMC_OF = ["HDFC Mutual Fund", "ICICI Prudential MF", "Aditya Birla Sun Life MF", "Kotak Mahindra MF", "Nippon India MF", "DSP Mutual Fund"];
++const amcFor = (i) => AMC_OF[i % AMC_OF.length];
++const amcOfInvestor = (inv) => amcFor(INVESTORS.indexOf(inv));
++
+ const utr = (code) => `${code}R5${Math.floor(1e10 + R() * 9e10)}`;
+ 
+ // ---------------------------------------------------------------------------
+@@ -46,13 +51,14 @@
+ export function seedFiles() {
+   const list = [];
+   const plan = [
+-    ["HDFC Bank", 0, "email", "09:00", "drift"], ["HDFC Bank", 1, "auto", "09:30", "ok"], ["HDFC Bank", 2, "api", "08:30", "ok"],
+-    ["ICICI Bank", 0, "auto", "09:30", "drift"], ["ICICI Bank", 1, "manual", "10:00", "ok"],
++    // SFTP is the primary bulk channel; email, API and portal bot cover specific banks; manual upload is the exception.
++    ["HDFC Bank", 0, "sftp", "09:00", "drift"], ["HDFC Bank", 1, "auto", "09:30", "ok"], ["HDFC Bank", 2, "api", "08:30", "ok"],
++    ["ICICI Bank", 0, "sftp", "09:30", "drift"], ["ICICI Bank", 1, "sftp", "10:00", "ok"],
+     ["Axis Bank", 0, "email", "09:15", "ok"], ["Axis Bank", 1, "auto", "09:30", "completeness"],
+-    ["State Bank of India", 0, "manual", "10:30", "late"], ["State Bank of India", 1, "manual", "10:30", "ok"],
++    ["State Bank of India", 0, "manual", "10:30", "late"], ["State Bank of India", 1, "sftp", "10:30", "ok"],
+     ["Kotak Mahindra Bank", 0, "api", "08:45", "ok"], ["Kotak Mahindra Bank", 1, "email", "09:00", "duplicate"],
+-    ["South Indian Bank", 0, "manual", "11:00", "missing"], ["Yes Bank", 0, "auto", "09:30", "ok"],
+-    ["IndusInd Bank", 0, "email", "09:45", "ok"], ["IndusInd Bank", 1, "email", "09:45", "unknown"], ["Yes Bank", 1, "api", "08:30", "late"],
++    ["South Indian Bank", 0, "sftp", "11:00", "missing"], ["Yes Bank", 0, "sftp", "09:30", "ok"],
++    ["IndusInd Bank", 0, "email", "09:45", "ok"], ["IndusInd Bank", 1, "sftp", "09:45", "unknown"], ["Yes Bank", 1, "api", "08:30", "late"],
+   ];
+   plan.forEach(([bankName, ai, channel, expected, kind], i) => {
+     const bank = BANKS.find((b) => b.name === bankName);
+@@ -63,6 +69,7 @@
+     const fp = (bank.code + (kind === "drift" ? "9F2C" : "4A1E") + (1000 + i * 37)).toLowerCase();
+     const f = {
+       id: "file_" + (101 + i),
++      amc: amcFor(i),
+       bankName, bankCode: bank.code, accountNumber: acc.accountNumber, channel,
+       expectedBy: todayAt(eh, em),
+       receivedAt: received ? new Date(new Date(todayAt(eh, em)).getTime() - (20 - i) * 60000).toISOString() : null,
+@@ -72,12 +79,20 @@
+       creditAmount: received ? amt(rows * 9000, rows * 42000) : 0,
+       fingerprint: received ? fp : null,
+       kind,
++      // Level 1 duplicate check: SHA-256 of the file content (shortened for display).
++      hash: received ? sha(bank.code + acc.accountNumber + i) : null,
++      // Closing balance: validated when the bank supplies one, computed when it doesn't (API JSON feeds here).
++      balanceMode: channel === "api" ? "computed" : "validated",
++      // Level 2: transaction-level duplicate check on a composite business key.
++      txnDup: received && kind !== "duplicate" ? { rowsRead: rows, overlap: i === 5 ? 12 : i % 4 === 0 ? 3 : 0, reversals: i % 3 === 0 ? 1 : 0, repeatsHeld: i === 2 ? 2 : 0 } : null,
+       status: { ok: "loaded", drift: "drift", completeness: "check_failed", late: "late", missing: "missing", duplicate: "duplicate", unknown: "unknown" }[kind],
+       checks: [
+         { key: "fingerprint", label: "Structure matches approved fingerprint", ok: kind !== "drift" && kind !== "unknown" },
+         { key: "balance", label: "Opening balance = previous day's closing balance", ok: kind !== "completeness", detail: kind === "completeness" ? "Opening ₹4,12,88,310.55 vs previous closing ₹4,13,02,910.55 (Δ ₹14,600.00)" : null },
+-        { key: "running", label: "Running balance validated row by row", ok: kind !== "completeness" },
+-        { key: "dup", label: "Not a duplicate of an already-loaded file (content hash)", ok: kind !== "duplicate", detail: kind === "duplicate" ? "Identical content hash to file loaded at 08:52 (renamed attachment)" : null },
++        channel === "api"
++          ? { key: "running", label: "Closing balance computed from opening balance + transactions (the bank's file has no closing balance)", ok: true, info: true, detail: "Not independently verified against a bank-supplied balance." }
++          : { key: "running", label: "Closing balance in the file = opening balance ± each credit and debit, in file order", ok: kind !== "completeness", detail: kind === "completeness" ? "Row 412 onward: running balance drifts by ₹14,600.00 — a reversal pair appears to be missing" : null },
++        { key: "dup", label: "Not a duplicate of an already-loaded file (SHA-256 of the content)", ok: kind !== "duplicate", detail: kind === "duplicate" ? "Same content as KKBK_statement_0852.csv, loaded at 08:52 by email. Only the file name is different." : null },
+         { key: "gap", label: "No date gap since last statement", ok: true },
+       ],
+     };
+@@ -98,6 +113,7 @@
+       changes: [
+         { field: "INSTRM_NO", old: "Chq./Ref.No.", proposed: "Ref No./Cheque No.", confidence: 0.97, reason: "Renamed header; 50/50 sample values have the same pattern as last 30 days of Chq./Ref.No." },
+         { field: "EXTRACT_INVESTOR_IFSC", old: null, proposed: "Remitter IFSC", confidence: 0.94, reason: "New column; 48/50 values are valid IFSC codes (IFSC master lookup)." },
++        { field: "CLOSING_BALANCE", old: "Closing Balance (number)", proposed: "Closing Balance (text, ends in 'Cr')", confidence: 0.9, reason: "Data type changed: values now look like 4,12,330.00Cr. Running Balance Cleanup with 'Cr' is needed." },
+       ],
+       rowsHeld: 2184,
+     };
+@@ -116,6 +132,28 @@
+   };
+ }
+ 
++/** Deterministic fake SHA-256 (64 hex chars) for demo data. */
++function sha(seed) {
++  let h = 2166136261; let out = "";
++  for (let k = 0; k < 8; k++) { for (const ch of seed + k) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } out += (h >>> 0).toString(16).padStart(8, "0"); }
++  return out;
++}
++
++/** SFTP folders: one per bank, one sub-folder per account (the agreed account-level structure). */
++export function seedSftp(files) {
++  const banks = [...new Set(files.filter((f) => f.channel === "sftp").map((f) => f.bankName))];
++  return banks.map((b, i) => {
++    const mine = files.filter((f) => f.bankName === b && f.channel === "sftp");
++    return {
++      id: "sftp_" + i, bankName: b, root: `/inbound/${b.split(" ")[0].toLowerCase()}/`, lastScan: new Date(now - (3 + i) * 60000).toISOString(), every: 10,
++      accounts: mine.map((f) => ({
++        fileId: f.id, acct: f.accountNumber.slice(-4), folder: `${f.accountNumber.slice(-4)}/`,
++        state: !f.receivedAt ? "waiting" : ["loaded"].includes(f.status) ? "completed" : ["drift", "unknown", "check_failed", "duplicate"].includes(f.status) ? "error" : "in_progress",
++      })),
++    };
++  });
++}
++
+ // ---------------------------------------------------------------------------
+ // P2 — Credits, purchases, AI suggestions
+ // ---------------------------------------------------------------------------
+@@ -130,12 +168,12 @@
+     const u = opts.utr || utr(bank.code);
+     const valueDate = new Date(now - (opts.ageDays || 0) * day).toISOString();
+     const narr = opts.narration || `NEFT-${u}-${inv.short}-${inv.bank.slice(0, 4)}`;
+-    const cr = { id: `cr_${++c}`, ref: `CR-${88100 + c}`, bankName: bank.name, accountNumber: acc.accountNumber, valueDate, amount, utr: u, narration: narr, remitter: inv.short, remitterIfsc: inv.bank, status: "open" };
++    const cr = { id: `cr_${++c}`, amc: amcOfInvestor(inv), ref: `CR-${88100 + c}`, bankName: bank.name, accountNumber: acc.accountNumber, valueDate, amount, utr: u, narration: narr, remitter: inv.short, remitterIfsc: inv.bank, status: "open" };
+     credits.push(cr);
+     return cr;
+   };
+   const mkPurchase = (inv, amount, opts = {}) => {
+-    const pu = { id: `pu_${++p}`, appNo: `APP${7720400 + p}`, investor: inv.name, pan: inv.pan, scheme: opts.scheme || pick(SCHEMES), channel: opts.channel || pick(CHANNELS), amount, utr: opts.utr || null, txnDate: new Date(now - (opts.ageDays || 0) * day).toISOString(), regBank: inv.bank, status: "open" };
++    const pu = { id: `pu_${++p}`, amc: amcOfInvestor(inv), appNo: `APP${7720400 + p}`, investor: inv.name, pan: inv.pan, scheme: opts.scheme || pick(SCHEMES), channel: opts.channel || pick(CHANNELS), amount, utr: opts.utr || null, txnDate: new Date(now - (opts.ageDays || 0) * day).toISOString(), regBank: inv.bank, status: "open" };
+     purchases.push(pu);
+     return pu;
+   };
+@@ -175,7 +213,17 @@
+     suggestions.push({ id: `sg_${c1.id}`, type: "N:1", credits: [c1.id, c2.id], purchases: [pu.id], confidence: 0.88,
+       reasons: [{ ok: true, text: "Two credits from the same remitter account on the same day" }, { ok: true, text: "Sum ₹5,00,000 = application amount" }, { ok: false, text: "Application allows a single payment — checker should confirm" }] });
+   }
+-  // 4) Unmatched noise both sides (go to exceptions if not worked)
++  // 4) Physical cheque: the same cheque number exists at two different banks, so the number alone proves nothing.
++  {
++    const inv = INVESTORS[6];
++    const cr = mkCredit(inv, 120000, { narration: "CLG-CHQ 004512 CANARA BANK PUNE A/C XXXX0461" });
++    Object.assign(cr, { chequeNo: "004512", drawee: "Canara Bank", drawerAcct: "XXXX0461" });
++    const p1 = mkPurchase(inv, 120000, { channel: "Direct" });
++    Object.assign(p1, { chequeNo: "004512", drawee: "Canara Bank", drawerAcct: "XXXX0461" });
++    const p2 = mkPurchase(INVESTORS[9], 120000, { channel: "Direct" });
++    Object.assign(p2, { chequeNo: "004512", drawee: "HDFC Bank", drawerAcct: "XXXX7781" });
++  }
++  // 5) Unmatched noise both sides (go to exceptions if not worked)
+   [2, 5, 8, 10, 11].forEach((ii, k) => mkCredit(INVESTORS[ii], [7500, 12000, 49999, 3000, 64000][k], { ageDays: k % 3 }));
+   [2, 5, 8, 10, 11, 0].forEach((ii, k) => mkPurchase(INVESTORS[ii], [7000, 12500, 50000, 3000, 20000, 9999][k], { ageDays: k % 2, utr: k === 3 ? "SBINR5000000000" : null }));
+ 
+@@ -194,6 +242,7 @@
+     r("rule_3", 3, "Investor-bank fingerprint + amount", "1:1", "auto", [{ field: "credit.remitterAccount+IFSC", op: "in", value: "fingerprint(purchase.pan)" }, { field: "credit.amount", op: "equals", value: "purchase.amount" }], { amount: 0, days: 1, nameSim: 0 }, { matches: 52310, share: 7.8, fp: 0.04 }),
+     r("rule_4", 4, "PAN in narration → SIP bundle", "1:N", "auto", [{ field: "credit.narration → PAN", op: "equals", value: "purchase.pan" }, { field: "credit.amount", op: "equals", value: "Σ purchase.amount" }], { amount: 0, days: 0, nameSim: 0 }, { matches: 9120, share: 1.4, fp: 0.02 }),
+     r("rule_5", 5, "PA settlement = Σ MIS − fees", "N:M", "auto", [{ field: "credit.amount", op: "equals", value: "Σ mis.amount − Σ mis.fee − GST" }, { field: "credit.narration", op: "contains", value: "mis.settlementId" }], { amount: 1, days: 1, nameSim: 0 }, { matches: 30880, share: 4.6, fp: 0.0 }),
++    r("rule_7", 7, "Cheque: number + drawee bank + drawer account + amount", "1:1", "auto", [{ field: "credit.chequeNo", op: "equals", value: "purchase.chequeNo" }, { field: "credit.drawee + drawerAcct", op: "equals", value: "purchase.drawee + drawerAcct" }, { field: "credit.amount", op: "equals", value: "purchase.amount" }], { amount: 0, days: 5, nameSim: 0 }, { matches: 9120, share: 1.4, fp: 0.0 }, { note: "Cheque number alone never matches — numbers repeat across banks." }),
+     r("rule_6", 6, "Amount + date window + name similarity", "1:1", "suggest", [{ field: "credit.amount", op: "equals", value: "purchase.amount" }, { field: "credit.valueDate", op: "within", value: "purchase.txnDate ± days" }, { field: "sim(remitter, investor)", op: "≥", value: "nameSim" }], { amount: 0, days: 2, nameSim: 0.85 }, { matches: 21460, share: 3.2, fp: 1.8 }),
+   ];
+ }
+@@ -228,12 +277,13 @@
+     const type = EXCEPTION_TYPES[[0, 0, 0, 1, 1, 2, 3, 4, 5, 6, 7, 0, 2, 1, 8, 9][i % 16]];
+     const bank = BANKS[i % BANKS.length];
+     const inv = INVESTORS[i % INVESTORS.length];
+-    const ageHours = Math.round(2 + R() * 140);
++    // Most cases are a few days old; some unresolved credits have aged for weeks (aging buckets 6–10, 11–20, 20+ days).
++    const ageHours = Math.round(2 + R() * 140) + (i % 4 === 1 ? (4 + (i * 7) % 26) * 24 : 0);
+     const interestHoursLeft = 5 * 24 - ageHours; // simplified business-day clock
+     const amount = type === "Missing statement" || type === "Format drift" ? 0 : amt(1500, 900000);
+     const status = i % 9 === 0 ? "pending_approval" : i % 13 === 0 ? "closed" : i % 4 === 0 ? "in_progress" : "open";
+     list.push({
+-      id: `exc_${i + 1}`, ref: `EXC-${24100 + i}`, type, bankName: bank.name, amount, ageHours, interestHoursLeft,
++      id: `exc_${i + 1}`, amc: amcFor(i), ref: `EXC-${24100 + i}`, type, bankName: bank.name, amount, ageHours, interestHoursLeft,
+       investor: ["Format drift", "Missing statement"].includes(type) ? "—" : inv.name, owner: owners[i % owners.length],
+       status, rootCause: status === "closed" || status === "pending_approval" ? ROOT_CAUSES[i % ROOT_CAUSES.length] : null,
+       suggestion: suggestionFor(type, inv, amount),
+@@ -334,7 +384,7 @@
+ export const DELAYED_INTEREST_PA = 0.15;
+ export function seedRefunds() {
+   const mk = (i, inv, amount, reason, ageDays, verified, status, owner) => ({
+-    id: `rf_${i}`, ref: `RF-${55200 + i}`, investor: inv.name, pan: inv.pan, amount, reason, ageDays,
++    id: `rf_${i}`, amc: amcOfInvestor(inv), ref: `RF-${55200 + i}`, investor: inv.name, pan: inv.pan, amount, reason, ageDays,
+     bankAcct: "XXXX" + inv.acct.slice(-4), ifsc: inv.bank, verified, status, owner, createdAt: new Date(now - ageDays * day).toISOString(),
+   });
+   return [
+@@ -351,7 +401,7 @@
+ // ---------------------------------------------------------------------------
+ // Channels — processing history per file, email intake log, bank connections
+ // ---------------------------------------------------------------------------
+-const CHANNEL_LABEL = { auto: "Portal bot", manual: "Manual upload", email: "Email", api: "API" };
++const CHANNEL_LABEL = { auto: "Portal bot", manual: "Manual upload", email: "Email", api: "API", sftp: "SFTP" };
+ export { CHANNEL_LABEL };
+ 
+ /** Adds a step-by-step processing history to each seeded file. */
+@@ -360,14 +410,15 @@
+     const h = [];
+     const t = (min) => new Date(new Date(f.receivedAt || f.expectedBy).getTime() + min * 60000).toISOString();
+     if (f.receivedAt) {
+-      h.push({ at: t(0), by: "System", step: "Received", text: { email: "Attachment taken from recon.ops@camsonline.com", auto: "Downloaded by portal bot", api: "Pulled from bank API", manual: "Uploaded by operator" }[f.channel] });
++      h.push({ at: t(0), by: "System", step: "Received", text: { email: "Attachment taken from recon.ops@camsonline.com", auto: "Downloaded by portal bot", api: "Pulled from bank API", manual: "Uploaded by operator", sftp: `Discovered in SFTP folder /inbound/${f.bankName.split(" ")[0].toLowerCase()}/${f.accountNumber.slice(-4)}/` }[f.channel] });
+       h.push({ at: t(1), by: "System", step: "Parsed", text: `${f.rows} rows read` });
+       const bad = f.checks.filter((c) => !c.ok);
+       if (bad.length) h.push({ at: t(2), by: "System", step: "Checks failed", text: bad.map((c) => c.label).join("; "), bad: true });
+       else h.push({ at: t(2), by: "System", step: "Checks passed", text: "5 of 5 checks passed" });
+       if (f.status === "loaded") h.push({ at: t(3), by: "System", step: "Loaded", text: `${f.credits} credits loaded for matching` });
+     } else {
+-      h.push({ at: f.expectedBy, by: "System", step: "Not received", text: f.channel === "manual" ? "Waiting for the operator to upload it" : "Nothing arrived by the expected time", bad: true });
++      h.push({ at: f.expectedBy, by: "System", step: "Not received yet", text: f.channel === "manual" ? "Waiting for the operator to upload it" : "Nothing arrived by the expected time. The bank may not have published it yet, or there were no transactions." });
++      h.push({ at: new Date(new Date(f.expectedBy).getTime() + 15 * 60000).toISOString(), by: "System", step: "Reminder sent", text: "Daily reminder to the file owner and the bank's relationship manager" });
+     }
+     return { ...f, history: h, attempts: f.receivedAt ? 1 : 0 };
+   });
+@@ -380,7 +431,7 @@
+   return [
+     e("em_1", 8, 52, "statements@hdfcbank.com", `Account Statement ${new Date().toISOString().slice(0, 10)} A/c XXXX${ac(0)}`, { name: files[0].fileName, type: "csv", size: "412 KB" }, "matched", { fileId: files[0].id, setup: `HDFC Bank ·${ac(0)} (email)` }),
+     e("em_2", 8, 55, "estatement@axisbank.com", "Daily MIS statement", { name: files[5].fileName, type: "csv", size: "288 KB" }, "matched", { fileId: files[5].id, setup: `Axis Bank ·${ac(5)} (email)` }),
+-    e("em_3", 9, 2, "noreply@kotak.com", `Statement KKBK ${ac(10)}`, { name: files[10].fileName, type: "csv", size: "390 KB" }, "rejected", { reason: "duplicate", reasonText: "Same attachment content as a file already loaded at 08:52 (content hash match)", fileId: files[10].id }),
++    e("em_3", 9, 2, "noreply@kotak.com", `Statement KKBK ${ac(10)}`, { name: files[10].fileName, type: "csv", size: "390 KB" }, "rejected", { reason: "duplicate", reasonText: "This attachment appears to be a file already loaded at 8:52 AM — same content, only the file name is different.", fileId: files[10].id }),
+     e("em_4", 9, 14, "corporate.statements@icicibank.com", `ICICI corporate statement ·${ac(3)}`, { name: "statement.zip", type: "zip", size: "120 KB", passwordProtected: true }, "rejected", { reason: "zip_password", reasonText: "The ZIP password stored in the vault didn't open the file. The bank may have changed it.", setup: `ICICI Bank ·${ac(3)} (email backup)` }),
+     e("em_5", 9, 21, "alerts@sbi.co.in", `SBI e-statement A/c ${ac(7)}`, { name: `SBI_${ac(7)}_statement.xlsx`, type: "xlsx", size: "88 KB" }, "rejected", { reason: "no_setup", reasonText: `No email setup matches this sender and subject. SBI ·${ac(7)} is set up for Manual upload — and that statement is still missing today.`, suggestFileId: files[7].id }),
+     e("em_6", 9, 33, "statements@yesbank.in", "Statement for your account", { name: "", type: "", size: "" }, "rejected", { reason: "no_attachment", reasonText: "Looks like a Yes Bank statement email, but it had no attachment." }),
+@@ -398,10 +449,9 @@
+   const c = (id, i, type, status, extra) => ({ id, fileId: files[i].id, bankName: files[i].bankName, acct: ac(i), type, status, ...extra });
+   return [
+     c("cn_1", 2, "api", "healthy", { endpoint: "api.hdfcbank.com/corp/v2/statements", every: 30, lastPull: ago(12), nextPull: inn(18), latencyMs: 640, recordsToday: 1882, successRate: [100, 100, 100, 98, 100, 100, 100], tokenExpires: inn(60 * 24 * 21) }),
+-    c("cn_2", 9, "api", "degraded", { endpoint: "openapi.kotak.com/v1/acct/stmt", every: 30, lastPull: ago(48), nextPull: inn(2), latencyMs: 8900, recordsToday: 744, successRate: [100, 96, 88, 72, 80, 66, 70], error: "3 of the last 6 pulls timed out (over 8 s). Data is arriving, but late.", tokenExpires: inn(60 * 24 * 9) }),
++    c("cn_2", 9, "api", "degraded", { userTrigger: false, endpoint: "openapi.kotak.com/v1/acct/stmt", every: 30, lastPull: ago(48), nextPull: inn(2), latencyMs: 8900, recordsToday: 744, successRate: [100, 96, 88, 72, 80, 66, 70], error: "3 of the last 6 pulls timed out (over 8 s). Data is arriving, but late.", tokenExpires: inn(60 * 24 * 9) }),
+     c("cn_3", 15, "api", "failing", { endpoint: "api.yesbank.in/corporate/statement", every: 30, lastPull: ago(185), nextPull: inn(5), latencyMs: 0, recordsToday: 0, successRate: [100, 100, 100, 0, 0, 0, 0], error: "401 Unauthorized — the API token expired at 06:40 today.", tokenExpires: ago(60 * 3), authIssue: true }),
+     c("cn_4", 1, "auto", "healthy", { endpoint: "Portal bot · netbanking.hdfcbank.com", every: 60, lastPull: ago(31), nextPull: inn(29), latencyMs: 41000, recordsToday: 1204, successRate: [100, 100, 100, 100, 100, 100, 100] }),
+     c("cn_5", 6, "auto", "failing", { endpoint: "Portal bot · corporate.axisbank.co.in", every: 60, lastPull: ago(95), nextPull: inn(25), latencyMs: 0, recordsToday: 0, successRate: [100, 100, 100, 100, 50, 0, 0], error: "The portal now shows a CAPTCHA at login. The bot can't get past it, so someone has to download this statement by hand and upload it.", captcha: true }),
+-    c("cn_6", 12, "auto", "healthy", { endpoint: "Portal bot · yesconnect.yesbank.in", every: 60, lastPull: ago(22), nextPull: inn(38), latencyMs: 36000, recordsToday: 988, successRate: [100, 100, 100, 100, 100, 100, 100] }),
+   ];
+ }
+diff --color -ruN a/frontend/src/mock/userSeed.js frontend/src/mock/userSeed.js
+--- a/frontend/src/mock/userSeed.js	2026-10-22 11:17:31
++++ b/frontend/src/mock/userSeed.js	2026-10-22 11:21:31
+@@ -8,7 +8,7 @@
+ // 6. Kiran Das (Operator, Invited)
+ // 7. Neha Kapoor (Viewer, Invite expired)
+ //
+-// Org totals: Admin: 2, Operator: 41, Authoriser: 7, Viewer: 98 (Total: 148 users).
++// Org totals: Admin: 2, Operator: 41, Authoriser: 8, Viewer: 98 (Total: 149 users, incl. Kavita, functional manager).
+ // Pagination will read "Showing 1–15 of 148 Records" (or whichever page size is selected).
+ 
+ import { uid } from "../lib/format";
+@@ -131,6 +131,20 @@
+     createdBy: "Meera Iyer",
+   },
+   {
++    id: "usr_kavita",
++    empNo: "EMP-3015",
++    name: "Kavita Menon",
++    email: "kavita.menon@camsonline.com",
++    phone: "+91 98210 44556",
++    designation: "Functional Manager — Reconciliation & Brokerage",
++    role: "authoriser",
++    roles: ["role_functional_manager"],
++    status: "active",
++    lastLogin: new Date(now - 30 * 60 * 1000).toISOString(),
++    createdAt: new Date(now - 300 * day).toISOString(),
++    createdBy: "Meera Iyer",
++  },
++  {
+     id: "usr_farhan",
+     empNo: "EMP-5011",
+     name: "Farhan Qureshi",
+@@ -138,7 +152,7 @@
+     phone: "+91 98209 33445",
+     designation: "Brokerage Operations Executive",
+     role: "viewer",
+-    roles: ["role_brk_maker", "role_pst_viewer"],
++    roles: ["role_brk_maker", "role_pst_viewer", "role_sip_viewer"],
+     status: "active",
+     lastLogin: new Date(now - 3 * hour).toISOString(),
+     createdAt: new Date(now - 120 * day).toISOString(),
+@@ -212,5 +226,24 @@
+   // Platform access model: every user holds one or more module roles.
+   const explicit = { usr_meera: ["role_platform_admin"], usr_rohit: ["role_access_approver"], usr_priya: ["role_recon_setup_maker"], usr_arun: ["role_recon_checker"], usr_sanjay: ["role_recon_auditor"] };
+   users.forEach((u, i) => { if (!u.roles) u.roles = explicit[u.id] || rolesForLegacy(u.role, i); });
++
++  // AMC scope, daily-cycle assignment and biometric punch-in (for the 10-day auto-deactivation policy).
++  const AMC = ["HDFC Mutual Fund", "ICICI Prudential MF", "Aditya Birla Sun Life MF", "Kotak Mahindra MF", "Nippon India MF", "DSP Mutual Fund"];
++  const scope = { usr_priya: ["ALL"], usr_arun: ["HDFC Mutual Fund", "ICICI Prudential MF", "Kotak Mahindra MF"], usr_deepa: ["HDFC Mutual Fund", "ICICI Prudential MF"], usr_kavita: ["ALL"], usr_sanjay: ["ALL"], usr_meera: ["ALL"], usr_rohit: ["ALL"], usr_farhan: ["DSP Mutual Fund"] };
++  // Deepa works a large AMC desk: files, matching and refunds. Problem cases and fund release sit with other teams.
++  const steps = { usr_deepa: ["files", "match", "refunds", "close"] };
++  users.forEach((u, i) => {
++    u.amcs = scope[u.id] || (i % 5 === 0 ? ["ALL"] : [AMC[i % AMC.length], AMC[(i + 2) % AMC.length]]);
++    if (steps[u.id]) u.workflowSteps = steps[u.id];
++    if (u.status === "active") u.lastBiometric = new Date(now - (PRIMARY_USERS.some((p) => p.id === u.id) ? 0.3 : i % 9) * day).toISOString();
++  });
++  // Auto-deactivated by the biometric rule (no punch-in for 10+ consecutive days).
++  users.filter((u) => u.status === "active" && !PRIMARY_USERS.some((p) => p.id === u.id)).slice(3, 7).forEach((u, k) => {
++    Object.assign(u, { status: "deactivated", autoDeactivated: true, deactivatedBy: "System (biometric rule)", deactivatedAt: new Date(now - (k + 1) * day).toISOString(),
++      lastBiometric: new Date(now - (11 + k * 3) * day).toISOString(), deactivationReason: `No biometric punch-in for ${10 + k * 3 + 1} consecutive days` });
++  });
++  // One active user who is about to cross the biometric limit, and the dormant (60+ days no login) users stay as generated.
++  const near = users.find((u) => u.status === "active" && !PRIMARY_USERS.some((p) => p.id === u.id) && u.role === "operator");
++  if (near) near.lastBiometric = new Date(now - 9 * day).toISOString();
+   return users;
+ }
+diff --color -ruN a/frontend/src/state/store.js frontend/src/state/store.js
+--- a/frontend/src/state/store.js	2026-10-22 11:17:31
++++ b/frontend/src/state/store.js	2026-10-22 11:39:27
+@@ -6,11 +6,11 @@
+ import { ACTIONS, authorize, INVITE_TTL_MS } from "../lib/rbac";
+ import { genTempPassword } from "../lib/credentials";
+ import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
+-import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections } from "../mock/opsSeed";
++import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp } from "../mock/opsSeed";
+ 
+-const KEY = "cams_recon_state_v13";
++const KEY = "cams_recon_state_v16";
+ // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
+-const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map"];
++const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp"];
+ 
+ /** R7 — keep the live (last approved) version on a draft/pending edit so the checker sees a diff. */
+ function baselineOf(prev, item) {
+@@ -37,7 +37,7 @@
+       access_requests: [
+         { id: "acr_seed1", kind: "assign", status: "pending", userId: "usr_sanjay", roleIds: ["role_recon_checker"], requestedBy: "Meera Iyer", requestedAt: new Date(Date.now() - 2 * 3600000).toISOString(), note: "Sanjay to cover Arun's approvals during leave (21–31 Oct)" },
+       ],
+-      files, emails: seedEmails(files), connections: seedConnections(files), credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
++      files, emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], dismissals: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
+       exceptions: seedExceptions(), documents: seedDocuments(),
+       releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(),
+     },
+@@ -232,6 +232,8 @@
+       phone: form.phone.trim(),
+       designation: form.designation.trim(),
+       roles: immediate,
++      amcs: form.amcs && form.amcs.length ? form.amcs : ["ALL"],
++      workflowSteps: form.workflowSteps && form.workflowSteps.length ? form.workflowSteps : undefined,
+       status: "invited",
+       lastLogin: null,
+       tempPassword,
+@@ -271,6 +273,8 @@
+       name: form.name.trim(), empNo: form.empNo.trim().toUpperCase(), email: form.email.trim().toLowerCase(),
+       phone: form.phone.trim(), designation: form.designation.trim(),
+       roles: immediate, lastUpdated: new Date().toISOString(),
++      amcs: form.amcs && form.amcs.length ? form.amcs : existing.amcs || ["ALL"],
++      workflowSteps: form.workflowSteps && form.workflowSteps.length ? form.workflowSteps : undefined,
+     };
+     dispatch({ type: "UPSERT", kind: "users", item: updated });
+     if (privileged.length) queueAccessRequest({ kind: "assign", userId: id, roleIds: privileged, note: "Privileged role added" });
+@@ -318,7 +322,11 @@
+     }
+     dispatch({ type: "UPSERT", kind: "access_requests", item: { ...req, status: approveIt ? "approved" : "rejected", decidedBy: personaUser.name, decidedAt: new Date().toISOString(), comment } });
+     let label = req.kind;
+-    if (approveIt) {
++    if (req.kind === "reactivate") {
++      const u = state.collections.users.find((x) => x.id === req.userId);
++      if (u && approveIt) dispatch({ type: "UPSERT", kind: "users", item: { ...u, status: "active", autoDeactivated: false, deactivationReason: null, reactivatedAt: new Date().toISOString(), reactivatedBy: `${req.requestedBy} (approved by ${personaUser.name})`, lastBiometric: req.biometricConfirmed ? new Date().toISOString() : u.lastBiometric } });
++      label = `Reactivate ${u?.name || req.userId}`;
++    } else if (approveIt) {
+       if (req.kind === "assign") {
+         const u = state.collections.users.find((x) => x.id === req.userId);
+         if (u) {
+@@ -387,6 +395,30 @@
+     return { ok: true, user: updated };
+   }, [actor, activePersona.name, addAudit, state.collections.users]);
+ 
++  /** Controlled reactivation: a reason (and IDM ticket for biometric cases) goes to a second admin. */
++  const requestReactivation = useCallback((id, reason, ticket, biometricConfirmed) => {
++    const existing = (state.collections.users || []).find((u) => u.id === id);
++    if (!existing) return { ok: false, error: "User not found" };
++    const authCheck = authorize(actor, ACTIONS.USER_REACTIVATE, existing);
++    if (!authCheck.ok) return { ok: false, error: authCheck.reason };
++    if ((state.collections.access_requests || []).some((r) => r.kind === "reactivate" && r.userId === id && r.status === "pending")) return { ok: false, error: "A reactivation request for this user is already waiting" };
++    queueAccessRequest({ kind: "reactivate", userId: id, note: `${reason}${ticket ? ` · IDM ticket ${ticket}` : ""}`, biometricConfirmed });
++    addAudit({ entityType: "user", entityId: id, entityLabel: `${existing.name} (${existing.empNo})`, action: "Request reactivation", from: "Deactivated", to: "Reactivation pending", comment: `${reason}${ticket ? ` · IDM ${ticket}` : ""}` });
++    return { ok: true };
++  }, [actor, state.collections.users, state.collections.access_requests, queueAccessRequest, addAudit]);
++
++  /** Scheduled job (run on demand in the demo): disable IDs with no biometric punch-in for 10 consecutive days. */
++  const runBiometricCheck = useCallback(() => {
++    const limit = 10 * 86400000;
++    const hit = (state.collections.users || []).filter((u) => u.status === "active" && u.lastBiometric && Date.now() - new Date(u.lastBiometric).getTime() >= limit);
++    hit.forEach((u) => {
++      const days = Math.floor((Date.now() - new Date(u.lastBiometric).getTime()) / 86400000);
++      dispatch({ type: "UPSERT", kind: "users", item: { ...u, status: "deactivated", autoDeactivated: true, deactivatedBy: "System (biometric rule)", deactivatedAt: new Date().toISOString(), deactivationReason: `No biometric punch-in for ${days} consecutive days` } });
++      addAudit({ entityType: "user", entityId: u.id, entityLabel: `${u.name} (${u.empNo})`, action: "Auto-deactivate (biometric)", from: "Active", to: "Deactivated", comment: `No biometric punch-in for ${days} consecutive days` });
++    });
++    return hit.length;
++  }, [state.collections.users, addAudit]);
++
+   const reactivateUser = useCallback((id) => {
+     const existing = (state.collections.users || []).find((u) => u.id === id);
+     if (!existing) return { ok: false, error: "User not found" };
+@@ -506,6 +538,8 @@
+     updateUser,
+     deactivateUser,
+     reactivateUser,
++    requestReactivation,
++    runBiometricCheck,
+     resendInvite,
+     activateOnboardedUser,
+     submitRole,

@@ -1,0 +1,60 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: 243 75% 59%;
+  --primary-hover: 243 70% 52%;
+  --primary-soft: 243 90% 97%;
+  --primary-soft-border: 243 70% 90%;
+  --primary-deep: 245 60% 30%;
+
+  --page: 220 33% 98%;
+  --card: 0 0% 100%;
+  --border: 220 20% 92%;
+  --border-strong: 220 16% 85%;
+
+  --text: 230 30% 12%;
+  --muted: 225 10% 47%;
+
+  --st-draft: 220 12% 50%;
+  --st-pending: 32 95% 48%;
+  --st-rejected: 356 75% 53%;
+  --st-active: 158 64% 36%;
+  --st-inactive: 220 9% 62%;
+
+  --chip-teal: 174 62% 34%;
+  --chip-purple: 270 60% 55%;
+
+  --radius-card: 12px;
+  --radius-input: 8px;
+  --shadow-raised: 0 24px 48px -16px hsl(230 30% 12% / 0.22), 0 8px 16px -8px hsl(230 30% 12% / 0.12);
+  --shadow-soft: 0 1px 1px hsl(230 30% 12% / 0.03), 0 2px 6px -1px hsl(230 30% 12% / 0.06), 0 0 0 1px hsl(220 20% 92%);
+  --shadow-card: 0 1px 2px hsl(230 30% 12% / 0.04), 0 6px 16px -8px hsl(230 30% 12% / 0.08);
+  --font-ui: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  background: hsl(var(--page));
+  background-image: radial-gradient(1200px 500px at 80% -10%, hsl(243 90% 96%) 0%, transparent 60%);
+  background-attachment: fixed;
+  color: hsl(var(--text));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.005em;
+}
+
+.tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "cv11" 1; }
+::selection { background: hsl(var(--primary) / 0.18); }
+:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; border-radius: 6px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: hsl(220 14% 84%); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: hsl(220 14% 74%); border: 3px solid transparent; background-clip: padding-box; }

@@ -1,0 +1,70 @@
+{
+  "summary": "Executed end-to-end frontend-only testing of the CAMS Recon Configuration Workbench prototype across all screens: Dashboard/role switcher, Bank Statement Setup landing + 6-step wizard, Credit MIS Summary, Column Mapping 3-step editor, Authoriser Queue (approve/reject with comment), Audit History, and user menu reset. Most flows work as specified; discovered 3 functional bugs and a few minor divergences from spec. No crashes or dead ends.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AuthQueue review drawer (Maker role)",
+        "issue": "Approve/Reject buttons are NOT disabled when the current role is Maker. Spec requires both buttons disabled because the Maker cannot approve/reject their own submissions. Verified: role-maker + review-* drawer open; btn-approve.disabled is empty (enabled) and btn-reject.disabled is empty (enabled). As Authoriser they correctly work and the reject-comment >=10 chars validation works.",
+        "selector": "[data-testid=\"btn-approve\"], [data-testid=\"btn-reject\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "BankConfigLanding — Copy Setup button",
+        "issue": "btn-copy-setup is only disabled when 0 rows are selected. Selecting 2+ row checkboxes keeps it enabled. Spec: 'disabled until exactly one row checkbox is selected' (i.e. should be re-disabled when selection count is != 1).",
+        "selector": "[data-testid=\"btn-copy-setup\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "BankConfigWizard — step indicator navigation",
+        "issue": "Clicking step-6 directly in the step-indicator (from a rejected record) does NOT render the Review & Submit step: [data-testid=\"review-summary\"] and [data-testid^=\"edit-step-\"] are missing, and btn-submit-approval is absent. Flow only reaches review via sequential Next clicks. This caused the rejected-record submit flow to be unreachable through the fast path shown by the step indicator.",
+        "selector": "[data-testid=\"step-6\"] -> [data-testid=\"review-summary\"]",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Rejected Bank Config -> edit startRow -> Submit for Approval",
+        "issue": "Because step-6 is not reachable via the step indicator (see UI bug above), submitting a rejected record for approval could not be completed. After navigating back, the Maker banner still reads 'You have 2 rejected configurations awaiting rework.' and filter still shows REJECTED (2). No audit entry was recorded for a Draft or Submit. Expected: record moves to PENDING APPROVAL, rejected badge drops to 1, audit entry added.",
+        "affected_selectors": ["[data-testid=\"step-6\"]", "[data-testid=\"btn-submit-approval\"]", "[data-testid=\"banner-maker-rejected\"]", "[data-testid=\"filter-status\"]"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Dashboard (Maker role)",
+        "issues": [
+          "Page header still reads 'Authoriser Queue' when logged in as Maker; subtitle acknowledges Maker view ('approvals are performed by the Authoriser (Arun)'). Consider renaming or hiding the authoriser queue grid for Maker and surfacing a Maker-specific view (own submissions, draft/rejected counts)."
+        ]
+      },
+      {
+        "screen": "Console (all pages)",
+        "issues": [
+          "React hydration warning: `<span> cannot be a child of <option>` originating from Pagination.js page-size <select>/<option>. Appears due to instrumentation but still logs an error. Low priority."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Disable [data-testid=\"btn-approve\"] and [data-testid=\"btn-reject\"] in the review drawer when the active role is Maker (role-maker).",
+    "Fix step indicator navigation in BankConfigWizard: allow jumping to Step 6 (Review & Submit) to actually render the review-summary with edit-step-N links and btn-submit-approval; or disable step-6 click until prerequisites are met and surface validation errors.",
+    "Fix btn-copy-setup disabled logic: should be disabled when selection count is != 1 (re-disable after a second checkbox is selected).",
+    "Rename nav test-ids to match the spec style if desired (nav--bank-setup etc.) — currently nav-bank-setup/nav-credit-mis/nav-mapping/nav-audit; or update the spec. Minor.",
+    "Resolve hydration warning in Pagination component (ensure no element is injected as child of <option>).",
+    "Consider a Maker-specific dashboard view instead of showing the Authoriser Queue table in Maker role."
+  ],
+  "critical_code_review_comments": [
+    "BankConfigWizard: ensure the review step is accessible deterministically — review-summary and edit-step-N links should always render on step 6, otherwise submission flow is blocked for records navigated via the step indicator.",
+    "AuthQueue: role-based gating of Approve/Reject is missing in the review drawer; add role check before enabling the actions and expose aria-disabled for accessibility.",
+    "BankConfigLanding: selection-based toolbar actions (Copy Setup) should bind to exactly-one-selected invariant.",
+    "Pagination.js: ensure instrumentation does not inject non-text children into <option> to avoid React hydration warnings."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A", "frontend": "~85%" },
+  "test_credentials": "No login — role switcher only (role-maker=Priya, role-auth=Arun).",
+  "seed_data_creation": "None added. Reset-demo-data (menu-reset-demo) was invoked to restore seed state before testing.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Flows verified end-to-end: role switcher, maker-rejected banner (2) + view-rejected deep link + filter badge, bank-setup landing (filter dropdown, debounced highlighted search, pager testids, default 15 rows), Add New wizard with Manual mode auto-skipping step 3 to step 4, demo-file auto-detect (shimmer, Auto-detected chips, Edited chip on edit, preview-table), fake_xls_actually_html.xls warning, Save as Draft toast + list update, Mapping editor 3-step (sample-banner, Continue to header, btn-confirm-header, select-col-* ×9, map-summary-banner, btn-map-submit, submit-confirm, btn-final-submit), Credit MIS (6 status cards, Rejected badge 2, Export CSV, Add New), Authoriser Queue drawer with reject-comment >=10 chars validation and audit entry creation (user Arun, correct transition and comment). Known failing paths: Maker approve/reject should be disabled; step-6 jump misses review-summary; btn-copy-setup disabled logic for != 1 selection.",
+  "rca of the issue": "1) Approve/Reject enabled in Maker: role gating is likely absent on the drawer's action buttons — only the top-bar role is tracked but not consumed by AuthQueue drawer render. 2) Step indicator → step 6 shows nothing: BankConfigWizard likely conditionally renders review contents only after sequential forward navigation (step state machine) and treats direct jumps to 6 as noop. 3) Copy Setup: condition likely 'disabled when 0 selected' instead of 'disabled when selectedCount !== 1'."
+}

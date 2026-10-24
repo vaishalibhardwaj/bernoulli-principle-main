@@ -1,0 +1,45 @@
+{
+  "summary": "Retest of 3 bugs from iteration_1 on the CAMS Reconciliation Configuration Workbench prototype. All three fixes verified working. Regression touch-points (role switcher, maker-rejected banner, rejected-record edit -> submit flow, step-6 jump, audit entries, copy-setup selection invariant, authoriser approve/reject with >=10 char comment, audit history) all pass. No crashes or dead ends.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Console (all pages)",
+        "issues": [
+          "Pre-existing hydration warning '<span> cannot be a child of <option>' still logs from Pagination.js (appears to be caused by Emergent instrumentation injecting a <span> wrapper inside <option>). Low priority; does not break functionality."
+        ]
+      }
+    ]
+  },
+  "retest_results": {
+    "bug1_authqueue_role_gating": {
+      "status": "FIXED",
+      "evidence": "As Maker: btn-approve disabled=True, btn-reject disabled=True, 'cannot approve your own submission' note present (count=1). As Authoriser: both enabled; reject-comment with <10 chars keeps btn-confirm-reject disabled, with >=10 chars enables it; Approve removes item from queue; Reject with comment moves to Rejected; audit entries recorded (user Arun, Approve + Reject actions visible in Audit History)."
+    },
+    "bug2_rejected_wizard_step6_jump": {
+      "status": "FIXED",
+      "evidence": "Opened rejected Bank Config via edit-bc_m34rd1y: rejection-banner shown. Clicked step-6 directly -> review-summary=1, edit-step-*=5, btn-submit-approval=1 rendered. Navigated step-4, changed field-startrow from 1->7, jumped step-6, clicked btn-submit-approval -> returned to /bank-setup landing. banner-maker-rejected changed from '2 rejected configurations' to '1 rejected configuration'. Filter-status=rejected shows 1 row (was 2). Audit History shows new entry: Priya | Bank Config | HDFC Bank XXXX0000 | Submit for Approval | Rejected -> Pending Approval."
+    },
+    "bug3_copy_setup_selection_invariant": {
+      "status": "FIXED",
+      "evidence": "btn-copy-setup: 0 selected -> disabled=True; 1 selected -> disabled=False; 2 selected -> disabled=True; back to 1 -> disabled=False. Clicking with exactly 1 selected opens the copy wizard (step indicator visible, URL /bank-setup/copy/<id>)."
+    }
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Low priority, carried over from iteration_1) Investigate Pagination.js <option> hydration warning — appears to stem from instrumentation wrapper; consider rendering option text as a plain string to avoid any child element."
+  ],
+  "critical_code_review_comments": [
+    "All three targeted fixes implemented correctly: role gating in AuthQueue footer, maxReached initialised to STEPS.length-1 for existing records in BankConfigWizard, and selection array with !==1 invariant in BankConfigLanding.",
+    "Audit writes (saveDraft/submit/approve/reject) correctly append entries with user, transition and comment."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A", "frontend": "100% on retested bugs + regression touchpoints" },
+  "test_credentials": "No login — role switcher (role-maker=Priya, role-auth=Arun).",
+  "seed_data_creation": "Reset demo data via menu-reset-demo before each major test batch.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All iteration_1 bugs confirmed resolved. The only remaining known console noise is the Pagination <option><span> hydration warning (likely instrumentation-driven). All regression paths including the full rejected-record rework flow are now functional end-to-end."
+}

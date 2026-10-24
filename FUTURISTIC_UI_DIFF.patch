@@ -1,0 +1,1514 @@
+diff --color -ruN r4a/frontend/src/features/admin/UserManagement.jsx r4b/frontend/src/features/admin/UserManagement.jsx
+--- r4a/frontend/src/features/admin/UserManagement.jsx	2026-10-21 03:30:31
++++ r4b/frontend/src/features/admin/UserManagement.jsx	2026-10-21 03:30:31
+@@ -1,6 +1,7 @@
+ import React, { useState, useMemo, useEffect } from "react";
+ import { useStore } from "@/state/store";
+ import { MODULES, MODULE_BY_KEY, hasCap } from "@/lib/access";
++import { TiltCard, ModuleOrbit, CountUp } from "@/features/viz/Viz";
+ import Pagination from "@/components/Pagination";
+ import { SkeletonRows, EmptyState } from "@/components/bits";
+ import { formatDate, timeAgo, highlight } from "@/lib/format";
+@@ -246,27 +247,33 @@
+         </div>
+       ))}
+ 
+-      {/* Module strip: users with access to each module (click to filter) */}
+-      <div className="role-strip module-strip" data-testid="module-strip">
+-        {MODULES.map((m) => {
+-          const active = moduleFilter === m.key;
+-          return (
+-            <div key={m.key} className={`role-card ${active ? "active-filter" : ""}`} style={{ "--mc": m.color }}
+-              onClick={() => { setModuleFilter(active ? "all" : m.key); setRoleFilter("all"); }} data-testid={`module-card-${m.key}`}>
+-              <div className="rc-top">
+-                <span className="rc-name"><Shield size={16} color={m.color} /> {m.label}</span>
+-                <span className="rc-count tnum">{moduleCounts[m.key] || 0}</span>
+-              </div>
+-              <div className="rc-summary">{m.screens.length} screens · {roles.filter((r) => r.module === m.key && r.status === "active").length} roles</div>
+-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
+-                <button type="button" className="rc-link" onClick={(e) => { e.stopPropagation(); setSelectedRolePerms(m.key); }} data-testid={`view-roles-${m.key}`}>
+-                  View roles <ExternalLink size={12} />
++      {/* Admin command view: modules orbit the CAMS core (click a node to filter) + access health */}
++      <div className="admin-hero">
++        <TiltCard className="card orbit-card" max={5}>
++          <div className="card-head"><h3>Access by module</h3><span className="muted">Click a module to filter users · node size = users with access</span></div>
++          <div className="orbit-wrap">
++            <ModuleOrbit total={users.filter((u) => (u.roles || []).length).length} modules={MODULES.map((m) => ({ key: m.key, label: m.label, color: m.color, users: moduleCounts[m.key] || 0 }))} active={moduleFilter === "all" ? null : moduleFilter}
++              onPick={(k) => { setModuleFilter(moduleFilter === k ? "all" : k); setRoleFilter("all"); }} />
++            <div className="orbit-side">
++              {MODULES.map((m) => (
++                <button key={m.key} className={"om-row" + (moduleFilter === m.key ? " on" : "")} style={{ "--mc": m.color }} onClick={() => { setModuleFilter(moduleFilter === m.key ? "all" : m.key); setRoleFilter("all"); }} data-testid={`module-card-${m.key}`}>
++                  <i /><span>{m.label}</span><b className="fx-num">{moduleCounts[m.key] || 0}</b>
++                  <em onClick={(e) => { e.stopPropagation(); setSelectedRolePerms(m.key); }} data-testid={`view-roles-${m.key}`}>roles</em>
+                 </button>
+-                {active && <span style={{ fontSize: 11, color: m.color, fontWeight: 700 }}>● Filter applied</span>}
+-              </div>
++              ))}
+             </div>
+-          );
+-        })}
++          </div>
++        </TiltCard>
++        <div className="access-health">
++          {[
++            ["Active users", users.filter((u) => u.status === "active").length, "green"],
++            ["Invites pending", users.filter((u) => u.status === "invited" || u.status === "invite_expired").length, "amber"],
++            ["Access changes to approve", (collections.access_requests || []).filter((r) => r.status === "pending").length, "blue"],
++            ["Dormant 60+ days", users.filter((u) => u.status === "active" && u.lastLogin && Date.now() - new Date(u.lastLogin) > 60 * 86400000).length, "red"],
++          ].map(([l, v, t]) => (
++            <div key={l} className={"ah-tile tone-" + t}><span>{l}</span><b className="fx-num"><CountUp value={v} /></b></div>
++          ))}
++        </div>
+       </div>
+ 
+       {/* Main Table Card */}
+diff --color -ruN r4a/frontend/src/features/approvals/Approvals.jsx r4b/frontend/src/features/approvals/Approvals.jsx
+--- r4a/frontend/src/features/approvals/Approvals.jsx	2026-10-21 03:30:31
++++ r4b/frontend/src/features/approvals/Approvals.jsx	2026-10-21 03:30:31
+@@ -1,71 +1,123 @@
+ import React from "react";
+ import { useNavigate } from "react-router-dom";
++import { AnimatePresence, motion } from "framer-motion";
+ import { useStore } from "@/state/store";
+ import { useApprovals } from "./useApprovals";
+-import { Inbox, Check, X, ArrowRight, AlertTriangle, CheckCircle2 } from "lucide-react";
++import { Inbox, Check, X, ArrowRight, AlertTriangle, CheckCircle2, Keyboard, CheckCheck } from "lucide-react";
+ import { toast } from "sonner";
+ 
+ const KIND_ORDER = ["Fund release", "Bank file layout", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Access", "Day close"];
++const WHY = {
++  "Fund release": "Units can't be allotted until this money is released to Transaction Posting. Cut-off 3:00 PM.",
++  "Bank file layout": "Rows from this bank are held until the new layout is accepted.",
++  Refund: "Money goes back to the investor. Delayed interest applies after 5 days.",
++  "Manual match": "Confirms that a payment belongs to a purchase, so it can be released.",
++  "Case closure": "Closes a problem case with the reason the maker gave.",
++  Document: "High-value values read from a PDF / email, checked by a maker.",
++  "Match rule": "Changes how payments are matched automatically. Review the simulation first.",
++  "Day close": "Signs off today's reconciliation and sends the summary to AMCs.",
++};
+ 
+-/** One inbox for checkers: everything every maker has submitted, most business-critical first. */
++/**
++ * Checker inbox as a split view (like an email client): a contained list on the left,
++ * one item in detail on the right, keyboard-driven, auto-advancing after each decision.
++ */
+ export default function Approvals() {
+   const nav = useNavigate();
+   const { currentUser } = useStore();
+   const all = useApprovals();
+   const [kind, setKind] = React.useState("all");
+-  const [sel, setSel] = React.useState([]);
++  const [selId, setSelId] = React.useState(null);
++  const [done, setDone] = React.useState(0);
+   const items = all.filter((a) => kind === "all" || a.kind === kind);
+   const counts = KIND_ORDER.map((k) => [k, all.filter((a) => a.kind === k).length]).filter(([, n]) => n);
+-  const inline = (a) => a.approve || a.config;
++  const idx = Math.max(0, items.findIndex((a) => a.kind + a.id === selId));
++  const cur = items[idx];
+ 
+-  const decide = (a, yes) => {
++  const go = (d) => { const n = items[Math.max(0, Math.min(items.length - 1, idx + d))]; if (n) setSelId(n.kind + n.id); };
++  const decide = React.useCallback((a, yes) => {
++    if (!a || a.own) return;
+     const fn = yes ? (a.approve || a.config?.approve) : a.reject;
+-    if (!fn) return nav(a.review);
++    if (!fn) { nav(a.review); return; }
+     const res = fn();
+-    if (res && res.ok === false) { toast.error(res.error); return false; }
+-    return true;
+-  };
+-  const bulk = () => {
+-    let n = 0; items.filter((a) => sel.includes(a.id)).forEach((a) => { if (decide(a, true)) n++; });
+-    toast.success(`${n} item${n !== 1 ? "s" : ""} approved`); setSel([]);
+-  };
++    if (res && res.ok === false) { toast.error(res.error); return; }
++    setDone((d) => d + 1);
++    toast.success(yes ? `${a.kind} approved` : `Sent back to ${a.owner || "the maker"}`);
++    const nextItem = items[idx + 1] || items[idx - 1];
++    setSelId(nextItem ? nextItem.kind + nextItem.id : null);
++  }, [items, idx, nav]);
+ 
++  React.useEffect(() => {
++    const h = (e) => {
++      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.metaKey || e.ctrlKey) return;
++      if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); go(1); }
++      if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); go(-1); }
++      if (e.key === "a") decide(cur, true);
++      if (e.key === "s") decide(cur, false);
++    };
++    window.addEventListener("keydown", h);
++    return () => window.removeEventListener("keydown", h);
++  });
++
++  const groups = KIND_ORDER.map((k) => [k, items.filter((a) => a.kind === k)]).filter(([, l]) => l.length);
++
+   return (
+-    <div data-testid="approvals-inbox">
++    <div className="inbox-page" data-testid="approvals-inbox">
+       <div className="page-head">
+         <div>
+           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={22} /> Approvals</h1>
+-          <p>Everything your team has sent for a second check, from every screen. Items that hold up today's fund release are at the top.</p>
++          <p>One item at a time. Approve with <kbd>A</kbd>, send back with <kbd>S</kbd>, move with <kbd>J</kbd>/<kbd>K</kbd>. The next item opens automatically.</p>
+         </div>
+-        {sel.length > 0 && <div className="actions"><button className="btn btn-success" onClick={bulk} data-testid="bulk-approve"><Check size={14} /> Approve {sel.length} selected</button></div>}
++        <div className="actions"><span className="inbox-done"><CheckCheck size={15} /> {done} done this session · {all.length} left</span></div>
+       </div>
+ 
+-      <div className="chip-row" style={{ marginBottom: 14 }}>
++      <div className="chip-row" style={{ marginBottom: 12 }}>
+         <button className={"filter-chip" + (kind === "all" ? " on" : "")} onClick={() => setKind("all")}>All <b>{all.length}</b></button>
+         {counts.map(([k, n]) => <button key={k} className={"filter-chip" + (kind === k ? " on" : "")} onClick={() => setKind(k)}>{k} <b>{n}</b></button>)}
+       </div>
+ 
+-      <div className="card">
+-        {items.length === 0 && <div className="mw-empty"><CheckCircle2 size={30} /><h2>Inbox zero</h2><p className="muted">Nothing is waiting for your approval.</p></div>}
+-        {items.map((a) => (
+-          <div key={a.kind + a.id} className={"ap-row" + (a.urgent ? " urgent" : "")} data-testid={"ap-" + a.id}>
+-            <input type="checkbox" className="cb" disabled={a.own || !inline(a)} checked={sel.includes(a.id)} onChange={() => setSel((s) => s.includes(a.id) ? s.filter((x) => x !== a.id) : [...s, a.id])} aria-label="Select" />
+-            <span className="ap-kind">{a.kind}</span>
+-            <div className="ap-main">
+-              <div className="ap-title">{a.urgent && <AlertTriangle size={13} className="ap-urgent" />}{a.title}</div>
+-              <div className="muted">{a.detail}{a.owner && <> · from <b>{a.owner}</b></>}</div>
++      <div className="split">
++        <div className="split-list card">
++          {items.length === 0 && <div className="mw-empty"><CheckCircle2 size={30} /><h2>Inbox zero</h2><p className="muted">Nothing is waiting for your approval.</p></div>}
++          {groups.map(([k, list]) => (
++            <div key={k}>
++              <div className="sl-group">{k} <span>{list.length}</span></div>
++              {list.map((a) => (
++                <button key={a.kind + a.id} className={"sl-row" + (cur && a.kind + a.id === cur.kind + cur.id ? " on" : "") + (a.urgent ? " urgent" : "")} onClick={() => setSelId(a.kind + a.id)} data-testid={"ap-" + a.id}>
++                  <span className="sl-title">{a.urgent && <AlertTriangle size={12} />}{a.title}</span>
++                  <span className="sl-sub">{a.own ? "Your own — another checker approves" : `from ${a.owner || "—"}`}</span>
++                </button>
++              ))}
+             </div>
+-            {a.own ? <span className="pill pill-pending"><span className="dot" />Your own — another checker approves</span> : (
+-              <div className="ap-actions">
+-                {a.review && <button className="btn btn-outline btn-sm" onClick={() => nav(a.review)}>Review <ArrowRight size={12} /></button>}
+-                {a.reject && <button className="btn btn-ghost btn-sm" onClick={() => decide(a, false) && toast("Sent back to " + (a.owner || "the maker"))}><X size={13} /> Send back</button>}
+-                {inline(a) && <button className="btn btn-success btn-sm" onClick={() => decide(a, true) && toast.success(`${a.kind} approved`)} data-testid={"ap-approve-" + a.id}><Check size={13} /> Approve</button>}
+-              </div>
++          ))}
++        </div>
++
++        <div className="split-detail">
++          <AnimatePresence mode="wait">
++            {cur && (
++              <motion.div key={cur.kind + cur.id} className="sd-card card" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={{ duration: 0.2 }}>
++                <div className="sd-top"><span className="ap-kind">{cur.kind}</span>{cur.urgent && <span className="pill pill-rejected"><span className="dot" />Blocks today's cycle</span>}<span className="sd-pos">{idx + 1} / {items.length}</span></div>
++                <h2>{cur.title}</h2>
++                <p className="sd-detail">{cur.detail}</p>
++                <div className="sd-facts">
++                  <div><span>Submitted by</span><b>{cur.owner || "—"}</b></div>
++                  <div><span>Why it matters</span><b>{WHY[cur.kind] || "Needs a second person before it takes effect."}</b></div>
++                  <div><span>Rule</span><b>{cur.own ? "You created this — another checker must approve it." : "Maker–checker: your approval is recorded in the audit trail."}</b></div>
++                </div>
++                <div className="sd-actions">
++                  {cur.own ? <span className="pill pill-pending"><span className="dot" />Your own submission</span> : <>
++                    {(cur.approve || cur.config) && <button className="btn btn-success btn-lg" onClick={() => decide(cur, true)} data-testid={"ap-approve-" + cur.id}><Check size={16} /> Approve <kbd>A</kbd></button>}
++                    {cur.reject && <button className="btn btn-outline btn-lg" onClick={() => decide(cur, false)}><X size={16} /> Send back <kbd>S</kbd></button>}
++                    {cur.review && <button className="btn btn-outline btn-lg" onClick={() => nav(cur.review)}>Review in full <ArrowRight size={15} /></button>}
++                  </>}
++                </div>
++              </motion.div>
+             )}
+-          </div>
+-        ))}
++          </AnimatePresence>
++          {cur && <div className="sd-next muted"><Keyboard size={13} /> Next: {items[idx + 1] ? items[idx + 1].title : "nothing — this is the last one"}</div>}
++        </div>
+       </div>
+-      <p className="muted" style={{ marginTop: 10 }}>Signed in as {currentUser}. You can't approve anything you created; those items show as "your own".</p>
++      <p className="muted" style={{ marginTop: 10 }}>Signed in as {currentUser}. You can't approve anything you created.</p>
+     </div>
+   );
+ }
+diff --color -ruN r4a/frontend/src/features/command/CommandCentre.jsx r4b/frontend/src/features/command/CommandCentre.jsx
+--- r4a/frontend/src/features/command/CommandCentre.jsx	2026-10-21 03:30:31
++++ r4b/frontend/src/features/command/CommandCentre.jsx	2026-10-21 03:30:31
+@@ -5,7 +5,8 @@
+ import { hasCap } from "@/lib/access";
+ import { inrShort, num, dur } from "@/features/ops/ui";
+ import { LineChart, Spark, BarList } from "@/features/ops/charts";
+-import { CycleStepper, useCycle } from "@/features/today/Cycle";
++import { useCycle } from "@/features/today/Cycle";
++import { TiltCard, CoreOrb, FlowStreams, Towers3D, CountUp } from "@/features/viz/Viz";
+ import { Gauge, ArrowUpRight, ArrowDownRight, Hourglass } from "lucide-react";
+ 
+ const BUCKETS = [["0–1d", 0, 24], ["1–2d", 24, 48], ["2–3d", 48, 72], ["3–5d", 72, 120], [">5d", 120, 9999]];
+@@ -54,40 +55,71 @@
+   openEx.forEach((e) => { const k = e.owner || "Unassigned"; owners[k] = owners[k] || { open: 0, urgent: 0, oldest: 0, amt: 0 }; owners[k].open++; owners[k].amt += e.amount; if (e.amount > 0 && e.interestHoursLeft < 24) owners[k].urgent++; owners[k].oldest = Math.max(owners[k].oldest, e.ageHours); });
+   const team = Object.entries(owners).sort((a, b) => b[1].urgent - a[1].urgent || b[1].open - a[1].open);
+ 
++  const release = (collections.releases || [])[0] || { status: "not_started" };
++  const refundsOut = (collections.refunds || []).filter((r) => ["draft", "pending", "approved"].includes(r.status)).reduce((x, r) => x + r.amount, 0);
++  const exAmt = openEx.reduce((x, e) => x + e.amount, 0);
++  const flowSources = [
++    { label: "Bank statements", v: TODAY.creditValue * 0.78 },
++    { label: "PA settlements", v: TODAY.creditValue * 0.17 },
++    { label: "PDF / email MIS", v: TODAY.creditValue * 0.05 },
++  ];
++  const flowOut = [
++    { label: release.status === "released" ? "Released to Posting" : "Ready to release", v: TODAY.realisedForAllotment, color: "#4ff0b4" },
++    { label: "Held — not matched", v: Math.max(0, TODAY.heldForAllotment - exAmt - refundsOut), color: "#ffc56b" },
++    { label: "Problem cases", v: exAmt, color: "#ff6b86" },
++    { label: "Refunds", v: refundsOut, color: "#b48cff" },
++  ];
++  const towers = TODAY.matchTrend.map((b) => { const s = b.series.slice(-range); const last = s[s.length - 1]; return { label: b.bank, code: b.code, v: last, bad: last < s[s.length - 2] - 4 }; });
++
+   return (
+-    <div data-testid="command-centre">
++    <div className="dash" data-testid="command-centre">
+       <div className="page-head">
+         <div>
+-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Gauge size={22} /> Dashboard</h1>
+-          <p>Is today on track, where is the money at risk, and who needs help. For team leads.</p>
++          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Gauge size={22} /> Command deck</h1>
++          <p>Live picture of today's money: how much matched, where it went, which banks are slipping, and who needs help.</p>
+         </div>
+-        <div className="actions"><div className="segmented">{[[7, "7 days"], [14, "14 days"]].map(([v, l]) => <button key={v} className={range === v ? "on" : ""} onClick={() => setRange(v)}>{l}</button>)}</div></div>
++        <div className="actions"><span className="live-dot">Live</span><div className="segmented">{[[7, "7 days"], [14, "14 days"]].map(([v, l]) => <button key={v} className={range === v ? "on" : ""} onClick={() => setRange(v)}>{l}</button>)}</div></div>
+       </div>
+ 
++      <div className="dash-hero">
++        <TiltCard className="card orb-card">
++          <div className="card-head"><h3>Reconciliation core</h3><span className="muted">Payments matched automatically today</span></div>
++          <div className="orb-wrap">
++            <CoreOrb value={stp} target={90} label="auto-matched" sub="target 90%" size={230} />
++            <div className="orb-facts">
++              <div><span>Payments today</span><b className="fx-num"><CountUp value={TODAY.credits} /></b></div>
++              <div><span>Value</span><b className="fx-num">{inrShort(TODAY.creditValue)}</b></div>
++              <div><span>Steps done</span><b className="fx-num">{steps.filter((x) => x.state === "done").length}/6</b></div>
++            </div>
++          </div>
++        </TiltCard>
++        <div className="card flow-card">
++          <div className="card-head"><h3>Where today's money went</h3><span className="muted">Hover a stream to isolate it</span></div>
++          <div className="card-pad"><FlowStreams sources={flowSources} outcomes={flowOut} format={inrShort} height={250} /></div>
++        </div>
++      </div>
++
+       <div className="kpi-cards">
+         {kpis.map((k) => (
+-          <button key={k.label} className="kpi-card" onClick={k.onClick} disabled={!k.onClick}>
++          <TiltCard key={k.label} className="kpi-card" max={6} onClick={k.onClick} role={k.onClick ? "button" : undefined} style={{ cursor: k.onClick ? "pointer" : "default" }}>
+             <span className="kc-label">{k.label}</span>
+             <div className="kc-row"><b className="tnum">{k.value}</b><Spark values={k.spark} bad={!k.good} /></div>
+             <span className={"kc-delta " + ((k.delta >= 0) === k.upIsGood ? "up" : "down")}>{k.delta >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}{Math.abs(k.delta).toFixed(k.delta % 1 ? 1 : 0)} {k.unit}</span>
+             <span className="kc-note">{k.note}</span>
+-          </button>
++          </TiltCard>
+         ))}
+       </div>
+ 
+-      <section className="card dash-section"><div className="card-head"><h3>Today's cycle</h3><span className="muted">{steps.filter((s) => s.state === "done").length}/6 done</span></div><div className="card-pad"><CycleStepper steps={steps} /></div></section>
+-
+       <div className="dash-2">
+         <div className="card">
+-          <div className="card-head"><h3>Auto-match rate · all banks</h3><span className="muted">Hover for daily values</span></div>
+-          <div className="card-pad"><LineChart id="match-trend" data={trend} min={80} max={100} target={90} format={(v) => `${v.toFixed(0)}%`} label="Auto-match rate trend" /></div>
++          <div className="card-head"><h3>Auto-match rate by bank</h3><span className="muted">Taller = better · red = dropped today · click to open bank files</span></div>
++          <div className="card-pad"><Towers3D items={towers} format={(v) => `${v.toFixed(1)}%`} onPick={() => go("ingestion", "/ingestion")?.()} /></div>
+         </div>
+         <div className="card">
+-          <div className="card-head"><h3>How today's {num(TODAY.credits)} payments were matched</h3></div>
+-          <div className="card-pad"><BarList rows={funnel} total={TODAY.credits} format={num} /></div>
++          <div className="card-head"><h3>Auto-match trend · all banks</h3><span className="muted">Hover for daily values</span></div>
++          <div className="card-pad"><LineChart id="match-trend" data={trend} min={80} max={100} target={90} format={(v) => `${v.toFixed(0)}%`} label="Auto-match rate trend" height={250} /></div>
+         </div>
+       </div>
+-
+       <div className="dash-2">
+         <div className="card">
+           <div className="card-head"><h3>Team workload</h3><span className="muted">Open problem cases by person</span></div>
+@@ -109,24 +141,6 @@
+         </div>
+       </div>
+ 
+-      <div className="card dash-section">
+-        <div className="card-head"><h3>Auto-match rate by bank</h3><span className="muted">A sudden drop usually means the bank changed its file</span></div>
+-        <table className="grid">
+-          <thead><tr><th>Bank</th><th>Last {range} days</th><th className="r">Today</th><th className="r">Change</th><th>Files today</th></tr></thead>
+-          <tbody>{TODAY.matchTrend.map((b) => {
+-            const s = b.series.slice(-range); const last = s[s.length - 1]; const prev = s[s.length - 2];
+-            const bf = files.filter((f) => f.bankCode === b.code); const bad = bf.filter((f) => f.status !== "loaded").length;
+-            return (
+-              <tr key={b.code} onClick={go("ingestion", "/ingestion")} style={{ cursor: "pointer" }}>
+-                <td><b>{b.bank}</b></td><td><Spark values={s} width={140} bad={last < prev - 4} /></td>
+-                <td className="tnum r">{last.toFixed(1)}%</td>
+-                <td className={"tnum r " + (last < prev - 4 ? "neg" : "")}>{(last - prev >= 0 ? "+" : "") + (last - prev).toFixed(1)}</td>
+-                <td>{bf.length ? (bad ? <span className="pill pill-pending"><span className="dot" />{bad} of {bf.length} need attention</span> : <span className="pill pill-active"><span className="dot" />{bf.length} clean</span>) : <span className="muted">—</span>}</td>
+-              </tr>
+-            );
+-          })}</tbody>
+-        </table>
+-      </div>
+     </div>
+   );
+ }
+diff --color -ruN r4a/frontend/src/features/match/MatchWorkbench.jsx r4b/frontend/src/features/match/MatchWorkbench.jsx
+--- r4a/frontend/src/features/match/MatchWorkbench.jsx	2026-10-21 03:30:31
++++ r4b/frontend/src/features/match/MatchWorkbench.jsx	2026-10-21 03:30:31
+@@ -5,7 +5,7 @@
+ import { formatDate, timeAgo } from "@/lib/format";
+ import { inr, Conf, PhaseBadge, ReadOnlyNote } from "@/features/ops/ui";
+ import { stripNumbers } from "@/lib/plain";
+-import { Combine, Sparkles, Check, X, HelpCircle, CheckCircle2, XCircle, Zap, Search } from "lucide-react";
++import { ArrowRight, Combine, Sparkles, Check, X, HelpCircle, CheckCircle2, XCircle, Zap, Search } from "lucide-react";
+ import { toast } from "sonner";
+ import { JourneyBar } from "@/features/today/Cycle";
+ import { useMatchActions, FAST_TRACK } from "./matchActions";
+@@ -22,6 +22,9 @@
+ export default function MatchWorkbench() {
+   const { collections, perms, act, currentUser, simple } = useStore();
+   const [byHand, setByHand] = React.useState(false);
++  const [selSug, setSelSug] = React.useState(null);
++  const liveSugg = (collections.suggestions || []).filter((x) => !x.decided);
++  const curSug = liveSugg.some((x) => x.id === selSug) ? selSug : liveSugg[0]?.id;
+   const txt = (t) => (simple ? stripNumbers(t) : t);
+   const canEdit = hasCap(perms, "match", "edit");
+   const canApprove = hasCap(perms, "match", "approve");
+@@ -102,12 +105,13 @@
+       )}
+ 
+       {suggestions.length > 0 && (
+-        <div className="sugg-grid" data-testid="ai-suggestions">
+-          {suggestions.map((s) => {
++        <div className="sugg-focus" data-testid="ai-suggestions">
++          {suggestions.filter((s) => s.id === curSug).map((s) => {
+             const cs = s.credits.map((id) => byId(credits, id)).filter(Boolean);
+             const ps = s.purchases.map((id) => byId(purchases, id)).filter(Boolean);
+             return (
+-              <div key={s.id} className="card sugg-card" data-testid={"sugg-" + s.id}>
++              <div key={s.id} className="card sugg-card focus" data-testid={"sugg-" + s.id}>
++                <div className="sf-pos">{suggestions.findIndex((x) => x.id === s.id) + 1} <em>of {suggestions.length}</em></div>
+                 <div className="sc-head"><Sparkles size={14} />{simple ? <b className="sc-q">Is this a match?</b> : <span className="strat">{s.type}</span>}<Conf value={s.confidence} auto={FAST_TRACK.conf} />
+                   {s.confidence >= FAST_TRACK.conf && cs.reduce((a, c) => a + c.amount, 0) <= FAST_TRACK.amount && <span className="fast"><Zap size={11} /> {simple ? "no approval needed" : "fast-track"}</span>}</div>
+                 {simple && <div className="sc-labels"><span>Money received</span><span>Purchase</span></div>}
+@@ -123,6 +127,19 @@
+               </div>
+             );
+           })}
++          <div className="sugg-rest card">
++            <div className="card-head"><h3>Also waiting</h3><span className="muted">{suggestions.length - 1} more</span></div>
++            {suggestions.filter((s) => s.id !== curSug).slice(0, 6).map((s) => {
++              const c0 = byId(credits, s.credits[0]); const p0 = byId(purchases, s.purchases[0]);
++              return (
++                <button key={s.id} className="un-row" onClick={() => setSelSug(s.id)}>
++                  <i style={{ background: s.confidence >= 0.9 ? "#4ff0b4" : "#ffc56b", color: s.confidence >= 0.9 ? "#4ff0b4" : "#ffc56b" }} />
++                  <span className="un-title">{inr(s.credits.reduce((a, id) => a + (byId(credits, id)?.amount || 0), 0))}<small>{c0?.remitter} → {p0?.investor}</small></span><ArrowRight size={13} />
++                </button>
++              );
++            })}
++            {suggestions.length > 7 && <div className="card-pad muted">+{suggestions.length - 7} more after these</div>}
++          </div>
+         </div>
+       )}
+ 
+diff --color -ruN r4a/frontend/src/features/ops/charts.jsx r4b/frontend/src/features/ops/charts.jsx
+--- r4a/frontend/src/features/ops/charts.jsx	2026-10-21 03:30:31
++++ r4b/frontend/src/features/ops/charts.jsx	2026-10-21 03:30:31
+@@ -28,6 +28,7 @@
+   return (
+     <div className="lc" ref={ref} onPointerMove={onMove} onPointerLeave={() => setHover(null)} data-testid={id} role="img" aria-label={label}>
+       <svg width={w} height={height}>
++        <defs><linearGradient id="lcGlow" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#39d0ff" stopOpacity=".35" /><stop offset="100%" stopColor="#39d0ff" stopOpacity="0" /></linearGradient></defs>
+         {tv.map((v) => <g key={v}><line x1={pad.l} x2={w - pad.r} y1={y(v)} y2={y(v)} className="lc-grid" /><text x={pad.l - 8} y={y(v) + 4} className="lc-axis" textAnchor="end">{format(v)}</text></g>)}
+         {data.map((d, i) => (i % Math.ceil(data.length / 7) === 0 || i === data.length - 1) && <text key={i} x={x(i)} y={height - 8} className="lc-axis" textAnchor="middle">{d.label}</text>)}
+         {target != null && <g><line x1={pad.l} x2={w - pad.r} y1={y(target)} y2={y(target)} className="lc-target" /><text x={w - pad.r} y={y(target) - 5} textAnchor="end" className="lc-target-label">Target {format(target)}</text></g>}
+diff --color -ruN r4a/frontend/src/features/today/Today.jsx r4b/frontend/src/features/today/Today.jsx
+--- r4a/frontend/src/features/today/Today.jsx	2026-10-21 03:30:31
++++ r4b/frontend/src/features/today/Today.jsx	2026-10-21 03:30:31
+@@ -1,229 +1,216 @@
+ import React from "react";
+-import { useNavigate, Link, useLocation } from "react-router-dom";
++import { useNavigate, useLocation } from "react-router-dom";
++import { AnimatePresence, motion } from "framer-motion";
+ import { useStore } from "@/state/store";
+ import { hasCap } from "@/lib/access";
+-import { PLAIN_EXCEPTION } from "@/lib/plain";
+-import { maskAccount } from "@/lib/format";
+-import { inr, inrShort, Light, timeLeftWords } from "@/features/ops/ui";
+-import { useMatchActions, isFastTrack } from "@/features/match/matchActions";
++import { inrShort, Light } from "@/features/ops/ui";
+ import { useApprovals } from "@/features/approvals/useApprovals";
+ import { RELEASE_CUTOFF } from "@/mock/opsSeed";
+-import { CycleStepper, useCycle } from "./Cycle";
++import { Drawer } from "@/components/Drawer";
++import { Modal } from "@/components/Modal";
++import { TiltCard, RingProgress, CountUp } from "@/features/viz/Viz";
+ import { downloadCsv } from "@/features/reports/csv";
+-import { ArrowRight, CheckCircle2, Hourglass, PartyPopper, Clock, Sun, ShieldCheck, Download, Flag } from "lucide-react";
++import { useCycle } from "./Cycle";
++import { useWorkItems } from "./workItems";
++import { ArrowRight, ArrowLeft, Hourglass, Clock, Sun, ShieldCheck, Download, Flag, Check, ListChecks, Sparkles, CheckCircle2, X } from "lucide-react";
+ import { toast } from "sonner";
+ 
+-const TONE_ORDER = { red: 0, amber: 1, green: 2 };
+-
+-function useWorkItems() {
+-  const { collections, perms, personaUser, act, currentUser } = useStore();
+-  const nav = useNavigate();
+-  const { acceptSuggestion, dismissSuggestion, byId, credits, purchases } = useMatchActions();
+-  const me = personaUser.name;
+-  const items = [];
+-
+-  const take = (e) => {
+-    const res = act({ screen: "exceptions", cap: "edit", kind: "exceptions", id: e.id, patch: { owner: me, status: "in_progress" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Assign", comment: `Picked up by ${me}` } });
+-    if (res.ok) toast.success("It's yours now. Open it when you're ready.");
+-  };
+-
+-  if (hasCap(perms, "exceptions", "edit")) {
+-    (collections.exceptions || []).filter((e) => ["open", "in_progress"].includes(e.status) && (e.owner === me || (!e.owner && e.amount > 0 && e.interestHoursLeft < 24))).forEach((e) => {
+-      const mine = e.owner === me; const clock = e.amount > 0;
+-      items.push({
+-        id: e.id, tone: clock && e.interestHoursLeft < 24 ? "red" : clock && e.interestHoursLeft < 72 ? "amber" : "green", sort: clock ? e.interestHoursLeft : 999,
+-        kind: "Problem case", step: 3, title: PLAIN_EXCEPTION[e.type] || e.type,
+-        detail: `${e.investor !== "—" ? e.investor + " · " : ""}${e.amount ? inr(e.amount) : e.bankName}`,
+-        when: clock ? timeLeftWords(e.interestHoursLeft) : null,
+-        hint: mine ? `What to do: ${e.suggestion.action.replace("Open in Match Workbench", "Find the matching purchase").replace("Open File Inbox", "Check the bank file")}` : "Nobody is working on this yet",
+-        primary: mine ? { label: "Open case", run: () => nav(`/exceptions?case=${e.id}`) } : { label: "Take this case", run: () => take(e) },
+-      });
+-    });
+-  }
+-  if (hasCap(perms, "match", "edit")) {
+-    (collections.suggestions || []).filter((s) => !s.decided).forEach((s) => {
+-      const cs = s.credits.map((id) => byId(credits, id)).filter(Boolean);
+-      const ps = s.purchases.map((id) => byId(purchases, id)).filter(Boolean);
+-      if (!cs.length || !ps.length) return;
+-      const amount = cs.reduce((a, c) => a + c.amount, 0); const sure = s.confidence >= 0.9;
+-      items.push({
+-        id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100, kind: "Match a payment", step: 2,
+-        title: cs.length > 1 ? `${cs.length} payments from ${cs[0].remitter} add up to ${ps[0].investor}'s purchase` : ps.length > 1 ? `One payment from ${cs[0].remitter} covers ${ps.length} purchases by ${ps[0].investor}` : `Payment from ${cs[0].remitter} looks like ${ps[0].investor}'s purchase`,
+-        detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`, light: sure ? "Very likely" : "Please check",
+-        hint: isFastTrack(s.confidence, amount) ? "Say yes and it's done — no approval needed" : "Say yes and your checker approves it",
+-        primary: { label: "Yes, match", run: () => acceptSuggestion(s) }, secondary: { label: "Not a match", run: () => dismissSuggestion(s) }, more: { label: "See why", run: () => nav("/match") },
+-      });
+-    });
+-  }
+-  if (hasCap(perms, "extraction", "edit")) {
+-    (collections.documents || []).filter((d) => d.status === "needs_review").forEach((d) => {
+-      const n = d.fields.filter((f) => f.conf < 0.95 || (f.validator && !f.validator.ok)).length + d.lines.reduce((k, l) => k + Object.values(l).filter((v) => v[1] < 0.95).length, 0);
+-      items.push({ id: d.id, tone: "amber", sort: 600, kind: "Check a document", step: 2, title: `Check ${n} value${n !== 1 ? "s" : ""} the system wasn't sure about`, detail: `${d.docType} · ${d.name}`, hint: "Everything else on it was read correctly", primary: { label: "Check values", run: () => nav(`/extraction?doc=${d.id}`) } });
+-    });
+-  }
+-  if (hasCap(perms, "refunds", "edit")) {
+-    (collections.refunds || []).filter((r) => r.status === "draft").forEach((r) => items.push({
+-      id: r.id, tone: r.ageDays >= 4 ? "red" : "amber", sort: 300 - r.ageDays, kind: "Refund", step: 5, title: `Refund ${inr(r.amount)} to ${r.investor}`, detail: `${r.reason} · to ${r.bankAcct}`,
+-      when: r.ageDays >= 5 ? "Late — interest is being added" : `${5 - r.ageDays} day${5 - r.ageDays !== 1 ? "s" : ""} before interest applies`,
+-      hint: r.verified ? "Bank account already verified" : "Verify the bank account first", primary: { label: "Prepare refund", run: () => nav(`/refunds?refund=${r.id}`) },
+-    }));
+-  }
+-  if (hasCap(perms, "ingestion", "edit")) {
+-    (collections.files || []).filter((f) => ["drift", "unknown", "check_failed", "late", "missing"].includes(f.status)).forEach((f) => items.push({
+-      id: f.id, tone: ["late", "missing"].includes(f.status) ? "red" : "amber", sort: 100, kind: "Bank file", step: 1,
+-      title: { drift: `${f.bankName} changed its file layout`, unknown: `${f.bankName} sent a file we don't recognise`, check_failed: `${f.bankName} statement balances don't add up`, late: `${f.bankName} statement is late`, missing: `${f.bankName} statement not received` }[f.status],
+-      detail: `Account ·${f.accountNumber.slice(-4)} · ${f.channel}`, hint: f.status === "drift" ? "The system has proposed the new mapping — confirm it" : "Retry or chase the bank",
+-      primary: { label: f.status === "drift" ? "Review new layout" : "Open file", run: () => nav(`/ingestion?file=${f.id}`) },
+-    }));
+-  }
+-  if (hasCap(perms, "bank_setup", "edit")) {
+-    (collections.bank_config || []).filter((x) => x.status === "rejected" && x.owner === currentUser).forEach((x) => items.push({
+-      id: x.id, tone: "amber", sort: 200, kind: "Rejected setup", title: `Fix ${x.bankName} ${maskAccount(x.accountNumber)} — sent back by checker`, detail: x.rejection?.comment || "", hint: "Make the change and resubmit",
+-      primary: { label: "Fix setup", run: () => nav(`/bank-setup/edit/${x.id}`) },
+-    }));
+-  }
+-  items.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || a.sort - b.sort);
+-  return items;
++function useCutoff() {
++  const [now, setNow] = React.useState(Date.now());
++  React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
++  return Math.round((new Date(RELEASE_CUTOFF) - now) / 60000);
+ }
+ 
+-function CutoffChip() {
+-  const mins = Math.round((new Date(RELEASE_CUTOFF) - Date.now()) / 60000);
+-  return <span className={"cutoff-chip" + (mins < 60 ? " hot" : "")}><Clock size={13} /> Fund release cut-off {mins > 0 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : "passed"}</span>;
++/** The day as a glowing track: six stations, progress line up to the last finished one. */
++function CycleTrack({ steps, mine, onPick }) {
++  const doneIdx = steps.reduce((m, s, i) => (s.state === "done" ? i : m), -1);
++  return (
++    <div className="track card" data-testid="daily-cycle">
++      <ol>
++        <div className="track-line"><motion.i initial={{ width: 0 }} animate={{ width: `${(Math.max(0, doneIdx) / (steps.length - 1)) * 100}%` }} transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }} /></div>
++        {steps.map((s) => (
++          <li key={s.key} className={"st " + s.state + (s.late ? " late" : "") + (mine === s.key ? " mine" : "")} onClick={() => onPick(s)} data-testid={"cycle-" + s.key} title={s.why}>
++            <span className="st-node">{s.state === "done" ? <Check size={14} strokeWidth={3} /> : s.state === "waiting" ? <Hourglass size={12} /> : s.n}</span>
++            <b>{{ files: "Bank files", match: "Match payments", cases: "Problem cases", release: "Release money", refunds: "Send refunds", close: "Close the day" }[s.key]}</b>
++            <small>{s.late && s.state !== "done" ? "late · was due " : "by "}{s.by}</small>
++            {mine === s.key && <em>You're here</em>}
++          </li>
++        ))}
++      </ol>
++    </div>
++  );
+ }
+ 
+ export default function Today() {
+-  const { collections, perms, personaUser, act, audit, simple, currentUser } = useStore();
++  const { collections, perms, personaUser, act, audit, currentUser } = useStore();
+   const nav = useNavigate();
+   const loc = useLocation();
+   const { steps, next } = useCycle();
+   const work = useWorkItems();
+   const approvals = useApprovals().filter((a) => !a.own);
+   const isChecker = hasCap(perms, "inbox", "approve");
++  const mins = useCutoff();
++  const [idx, setIdx] = React.useState(0);
++  const [queueOpen, setQueueOpen] = React.useState(false);
++  const [closeOpen, setCloseOpen] = React.useState(loc.hash === "#close");
+   const [note, setNote] = React.useState("");
+-  const closeRef = React.useRef(null);
+-  React.useEffect(() => { if (loc.hash === "#close") setTimeout(() => closeRef.current?.scrollIntoView({ behavior: "smooth" }), 200); }, [loc.hash]);
+ 
+   const first = personaUser.name.split(" ")[0];
+   const hour = new Date().getHours();
+   const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+   const todayStr = new Date().toDateString();
+   const doneToday = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === todayStr).length;
+-  const reds = work.filter((i) => i.tone === "red").length;
+-  const waitingMine = audit.length && [
++  const release = (collections.releases || [])[0] || { status: "not_started" };
++  const close = (collections.dayclose || [])[0] || { status: "open" };
++  const canSubmitClose = hasCap(perms, "match", "edit") || hasCap(perms, "release", "edit");
++  const canSignClose = hasCap(perms, "release", "approve");
++  const carried = (collections.exceptions || []).filter((e) => e.status !== "closed").length;
++  const waitingMine = [
+     ...(collections.matches || []).filter((m) => m.status === "pending" && m.owner === first),
+-    ...(collections.exceptions || []).filter((e) => e.status === "pending_approval" && (e.closedBy === first)),
++    ...(collections.exceptions || []).filter((e) => e.status === "pending_approval" && e.closedBy === first),
+     ...(collections.refunds || []).filter((r) => r.status === "pending" && (r.owner || "").startsWith(first)),
+     ...(collections.documents || []).filter((d) => d.status === "pending_checker" && d.owner === first),
+   ].length;
+ 
+-  // The single next action for this person
+-  const hero = isChecker && approvals.length
+-    ? { eyebrow: "Do this first", title: `Approve ${approvals.length} item${approvals.length > 1 ? "s" : ""} your team sent you`, why: approvals.some((a) => a.urgent) ? "Some of them block today's fund release or hold bank file rows. Those are at the top." : "Makers can't finish their steps until you approve.", cta: { label: "Open approvals", path: "/approvals" } }
+-    : next ? { eyebrow: `Step ${next.n} of 6 · by ${next.by}`, title: next.title, why: next.why, summary: next.summary, cta: next.cta, late: next.late }
+-    : work.length ? { eyebrow: "Do this first", title: work[0].title, why: work[0].hint, cta: { label: work[0].primary.label, run: work[0].primary.run } }
+-    : { eyebrow: "All clear", title: "Nothing is waiting for you right now", why: "New work appears here automatically. You can review today's dashboard or reports." };
++  // ---- One queue, in the order the day needs it ----
++  const queue = React.useMemo(() => {
++    const q = [];
++    if (isChecker) {
++      approvals.forEach((a) => q.push({
++        id: a.kind + a.id, tone: a.urgent ? "red" : "amber", kind: a.kind, title: a.title, detail: a.detail, hint: `Sent by ${a.owner || "—"}`,
++        primary: a.approve || a.config ? { label: "Approve", run: () => { const r = (a.approve || a.config.approve)(); if (r && r.ok === false) toast.error(r.error); else toast.success(`${a.kind} approved`); } } : { label: "Review", run: () => nav(a.review) },
++        secondary: a.reject ? { label: "Send back", run: () => { a.reject(); toast("Sent back to " + (a.owner || "the maker")); } } : null,
++        more: { label: "Open in Approvals", run: () => nav("/approvals") },
++      }));
++    } else {
++      if (hasCap(perms, "release", "edit") && release.status === "not_started") {
++        q.push({ id: "release", tone: mins < 120 ? "red" : "amber", kind: "Release money", step: 4, title: "Prepare today's fund release", detail: "Matched, realised money goes to Transaction Posting so units can be allotted", when: mins > 0 ? `Cut-off in ${Math.floor(mins / 60)}h ${mins % 60}m` : "Cut-off passed", hint: "One click — your checker releases it", primary: { label: "Prepare release", run: () => nav("/release") } });
++      }
++      work.forEach((w) => q.push(w));
++    }
++    if ((canSubmitClose && close.status === "open") || (canSignClose && close.status === "pending" && !(close.submittedBy || "").startsWith(first))) {
++      q.push({ id: "close", tone: "green", kind: "Close the day", step: 6, title: close.status === "pending" ? "Sign off today's reconciliation" : "Close the day when you're done", detail: close.status === "pending" ? `Submitted by ${close.submittedBy}` : `${carried} open items will carry forward`, hint: "Produces the day summary for the AMCs", primary: { label: close.status === "pending" ? "Sign off" : "Close the day", run: () => setCloseOpen(true) } });
++    }
++    const order = { red: 0, amber: 1, green: 2 };
++    return q.sort((a, b) => (a.id === "close") - (b.id === "close") || order[a.tone] - order[b.tone]);
++  }, [isChecker, approvals, work, perms, release.status, mins, canSubmitClose, canSignClose, close.status, close.submittedBy, carried, first, nav]);
+ 
+-  const close = (collections.dayclose || [])[0] || { status: "open" };
+-  const canSubmitClose = hasCap(perms, "match", "edit") || hasCap(perms, "release", "edit");
+-  const canSignClose = hasCap(perms, "release", "approve");
+-  const carried = (collections.exceptions || []).filter((e) => e.status !== "closed").length;
++  const i = Math.min(idx, Math.max(0, queue.length - 1));
++  const focus = queue[i];
++  const upNext = queue.slice(i + 1, i + 4);
++  const doneSteps = steps.filter((s) => s.state === "done").length;
++  const STEP_KEY = { 1: "files", 2: "match", 3: "cases", 4: "release", 5: "refunds", 6: "close" };
++  const mine = isChecker ? null : (focus?.step ? STEP_KEY[focus.step] : next?.key);
++
+   const submitClose = () => {
+     const res = act({ screen: "release", cap: "edit", kind: "dayclose", id: "day_today", patch: { status: "pending", submittedBy: currentUser, carried, note: note.trim(), submittedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Submit day close", from: "Open", to: "Pending", comment: `${carried} items carried forward` } });
+-    if (res.ok) toast.success(simple ? "Sent to your checker to sign off the day." : "Day close submitted for sign-off"); else toast.error(res.error);
++    if (res.ok) { toast.success("Sent to your checker to sign off the day."); setCloseOpen(false); } else toast.error(res.error);
+   };
+   const signClose = () => {
+     const res = act({ screen: "release", cap: "approve", kind: "dayclose", id: "day_today", target: { owner: close.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } });
+-    if (res.ok) toast.success("Day signed off. Summary sent to AMCs."); else toast.error(res.error);
++    if (res.ok) { toast.success("Day signed off. Summary sent to AMCs."); setCloseOpen(false); } else toast.error(res.error);
+   };
+   const daySummary = () => downloadCsv(`day_summary_${new Date().toISOString().slice(0, 10)}.csv`, ["Step", "Status", "Detail"], steps.map((s) => [s.title, s.state, s.summary]));
+ 
+-  const list = isChecker ? approvals.slice(0, 6).map((a) => ({ id: a.id, tone: a.urgent ? "red" : "amber", kind: a.kind, title: a.title, detail: a.detail, hint: `From ${a.owner || "—"}`, primary: { label: a.review ? "Review" : "Review & approve", run: () => nav(a.review || "/approvals") } })) : work;
+-
+   return (
+-    <div className="today" data-testid="today">
+-      <div className="today-head">
++    <div className="deck" data-testid="today">
++      <div className="deck-head">
+         <div>
+           <div className="eyebrow-sm"><Sun size={13} /> {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</div>
+           <h1>{greet}, {first}</h1>
+         </div>
+-        <CutoffChip />
++        <span className={"cutoff-chip" + (mins < 60 ? " hot" : "")}><Clock size={13} /> Fund release cut-off {mins > 0 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : "passed"}</span>
+       </div>
+ 
+-      {/* 1. The ONE thing to do next */}
+-      <div className={"next-card" + (hero.late ? " late" : "")} data-testid="next-action">
+-        <div className="nc-body">
+-          <div className="nc-eyebrow">{hero.eyebrow}{hero.late && <span className="nc-late">Running late</span>}</div>
+-          <h2>{hero.title}</h2>
+-          <p>{hero.why}</p>
+-          {hero.summary && <div className="nc-sum">{hero.summary}</div>}
++      <div className="deck-hero">
++        {/* 1 — The one thing to do now */}
++        <TiltCard className={"focus-card tone-" + (focus?.tone || "green")} max={4} data-testid="next-action">
++          <div className="fc-top">
++            <span className="fc-eyebrow"><Sparkles size={13} /> {isChecker ? "Your next approval" : "Your focus"}</span>
++            {focus && <span className="fc-count">{i + 1} <em>of {queue.length}</em></span>}
++          </div>
++          <AnimatePresence mode="wait">
++            {focus ? (
++              <motion.div key={focus.id} className="fc-body" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.25 }}>
++                <div className="fc-kind">{focus.step && <span className="step-chip">Step {focus.step}</span>}{focus.kind}{focus.light && <Light tone={focus.tone}>{focus.light}</Light>}</div>
++                <h2>{focus.title}</h2>
++                <p>{focus.detail}</p>
++                <div className="fc-hint">{focus.when && <span className={"mw-when " + focus.tone}><Hourglass size={13} /> {focus.when}</span>}{focus.hint}</div>
++                <div className="fc-actions">
++                  <button className="btn btn-primary btn-lg" onClick={focus.primary.run} data-testid="next-action-btn">{focus.primary.label} <ArrowRight size={16} /></button>
++                  {focus.secondary && <button className="btn btn-outline btn-lg" onClick={focus.secondary.run} data-testid="focus-secondary">{focus.secondary.label}</button>}
++                  {focus.more && <button className="link" onClick={focus.more.run}>{focus.more.label}</button>}
++                  <div className="fc-nav">
++                    <button className="icon-btn" disabled={i === 0} onClick={() => setIdx(i - 1)} aria-label="Previous"><ArrowLeft size={16} /></button>
++                    <button className="btn btn-ghost btn-sm" disabled={i >= queue.length - 1} onClick={() => setIdx(i + 1)} data-testid="focus-skip">Skip for now <ArrowRight size={13} /></button>
++                  </div>
++                </div>
++              </motion.div>
++            ) : (
++              <motion.div key="clear" className="fc-body fc-clear" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
++                <CheckCircle2 size={34} /><h2>You're all clear</h2><p>Nothing is waiting for you. New work appears here automatically.</p>
++              </motion.div>
++            )}
++          </AnimatePresence>
++        </TiltCard>
++
++        {/* 2 — Where the day stands */}
++        <div className="day-panel card">
++          <RingProgress value={doneSteps} max={6} label="steps done today" size={132} />
++          <div className="dp-stats">
++            <div><span>Done by you</span><b className="fx-num"><CountUp value={doneToday} /></b></div>
++            <div><span>{isChecker ? "Waiting for you" : "In your queue"}</span><b className="fx-num"><CountUp value={queue.length} /></b></div>
++            <div><span>Waiting for approval</span><b className="fx-num"><CountUp value={waitingMine} /></b></div>
++            <div><span>Realised today</span><b className="fx-num">{inrShort(release.amount || 19874410000)}</b></div>
++          </div>
+         </div>
+-        {hero.cta && <button className="btn btn-primary btn-lg" onClick={() => (hero.cta.run ? hero.cta.run() : nav(hero.cta.path))} data-testid="next-action-btn">{hero.cta.label} <ArrowRight size={16} /></button>}
+       </div>
+ 
+-      {/* 2. Where the day stands */}
+-      <section className="today-section">
+-        <div className="ts-head"><h3>Today's reconciliation cycle</h3><span className="muted">{steps.filter((s) => s.state === "done").length} of 6 steps done · the whole team works through these in order · blue = where the team is now</span></div>
+-        <CycleStepper steps={steps} mine={isChecker && approvals.length ? null : next?.key} />
+-      </section>
++      <CycleTrack steps={steps} mine={mine} onPick={(s) => (s.key === "close" ? setCloseOpen(true) : hasCap(perms, s.screen) ? nav(s.cta.path) : toast(s.summary))} />
+ 
+-      {/* 3. Personal numbers */}
+-      <div className="kpi-row">
+-        <div className="kpi"><span>Done today</span><b>{doneToday}</b><small>actions by you</small></div>
+-        <div className="kpi"><span>{isChecker ? "Waiting for you" : "On your list"}</span><b>{list.length}</b><small>{reds && !isChecker ? `${reds} urgent` : "—"}</small></div>
+-        <div className="kpi"><span>Waiting for approval</span><b>{waitingMine || 0}</b><small>you've done your part</small></div>
+-        <div className="kpi"><span>Realised today</span><b>{inrShort((collections.releases || [])[0]?.amount || 19874410000)}</b><small>ready for unit allotment</small></div>
++      {/* 3 — Only the next three, never an endless list */}
++      <div className="upnext card" data-testid="up-next">
++        <div className="card-head"><h3><ListChecks size={15} /> Up next</h3>
++          <button className="link" onClick={() => setQueueOpen(true)} data-testid="open-queue">See the whole queue ({queue.length}) <ArrowRight size={12} /></button></div>
++        {upNext.length === 0 && <div className="card-pad muted">Nothing else after this one.</div>}
++        {upNext.map((it, k) => (
++          <button key={it.id} className={"un-row tone-" + it.tone} onClick={() => setIdx(i + 1 + k)}>
++            <i /><span className="un-kind">{it.kind}</span><span className="un-title">{it.title}</span>{it.when && <span className={"mw-when " + it.tone}>{it.when}</span>}<ArrowRight size={13} />
++          </button>
++        ))}
+       </div>
+ 
+-      {/* 4. The list */}
+-      <section className="today-section">
+-        <div className="ts-head"><h3>{isChecker ? "Waiting for your approval" : "Your list"}</h3>
+-          <span className="muted">{isChecker ? <Link to="/approvals">See all {approvals.length} →</Link> : "Red first, then amber, then green"}</span></div>
+-        {!simple || isChecker ? null : <div className="mw-key"><Light tone="red">Urgent — do first</Light><Light tone="amber">Please check</Light><Light tone="green">Quick — usually just say yes</Light></div>}
+-        <div className="mw-list">
+-          {list.map((it, i) => (
+-            <div key={it.id} className={"mw-item tone-" + it.tone} data-testid={"mw-item-" + it.id}>
+-              <span className="mw-num">{i + 1}</span>
+-              <div className="mw-body">
+-                <div className="mw-kind">{it.step && <span className="step-chip">Step {it.step}</span>}{it.kind}{it.light && <Light tone={it.tone}>{it.light}</Light>}</div>
+-                <div className="mw-title">{it.title}</div>
+-                <div className="mw-detail">{it.detail}</div>
+-                <div className="mw-hint">{it.when && <span className={"mw-when " + it.tone}><Hourglass size={13} /> {it.when}</span>}{it.hint}</div>
+-              </div>
+-              <div className="mw-actions">
+-                <button className="btn btn-primary mw-btn" onClick={it.primary.run} data-testid={"mw-do-" + it.id}>{it.primary.label}</button>
+-                {it.secondary && <button className="btn btn-outline mw-btn-2" onClick={it.secondary.run} data-testid={"mw-no-" + it.id}>{it.secondary.label}</button>}
+-                {it.more && <button className="link" onClick={it.more.run}>{it.more.label}</button>}
+-              </div>
+-            </div>
+-          ))}
+-          {list.length === 0 && <div className="mw-empty card"><PartyPopper size={30} /><h2>Nothing left for you</h2><p className="muted">New work appears here automatically.</p></div>}
+-        </div>
+-      </section>
+-
+-      {/* 5. Close the day */}
+-      {(canSubmitClose || canSignClose) && (
+-        <section className="today-section close-day card" ref={closeRef} id="close" data-testid="close-day">
+-          <div className="ts-head"><h3><Flag size={16} /> Close the day</h3><span className={"pill " + (close.status === "closed" ? "pill-active" : close.status === "pending" ? "pill-pending" : "pill-draft")}><span className="dot" />{{ open: "Open", pending: "Waiting for sign-off", closed: "Closed" }[close.status]}</span></div>
+-          <div className="cd-grid">
+-            <ul className="cd-check">
+-              {steps.slice(0, 5).map((s) => <li key={s.key} className={s.state}>{s.state === "done" ? <CheckCircle2 size={15} /> : <Hourglass size={15} />}<span><b>{s.title}</b> — {s.summary}</span></li>)}
+-            </ul>
+-            <div className="cd-side">
+-              {close.status === "open" && canSubmitClose && <>
+-                <p className="muted">Anything not finished is carried forward to tomorrow ({carried} open case{carried !== 1 ? "s" : ""}). Add a note for tomorrow's team.</p>
+-                <textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. SBI statement still missing; chased RM at 3:10 PM" />
+-                <button className="btn btn-primary" onClick={submitClose} data-testid="submit-close"><Flag size={14} /> Submit day close</button>
+-              </>}
+-              {close.status === "pending" && (canSignClose && !(close.submittedBy || "").startsWith(first) ? <>
+-                <p>Submitted by <b>{close.submittedBy}</b>. {close.carried} item{close.carried !== 1 ? "s" : ""} carried forward.{close.note && <> Note: “{close.note}”</>}</p>
+-                <button className="btn btn-success" onClick={signClose} data-testid="sign-close"><ShieldCheck size={14} /> Sign off the day</button>
+-              </> : <p className="muted">Waiting for a checker to sign off.</p>)}
+-              {close.status === "closed" && <p>Closed by <b>{close.closedBy}</b>. The day summary has gone to the AMCs.</p>}
+-              {close.status === "open" && !canSubmitClose && <p className="muted">A maker submits the day close; you sign it off.</p>}
+-              <button className="btn btn-outline btn-sm" onClick={daySummary}><Download size={13} /> Day summary (CSV)</button>
+-            </div>
++      {queueOpen && (
++        <Drawer id="queue-drawer" title={isChecker ? "Everything waiting for your approval" : "Your whole queue"} subtitle="Pick any item to make it your focus. Red first, then amber, then green." onClose={() => setQueueOpen(false)}>
++          <div className="q-list">
++            {queue.map((it, k) => (
++              <button key={it.id} className={"un-row tone-" + it.tone + (k === i ? " on" : "")} onClick={() => { setIdx(k); setQueueOpen(false); }}>
++                <i /><span className="un-num">{k + 1}</span><span className="un-title">{it.title}<small>{it.kind}{it.when ? ` · ${it.when}` : ""}</small></span><ArrowRight size={13} />
++              </button>
++            ))}
+           </div>
+-        </section>
++        </Drawer>
++      )}
++
++      {closeOpen && (canSubmitClose || canSignClose) && (
++        <Modal id="close-day" size="lg" title="Close the day" onClose={() => setCloseOpen(false)}
++          footer={<>
++            <button className="btn btn-ghost" onClick={daySummary}><Download size={13} /> Day summary (CSV)</button>
++            <span style={{ flex: 1 }} />
++            {close.status === "open" && canSubmitClose && <button className="btn btn-primary" onClick={submitClose} data-testid="submit-close"><Flag size={14} /> Submit day close</button>}
++            {close.status === "pending" && canSignClose && !(close.submittedBy || "").startsWith(first) && <button className="btn btn-success" onClick={signClose} data-testid="sign-close"><ShieldCheck size={14} /> Sign off the day</button>}
++            <button className="btn btn-outline" onClick={() => setCloseOpen(false)}><X size={14} /> Not yet</button>
++          </>}>
++          <ul className="cd-check">
++            {steps.slice(0, 5).map((s) => <li key={s.key} className={s.state}>{s.state === "done" ? <CheckCircle2 size={15} /> : <Hourglass size={15} />}<span><b>{s.title}</b> — {s.summary}</span></li>)}
++          </ul>
++          {close.status === "open" && canSubmitClose && <>
++            <p className="muted" style={{ margin: "14px 0 8px" }}>Anything not finished carries forward to tomorrow ({carried} open case{carried !== 1 ? "s" : ""}). Leave a note for tomorrow's team.</p>
++            <textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. SBI statement still missing; chased RM at 3:10 PM" />
++          </>}
++          {close.status === "pending" && <p style={{ marginTop: 14 }}>Submitted by <b>{close.submittedBy}</b>. {close.carried} item{close.carried !== 1 ? "s" : ""} carried forward.{close.note && <> Note: “{close.note}”</>}</p>}
++          {close.status === "closed" && <p style={{ marginTop: 14 }}>Closed by <b>{close.closedBy}</b>. The day summary has gone to the AMCs.</p>}
++        </Modal>
+       )}
+     </div>
+   );
+diff --color -ruN r4a/frontend/src/features/today/workItems.js r4b/frontend/src/features/today/workItems.js
+--- r4a/frontend/src/features/today/workItems.js	1970-01-01 05:30:00
++++ r4b/frontend/src/features/today/workItems.js	2026-10-21 03:30:31
+@@ -0,0 +1,83 @@
++import { useNavigate } from "react-router-dom";
++import { useStore } from "@/state/store";
++import { hasCap } from "@/lib/access";
++import { PLAIN_EXCEPTION } from "@/lib/plain";
++import { maskAccount } from "@/lib/format";
++import { inr, timeLeftWords } from "@/features/ops/ui";
++import { useMatchActions, isFastTrack } from "@/features/match/matchActions";
++import { toast } from "sonner";
++
++/** Everything a maker could do right now, as one prioritised list (red → amber → green). */
++const TONE_ORDER = { red: 0, amber: 1, green: 2 };
++
++export function useWorkItems() {
++  const { collections, perms, personaUser, act, currentUser } = useStore();
++  const nav = useNavigate();
++  const { acceptSuggestion, dismissSuggestion, byId, credits, purchases } = useMatchActions();
++  const me = personaUser.name;
++  const items = [];
++
++  const take = (e) => {
++    const res = act({ screen: "exceptions", cap: "edit", kind: "exceptions", id: e.id, patch: { owner: me, status: "in_progress" }, audit: { entityLabel: `${e.ref} · ${e.type}`, action: "Assign", comment: `Picked up by ${me}` } });
++    if (res.ok) toast.success("It's yours now. Open it when you're ready.");
++  };
++
++  if (hasCap(perms, "exceptions", "edit")) {
++    (collections.exceptions || []).filter((e) => ["open", "in_progress"].includes(e.status) && (e.owner === me || (!e.owner && e.amount > 0 && e.interestHoursLeft < 24))).forEach((e) => {
++      const mine = e.owner === me; const clock = e.amount > 0;
++      items.push({
++        id: e.id, tone: clock && e.interestHoursLeft < 24 ? "red" : clock && e.interestHoursLeft < 72 ? "amber" : "green", sort: clock ? e.interestHoursLeft : 999,
++        kind: "Problem case", step: 3, title: PLAIN_EXCEPTION[e.type] || e.type,
++        detail: `${e.investor !== "—" ? e.investor + " · " : ""}${e.amount ? inr(e.amount) : e.bankName}`,
++        when: clock ? timeLeftWords(e.interestHoursLeft) : null,
++        hint: mine ? `What to do: ${e.suggestion.action.replace("Open in Match Workbench", "Find the matching purchase").replace("Open File Inbox", "Check the bank file")}` : "Nobody is working on this yet",
++        primary: mine ? { label: "Open case", run: () => nav(`/exceptions?case=${e.id}`) } : { label: "Take this case", run: () => take(e) },
++      });
++    });
++  }
++  if (hasCap(perms, "match", "edit")) {
++    (collections.suggestions || []).filter((s) => !s.decided).forEach((s) => {
++      const cs = s.credits.map((id) => byId(credits, id)).filter(Boolean);
++      const ps = s.purchases.map((id) => byId(purchases, id)).filter(Boolean);
++      if (!cs.length || !ps.length) return;
++      const amount = cs.reduce((a, c) => a + c.amount, 0); const sure = s.confidence >= 0.9;
++      items.push({
++        id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100, kind: "Match a payment", step: 2,
++        title: cs.length > 1 ? `${cs.length} payments from ${cs[0].remitter} add up to ${ps[0].investor}'s purchase` : ps.length > 1 ? `One payment from ${cs[0].remitter} covers ${ps.length} purchases by ${ps[0].investor}` : `Payment from ${cs[0].remitter} looks like ${ps[0].investor}'s purchase`,
++        detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`, light: sure ? "Very likely" : "Please check",
++        hint: isFastTrack(s.confidence, amount) ? "Say yes and it's done — no approval needed" : "Say yes and your checker approves it",
++        primary: { label: "Yes, match", run: () => acceptSuggestion(s) }, secondary: { label: "Not a match", run: () => dismissSuggestion(s) }, more: { label: "See why", run: () => nav("/match") },
++      });
++    });
++  }
++  if (hasCap(perms, "extraction", "edit")) {
++    (collections.documents || []).filter((d) => d.status === "needs_review").forEach((d) => {
++      const n = d.fields.filter((f) => f.conf < 0.95 || (f.validator && !f.validator.ok)).length + d.lines.reduce((k, l) => k + Object.values(l).filter((v) => v[1] < 0.95).length, 0);
++      items.push({ id: d.id, tone: "amber", sort: 600, kind: "Check a document", step: 2, title: `Check ${n} value${n !== 1 ? "s" : ""} the system wasn't sure about`, detail: `${d.docType} · ${d.name}`, hint: "Everything else on it was read correctly", primary: { label: "Check values", run: () => nav(`/extraction?doc=${d.id}`) } });
++    });
++  }
++  if (hasCap(perms, "refunds", "edit")) {
++    (collections.refunds || []).filter((r) => r.status === "draft").forEach((r) => items.push({
++      id: r.id, tone: r.ageDays >= 4 ? "red" : "amber", sort: 300 - r.ageDays, kind: "Refund", step: 5, title: `Refund ${inr(r.amount)} to ${r.investor}`, detail: `${r.reason} · to ${r.bankAcct}`,
++      when: r.ageDays >= 5 ? "Late — interest is being added" : `${5 - r.ageDays} day${5 - r.ageDays !== 1 ? "s" : ""} before interest applies`,
++      hint: r.verified ? "Bank account already verified" : "Verify the bank account first", primary: { label: "Prepare refund", run: () => nav(`/refunds?refund=${r.id}`) },
++    }));
++  }
++  if (hasCap(perms, "ingestion", "edit")) {
++    (collections.files || []).filter((f) => ["drift", "unknown", "check_failed", "late", "missing"].includes(f.status)).forEach((f) => items.push({
++      id: f.id, tone: ["late", "missing"].includes(f.status) ? "red" : "amber", sort: 100, kind: "Bank file", step: 1,
++      title: { drift: `${f.bankName} changed its file layout`, unknown: `${f.bankName} sent a file we don't recognise`, check_failed: `${f.bankName} statement balances don't add up`, late: `${f.bankName} statement is late`, missing: `${f.bankName} statement not received` }[f.status],
++      detail: `Account ·${f.accountNumber.slice(-4)} · ${f.channel}`, hint: f.status === "drift" ? "The system has proposed the new mapping — confirm it" : "Retry or chase the bank",
++      primary: { label: f.status === "drift" ? "Review new layout" : "Open file", run: () => nav(`/ingestion?file=${f.id}`) },
++    }));
++  }
++  if (hasCap(perms, "bank_setup", "edit")) {
++    (collections.bank_config || []).filter((x) => x.status === "rejected" && x.owner === currentUser).forEach((x) => items.push({
++      id: x.id, tone: "amber", sort: 200, kind: "Rejected setup", title: `Fix ${x.bankName} ${maskAccount(x.accountNumber)} — sent back by checker`, detail: x.rejection?.comment || "", hint: "Make the change and resubmit",
++      primary: { label: "Fix setup", run: () => nav(`/bank-setup/edit/${x.id}`) },
++    }));
++  }
++  items.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || a.sort - b.sort);
++  return items;
++}
++
+diff --color -ruN r4a/frontend/src/features/viz/Viz.jsx r4b/frontend/src/features/viz/Viz.jsx
+--- r4a/frontend/src/features/viz/Viz.jsx	1970-01-01 05:30:00
++++ r4b/frontend/src/features/viz/Viz.jsx	2026-10-21 03:30:31
+@@ -0,0 +1,192 @@
++// Interactive, depth-based visuals for the CAMS Command Deck.
++// All SVG/CSS 3D + framer-motion (already a dependency) — no WebGL, so they stay light and crisp.
++import React from "react";
++import { motion, useMotionValue, useSpring, useTransform, animate } from "framer-motion";
++
++/** Card that tilts toward the pointer in 3D, with a moving glare. */
++export function TiltCard({ children, className = "", max = 8, ...rest }) {
++  const mx = useMotionValue(0.5); const my = useMotionValue(0.5);
++  const rx = useSpring(useTransform(my, [0, 1], [max, -max]), { stiffness: 160, damping: 18 });
++  const ry = useSpring(useTransform(mx, [0, 1], [-max, max]), { stiffness: 160, damping: 18 });
++  const gx = useTransform(mx, (v) => `${v * 100}%`); const gy = useTransform(my, (v) => `${v * 100}%`);
++  const onMove = (e) => { const r = e.currentTarget.getBoundingClientRect(); mx.set((e.clientX - r.left) / r.width); my.set((e.clientY - r.top) / r.height); };
++  return (
++    <motion.div className={"tilt " + className} style={{ rotateX: rx, rotateY: ry, "--gx": gx, "--gy": gy }} onPointerMove={onMove} onPointerLeave={() => { mx.set(0.5); my.set(0.5); }} {...rest}>
++      <div className="tilt-glare" />
++      {children}
++    </motion.div>
++  );
++}
++
++/** Number that counts up when it changes. */
++export function CountUp({ value, format = (v) => Math.round(v).toLocaleString("en-IN"), duration = 1.1 }) {
++  const [v, setV] = React.useState(0);
++  React.useEffect(() => { const c = animate(0, value, { duration, ease: [0.16, 1, 0.3, 1], onUpdate: setV }); return () => c.stop(); }, [value, duration]);
++  return <span className="fx-num">{format(v)}</span>;
++}
++
++/** Glowing ring gauge with orbiting particles — the "reconciliation core". */
++export function CoreOrb({ value, target = 90, label, sub, size = 240 }) {
++  const r = size / 2 - 18; const c = 2 * Math.PI * r;
++  const pct = Math.max(0, Math.min(100, value));
++  const t = (target / 100) * 360 - 90;
++  return (
++    <div className="core-orb" style={{ width: size, height: size }}>
++      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
++        <defs>
++          <linearGradient id="orbArc" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#39d0ff" /><stop offset="100%" stopColor="#2f8cf0" /></linearGradient>
++          <radialGradient id="orbCore"><stop offset="0%" stopColor="rgba(57,208,255,.35)" /><stop offset="70%" stopColor="rgba(11,80,157,.15)" /><stop offset="100%" stopColor="rgba(11,80,157,0)" /></radialGradient>
++          <filter id="orbGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
++        </defs>
++        <circle cx={size / 2} cy={size / 2} r={r - 18} fill="url(#orbCore)" />
++        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(120,165,255,.12)" strokeWidth="12" />
++        <motion.circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="url(#orbArc)" strokeWidth="12" strokeLinecap="round" filter="url(#orbGlow)"
++          transform={`rotate(-90 ${size / 2} ${size / 2})`} strokeDasharray={c} initial={{ strokeDashoffset: c }} animate={{ strokeDashoffset: c * (1 - pct / 100) }} transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }} />
++        <line x1={size / 2 + (r - 10) * Math.cos((t * Math.PI) / 180)} y1={size / 2 + (r - 10) * Math.sin((t * Math.PI) / 180)} x2={size / 2 + (r + 10) * Math.cos((t * Math.PI) / 180)} y2={size / 2 + (r + 10) * Math.sin((t * Math.PI) / 180)} stroke="#fff" strokeWidth="2" opacity=".8" />
++        <g className="orb-spin"><circle cx={size / 2} cy={size / 2} r={r - 26} fill="none" stroke="rgba(57,208,255,.35)" strokeDasharray="2 10" /></g>
++        <g className="orb-spin rev"><circle cx={size / 2} cy={size / 2} r={r + 12} fill="none" stroke="rgba(120,165,255,.18)" strokeDasharray="1 6" /></g>
++        <g className="orb-orbit"><circle cx={size / 2} cy={size / 2 - r} r="4" fill="#39d0ff" filter="url(#orbGlow)" /></g>
++      </svg>
++      <div className="orb-center">
++        <b className="fx-num"><CountUp value={pct} format={(v) => v.toFixed(1)} />%</b>
++        <span>{label}</span>
++        {sub && <small>{sub}</small>}
++      </div>
++    </div>
++  );
++}
++
++/** Small progress ring (e.g. "3 of 6 steps"). */
++export function RingProgress({ value, max, size = 120, label }) {
++  const r = size / 2 - 10; const c = 2 * Math.PI * r; const p = max ? value / max : 0;
++  return (
++    <div className="ring-prog" style={{ width: size, height: size }}>
++      <svg width={size} height={size}>
++        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(120,165,255,.14)" strokeWidth="8" />
++        <motion.circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="url(#orbArc2)" strokeWidth="8" strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`}
++          strokeDasharray={c} initial={{ strokeDashoffset: c }} animate={{ strokeDashoffset: c * (1 - p) }} transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }} style={{ filter: "drop-shadow(0 0 6px rgba(57,208,255,.8))" }} />
++        <defs><linearGradient id="orbArc2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#39d0ff" /><stop offset="100%" stopColor="#2f8cf0" /></linearGradient></defs>
++      </svg>
++      <div className="ring-center"><b className="fx-num">{value}<em>/{max}</em></b><span>{label}</span></div>
++    </div>
++  );
++}
++
++/**
++ * Animated money-flow: sources → matching engine → outcomes.
++ * Stream width = share of value; particles travel along each stream; hover isolates a stream.
++ */
++export function FlowStreams({ sources, outcomes, centerLabel = "Matching engine", height = 300, format = (v) => v }) {
++  const ref = React.useRef(null);
++  const [w, setW] = React.useState(760);
++  const [hover, setHover] = React.useState(null);
++  React.useEffect(() => { const ro = new ResizeObserver(([e]) => setW(Math.max(420, e.contentRect.width))); if (ref.current) ro.observe(ref.current); return () => ro.disconnect(); }, []);
++  const total = sources.reduce((s, x) => s + x.v, 0);
++  const cx = w / 2; const cy = height / 2; const maxW = 54;
++  const lay = (list, x) => { let y = 24; const gap = (height - 48 - list.length * 0) / list.length; return list.map((n) => { const h = Math.max(6, (n.v / total) * maxW * 2.2); const node = { ...n, x, y: y + gap / 2, h }; y += gap; return node; }); };
++  const L = lay(sources, 130); const R = lay(outcomes, w - 210);
++  const path = (x1, y1, x2, y2) => `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}`;
++  return (
++    <div className="flow" ref={ref}>
++      <svg width={w} height={height}>
++        <defs>
++          <linearGradient id="flowIn" x1="0" x2="1"><stop offset="0%" stopColor="#2f8cf0" stopOpacity=".15" /><stop offset="100%" stopColor="#39d0ff" stopOpacity=".55" /></linearGradient>
++          <filter id="flowGlow"><feGaussianBlur stdDeviation="3" /></filter>
++        </defs>
++        {L.map((n) => {
++          const d = path(n.x, n.y, cx - 46, cy); const sw = Math.max(2, (n.v / total) * maxW);
++          const dim = hover && hover !== n.label;
++          return (
++            <g key={"s" + n.label} onPointerEnter={() => setHover(n.label)} onPointerLeave={() => setHover(null)} style={{ opacity: dim ? 0.18 : 1, transition: "opacity .2s" }}>
++              <path d={d} stroke="url(#flowIn)" strokeWidth={sw} fill="none" />
++              <path d={d} stroke="#39d0ff" strokeWidth="2.5" fill="none" strokeDasharray="2 22" className="flow-dash" style={{ animationDuration: `${2.6 - (n.v / total)}s` }} />
++              <circle cx={n.x} cy={n.y} r="6" className="flow-node" />
++              <text x={n.x - 14} y={n.y - 2} textAnchor="end" className="flow-lbl">{n.label}</text>
++              <text x={n.x - 14} y={n.y + 13} textAnchor="end" className="flow-val">{format(n.v)}</text>
++            </g>
++          );
++        })}
++        {R.map((n) => {
++          const d = path(cx + 46, cy, n.x, n.y); const sw = Math.max(2, (n.v / total) * maxW);
++          const dim = hover && hover !== n.label;
++          return (
++            <g key={"o" + n.label} onPointerEnter={() => setHover(n.label)} onPointerLeave={() => setHover(null)} style={{ opacity: dim ? 0.18 : 1, transition: "opacity .2s" }}>
++              <path d={d} stroke={n.color} strokeOpacity=".35" strokeWidth={sw} fill="none" />
++              <path d={d} stroke={n.color} strokeWidth="2.5" fill="none" strokeDasharray="2 22" className="flow-dash" style={{ animationDuration: `${2.8 - (n.v / total)}s`, filter: `drop-shadow(0 0 4px ${n.color})` }} />
++              <circle cx={n.x} cy={n.y} r="6" fill={n.color} style={{ filter: `drop-shadow(0 0 8px ${n.color})` }} />
++              <text x={n.x + 14} y={n.y - 2} className="flow-lbl">{n.label}</text>
++              <text x={n.x + 14} y={n.y + 13} className="flow-val">{`${format(n.v)} · ${((n.v / total) * 100).toFixed(1)}%`}</text>
++            </g>
++          );
++        })}
++        <g className="flow-core">
++          <circle cx={cx} cy={cy} r="46" className="core-bg" />
++          <circle cx={cx} cy={cy} r="54" className="core-ring orb-spin" fill="none" strokeDasharray="3 8" />
++          <text x={cx} y={cy - 4} textAnchor="middle" className="core-t">{centerLabel.split(" ")[0]}</text>
++          <text x={cx} y={cy + 12} textAnchor="middle" className="core-s">{centerLabel.split(" ").slice(1).join(" ")}</text>
++        </g>
++      </svg>
++    </div>
++  );
++}
++
++/** Isometric 3D towers, one per item; height = value. Scene tilts with the pointer; hover lifts a tower. */
++export function Towers3D({ items, min = 70, max = 100, format = (v) => v, onPick }) {
++  const [hover, setHover] = React.useState(null);
++  const mx = useMotionValue(0);
++  const rz = useSpring(useTransform(mx, [-1, 1], [-40, -30]), { stiffness: 120, damping: 16 });
++  return (
++    <div className="towers-wrap" onPointerMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); mx.set(((e.clientX - r.left) / r.width) * 2 - 1); }}>
++      <motion.div className="towers-scene" style={{ rotateX: 58, rotateZ: rz }}>
++        <div className="towers-floor" />
++        {items.map((it, i) => {
++          const h = 14 + ((Math.max(min, it.v) - min) / (max - min)) * 92;
++          const lift = hover === i ? 14 : 0;
++          return (
++            <div key={it.label} className={"tower" + (it.bad ? " bad" : "") + (hover === i ? " on" : "")} style={{ "--h": `${h}px`, "--i": i, transform: `translate3d(${(i % 4) * 70}px, ${Math.floor(i / 4) * 74}px, ${lift}px)` }}
++              onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)} onClick={() => onPick && onPick(it)}>
++              <div className="tw-face tw-top" /><div className="tw-face tw-front" /><div className="tw-face tw-side" />
++            </div>
++          );
++        })}
++      </motion.div>
++      <div className="towers-legend">
++        {items.map((it, i) => (
++          <button key={it.label} className={"tl-row" + (hover === i ? " on" : "") + (it.bad ? " bad" : "")} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)} onClick={() => onPick && onPick(it)}>
++            <i /><span>{it.label}</span><b className="fx-num">{format(it.v)}</b>
++          </button>
++        ))}
++      </div>
++    </div>
++  );
++}
++
++/** Admin: modules orbit the CAMS core; node size = users with access. */
++export function ModuleOrbit({ modules, onPick, active, total }) {
++  const size = 300; const c = size / 2; const r = 108;
++  const maxU = Math.max(...modules.map((m) => m.users), 1);
++  return (
++    <div className="mod-orbit" style={{ width: size, height: size }}>
++      <svg width={size} height={size}>
++        <circle cx={c} cy={c} r={r} fill="none" stroke="rgba(120,165,255,.18)" strokeDasharray="2 6" />
++        <circle cx={c} cy={c} r={r - 44} fill="none" stroke="rgba(120,165,255,.1)" />
++        {modules.map((m, i) => {
++          const a = (i / modules.length) * Math.PI * 2 - Math.PI / 2; const x = c + r * Math.cos(a); const y = c + r * Math.sin(a);
++          return <line key={"l" + m.key} x1={c} y1={c} x2={x} y2={y} stroke={m.color} strokeOpacity={active && active !== m.key ? 0.12 : 0.45} strokeWidth="1.5" className="orbit-link" />;
++        })}
++      </svg>
++      <div className="mo-core"><b>CAMS</b><span>{total ?? modules.reduce((s, m) => s + m.users, 0)} users</span></div>
++      {modules.map((m, i) => {
++        const a = (i / modules.length) * Math.PI * 2 - Math.PI / 2; const x = c + r * Math.cos(a); const y = c + r * Math.sin(a);
++        const d = 40 + (m.users / maxU) * 34;
++        return (
++          <motion.button key={m.key} className={"mo-node" + (active === m.key ? " on" : "")} style={{ left: x - d / 2, top: y - d / 2, width: d, height: d, "--mc": m.color }}
++            whileHover={{ scale: 1.12 }} onClick={() => onPick(m.key)} title={`${m.label}: ${m.users} users`}>
++            <b>{m.users}</b>
++            <span className="mo-label">{m.label}</span>
++          </motion.button>
++        );
++      })}
++    </div>
++  );
++}
+diff --color -ruN r4a/frontend/src/future.css r4b/frontend/src/future.css
+--- r4a/frontend/src/future.css	1970-01-01 05:30:00
++++ r4b/frontend/src/future.css	2026-10-21 03:30:31
+@@ -0,0 +1,396 @@
++/* ============================================================================
++   CAMS "Command Deck" theme — dark glass, luminous CAMS blue, depth and glow.
++   Brand anchor: CAMS logo blue #0b509d and logo greys #929497 / #808184.
++   Loaded last: re-maps the design tokens, then restyles every surface.
++   ============================================================================ */
++:root {
++  --cams-blue: #0b509d;          /* logo blue */
++  --cams-blue-lit: #2f8cf0;      /* same hue, lifted for dark backgrounds */
++  --cams-cyan: #39d0ff;          /* glow accent */
++  --cams-grey: #929497;          /* logo grey */
++  --glow: 0 0 0 1px rgba(57, 208, 255, .25), 0 0 24px -4px rgba(47, 140, 240, .55);
++  --glass: linear-gradient(180deg, rgba(22, 37, 72, .78), rgba(11, 21, 44, .78));
++  --glass-strong: linear-gradient(180deg, rgba(28, 46, 88, .92), rgba(13, 25, 52, .92));
++  --edge: rgba(120, 165, 255, .16);
++  --edge-strong: rgba(120, 165, 255, .28);
++  --font-display: "Space Grotesk", "Inter", sans-serif;
++
++  --page: 223 62% 6%;
++  --card: 222 48% 12%;
++  --border: 220 38% 21%;
++  --border-strong: 220 32% 30%;
++  --text: 216 50% 94%;
++  --muted: 218 20% 66%;
++  --primary: 211 88% 56%;
++  --primary-hover: 211 92% 63%;
++  --primary-soft: 213 64% 17%;
++  --primary-soft-border: 212 58% 34%;
++  --primary-deep: 211 87% 33%;
++  --st-active: 158 72% 50%;
++  --st-pending: 38 100% 62%;
++  --st-rejected: 350 95% 66%;
++  --st-draft: 218 16% 64%;
++  --st-inactive: 218 12% 52%;
++  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, .05), 0 12px 32px -14px rgba(0, 0, 0, .7);
++  --shadow-raised: 0 30px 60px -20px rgba(0, 0, 0, .8), 0 0 0 1px var(--edge-strong);
++  color-scheme: dark;
++}
++
++body {
++  background-color: hsl(var(--page));
++  background-image:
++    radial-gradient(1100px 620px at 8% -12%, rgba(11, 80, 157, .55), transparent 60%),
++    radial-gradient(900px 520px at 105% 0%, rgba(57, 208, 255, .14), transparent 60%),
++    radial-gradient(800px 600px at 60% 120%, rgba(47, 140, 240, .12), transparent 60%),
++    linear-gradient(rgba(120, 165, 255, .035) 1px, transparent 1px),
++    linear-gradient(90deg, rgba(120, 165, 255, .035) 1px, transparent 1px);
++  background-size: auto, auto, auto, 44px 44px, 44px 44px;
++  background-attachment: fixed;
++  color: hsl(var(--text));
++}
++::selection { background: rgba(57, 208, 255, .3); }
++::-webkit-scrollbar-thumb { background: rgba(120, 165, 255, .22); border: 3px solid transparent; background-clip: padding-box; }
++h1, h2, h3, .os-value, .kpi b, .kc-row b, .rh-amounts b, .fx-num { font-family: var(--font-display); }
++
++/* ---------- Generic surfaces ---------- */
++.card, .kpi, .kpi-card, .ops-stat, .cy-step, .journey-bar, .mw-item, .role-card, .role-tile, .rp-module, .role-block,
++.metric, .tile, .rev-card, .stat-card, .sugg-card, .pl-step, .ver-item, .why-cand, .mw-waiting, .report-group, .kpi-row > *, .release-hero,
++.mode-card, .dropzone, .preview-wrap, .summary-banner, .rev-section, .stepper, .wizard, .map-group, .date-bar, .sim-stats > div, .doc-page {
++  background: var(--glass) !important;
++  border: 1px solid var(--edge) !important;
++  box-shadow: var(--shadow-card) !important;
++  backdrop-filter: blur(14px) saturate(140%);
++  color: hsl(var(--text));
++}
++.doc-page { background: rgba(6, 12, 28, .7) !important; color: #c9d6ee; }
++.sidebar { background: linear-gradient(180deg, rgba(8, 16, 36, .92), rgba(6, 12, 28, .96)); border-right: 1px solid var(--edge); backdrop-filter: blur(18px); }
++.sidebar-brand { border-bottom: 1px solid var(--edge); }
++.brand-mark { background: linear-gradient(135deg, var(--cams-blue), var(--cams-cyan)); box-shadow: var(--glow); }
++.topbar { background: rgba(6, 12, 28, .62); border-bottom: 1px solid var(--edge); backdrop-filter: blur(18px) saturate(150%); }
++.menu-pop, .modal, .drawer, .cmdk, .bell-pop { background: var(--glass-strong) !important; border: 1px solid var(--edge-strong) !important; box-shadow: var(--shadow-raised) !important; backdrop-filter: blur(24px); color: hsl(var(--text)); }
++.drawer-head, .drawer-foot, .modal-head, .modal-foot, .card-head, .toolbar, .cmdk-input, .cmdk-foot { border-color: var(--edge) !important; background: transparent !important; }
++.overlay, .drawer-overlay, .cmdk-overlay { background: rgba(2, 6, 16, .62) !important; backdrop-filter: blur(4px); }
++
++/* ---------- Navigation ---------- */
++.nav-section-title { color: rgba(146, 148, 151, .9); }
++.nav-item { color: #a9b8d4; }
++.nav-item svg { color: #6f86ad; }
++.nav-item:hover { background: rgba(47, 140, 240, .1); color: #fff; }
++.nav-item.active { background: linear-gradient(90deg, rgba(47, 140, 240, .28), rgba(47, 140, 240, .06)); color: #fff; box-shadow: inset 2px 0 0 var(--cams-cyan), 0 0 22px -10px var(--cams-cyan); }
++.nav-item.active svg { color: var(--cams-cyan); filter: drop-shadow(0 0 6px rgba(57, 208, 255, .7)); }
++.nav-step { border-color: rgba(120, 165, 255, .3); color: #8aa3cc; }
++.nav-item.active .nav-step { border-color: var(--cams-cyan); color: var(--cams-cyan); }
++.nav-badge { background: linear-gradient(135deg, var(--cams-blue-lit), var(--cams-cyan)); color: #04101f; box-shadow: 0 0 12px -2px rgba(57, 208, 255, .8); }
++.search-trigger, .persona-btn { background: rgba(14, 26, 54, .7); border: 1px solid var(--edge); color: #a9b8d4; }
++.search-trigger:hover { background: rgba(20, 36, 72, .9); border-color: var(--edge-strong); }
++.search-trigger kbd, .cmdk-input kbd { background: rgba(255, 255, 255, .06); border-color: var(--edge); color: #a9b8d4; }
++.icon-btn { color: #a9b8d4; }
++.icon-btn:hover { background: rgba(47, 140, 240, .12); color: #fff; }
++.bell-dot { border-color: hsl(var(--page)); box-shadow: 0 0 10px rgba(255, 92, 122, .8); }
++.avatar { background: linear-gradient(135deg, var(--cams-blue), var(--cams-cyan)); box-shadow: var(--glow); color: #fff; }
++.crumbs b { color: #fff; }
++
++/* ---------- Controls ---------- */
++.btn-primary { background: linear-gradient(135deg, var(--cams-blue-lit), #1f6fd8 55%, var(--cams-blue)); color: #fff; border: 1px solid rgba(57, 208, 255, .35); box-shadow: 0 0 0 1px rgba(57, 208, 255, .15), 0 8px 24px -8px rgba(47, 140, 240, .8), inset 0 1px 0 rgba(255, 255, 255, .25); }
++.btn-primary:hover:not(:disabled) { background: linear-gradient(135deg, #4aa3ff, var(--cams-blue-lit)); box-shadow: 0 0 0 1px rgba(57, 208, 255, .4), 0 10px 30px -6px rgba(57, 208, 255, .7); }
++.btn-outline { background: rgba(14, 26, 54, .6); border-color: var(--edge-strong); color: hsl(var(--text)); box-shadow: none; }
++.btn-outline:hover:not(:disabled) { border-color: var(--cams-cyan); color: #fff; box-shadow: 0 0 16px -6px var(--cams-cyan); }
++.btn-ghost { color: #a9b8d4; }
++.btn-ghost:hover:not(:disabled) { background: rgba(255, 255, 255, .06); color: #fff; }
++.btn-success { background: linear-gradient(135deg, #22c38e, #10916a); border: 1px solid rgba(47, 211, 155, .4); box-shadow: 0 8px 22px -8px rgba(34, 195, 142, .8); color: #fff; }
++.btn-danger { box-shadow: 0 8px 22px -8px rgba(255, 92, 122, .7); }
++.btn-fill { background: rgba(47, 140, 240, .14); color: #8cc6ff; border-color: rgba(47, 140, 240, .35); }
++.input, .select, .textarea { background: rgba(6, 13, 30, .7) !important; border-color: var(--edge-strong) !important; color: hsl(var(--text)) !important; box-shadow: none !important; }
++.input:focus, .select:focus, .textarea:focus { border-color: var(--cams-cyan) !important; box-shadow: 0 0 0 3px rgba(57, 208, 255, .18), 0 0 18px -6px var(--cams-cyan) !important; }
++.input[readonly], .input:disabled, .select:disabled { background: rgba(255, 255, 255, .03) !important; color: hsl(var(--muted)) !important; }
++.select option, .select optgroup { background: #0d1a36; color: #e6edf9; }
++.segmented { background: rgba(6, 13, 30, .7); border: 1px solid var(--edge); }
++.segmented button { color: #a9b8d4; }
++.segmented button.on { background: linear-gradient(135deg, rgba(47, 140, 240, .45), rgba(57, 208, 255, .2)); color: #fff; box-shadow: 0 0 14px -4px rgba(57, 208, 255, .7), inset 0 0 0 1px rgba(57, 208, 255, .35); }
++.switch .track { background: rgba(120, 165, 255, .2); }
++.filter-chip { background: rgba(14, 26, 54, .6); border-color: var(--edge); color: #a9b8d4; }
++.filter-chip.on { background: linear-gradient(135deg, var(--cams-blue-lit), var(--cams-blue)); border-color: rgba(57, 208, 255, .5); color: #fff; box-shadow: 0 0 14px -4px rgba(57, 208, 255, .6); }
++.cb { accent-color: var(--cams-blue-lit); }
++.link, a.cy-link { color: #6cc3ff; }
++mark { background: rgba(255, 181, 71, .35); color: #fff; }
++
++/* ---------- Tables ---------- */
++table.grid thead th { background: rgba(8, 16, 36, .7); color: #8aa3cc; border-color: var(--edge); }
++table.grid tbody td { border-color: rgba(120, 165, 255, .08); }
++table.grid tbody tr:hover { background: linear-gradient(90deg, rgba(47, 140, 240, .12), transparent); }
++table.grid tbody tr.selected { background: rgba(47, 140, 240, .16); }
++.perm-matrix th, .perm-matrix td { border-color: rgba(120, 165, 255, .1); }
++
++/* ---------- Status ---------- */
++.pill-active { color: #4ff0b4; background: rgba(47, 211, 155, .12); box-shadow: inset 0 0 0 1px rgba(47, 211, 155, .3); }
++.pill-pending { color: #ffc56b; background: rgba(255, 181, 71, .12); box-shadow: inset 0 0 0 1px rgba(255, 181, 71, .3); }
++.pill-rejected { color: #ff7d95; background: rgba(255, 92, 122, .12); box-shadow: inset 0 0 0 1px rgba(255, 92, 122, .3); }
++.pill-draft, .pill-inactive, .pill-not_started { color: #b4c2dc; background: rgba(180, 194, 220, .08); box-shadow: inset 0 0 0 1px rgba(180, 194, 220, .2); }
++.pill .dot { box-shadow: 0 0 8px currentColor; }
++.light.green { background: rgba(47, 211, 155, .12); color: #4ff0b4; }
++.light.amber { background: rgba(255, 181, 71, .13); color: #ffc56b; }
++.light.red { background: rgba(255, 92, 122, .13); color: #ff7d95; }
++.note { background: rgba(47, 140, 240, .1); border-color: rgba(47, 140, 240, .3); color: #cfe2ff; }
++.note.warn { background: rgba(255, 181, 71, .1); border-color: rgba(255, 181, 71, .3); color: #ffe0ad; }
++.sess-banner.warn { background: rgba(255, 181, 71, .1); border-color: rgba(255, 181, 71, .3); color: #ffe0ad; }
++.sess-banner.info { background: rgba(47, 140, 240, .12); border-color: rgba(47, 140, 240, .35); color: #cfe2ff; }
++.role-chip { background: color-mix(in srgb, var(--mc, #64748b) 22%, transparent); color: color-mix(in srgb, var(--mc, #94a3b8) 60%, #fff); border-color: color-mix(in srgb, var(--mc, #64748b) 45%, transparent); }
++.step-chip, .ap-kind, .rr-ref, .strat, .rt-cap, .col-pill, .cond code, .kv-line code { background: rgba(120, 165, 255, .1) !important; color: #b9cdf0 !important; }
++.us-pill { filter: saturate(1.2) brightness(1.2); }
++
++/* Inline light colours left in older components */
++[style*="background: #fff"], [style*="background:#fff"], [style*="background: rgb(255, 255, 255)"], [style*="background: #f8fafc"], [style*="background: rgb(248, 250, 252)"], [style*="background: #f0fdfa"], [style*="background: rgb(240, 253, 250)"] { background: rgba(14, 26, 54, .7) !important; border-color: var(--edge) !important; color: hsl(var(--text)) !important; }
++[style*="color: rgb(51, 65, 85)"], [style*="color: #334155"], [style*="color: rgb(30, 41, 59)"], [style*="color: rgb(19, 78, 74)"] { color: #c9d6ee !important; }
++
++/* ---------- Charts on dark ---------- */
++.lc-grid { stroke: rgba(120, 165, 255, .1); }
++.lc-axis, .lc-target-label { fill: #7f93b8; }
++.lc-line { stroke: var(--cams-cyan); filter: drop-shadow(0 0 6px rgba(57, 208, 255, .8)); }
++.lc-area { fill: url(#lcGlow); opacity: 1; }
++.lc-dot { fill: var(--cams-cyan); stroke: #04101f; filter: drop-shadow(0 0 6px var(--cams-cyan)); }
++.lc-target { stroke: rgba(255, 255, 255, .35); }
++.lc-tip { background: var(--glass-strong); border: 1px solid var(--edge-strong); box-shadow: var(--glow); }
++.spark-svg polyline { stroke: var(--cams-cyan); filter: drop-shadow(0 0 4px rgba(57, 208, 255, .8)); }
++.spark-svg.bad polyline { stroke: #ff6b86; filter: drop-shadow(0 0 4px rgba(255, 92, 122, .8)); }
++.bl-track, .share-bar, .fn-bar { background: rgba(120, 165, 255, .1); }
++.bl-track i, .share-bar i { background: linear-gradient(90deg, var(--cams-blue), var(--cams-cyan)); box-shadow: 0 0 12px -2px var(--cams-cyan); }
++.heat td:not(:first-child) { background: rgba(57, 208, 255, calc(var(--h) * .55 + .05)); color: #fff; box-shadow: 0 0 calc(var(--h) * 18px) rgba(57, 208, 255, calc(var(--h) * .5)); }
++.heat td.hot { background: rgba(255, 92, 122, calc(var(--h) * .55 + .2)); box-shadow: 0 0 16px rgba(255, 92, 122, .45); }
++
++/* ---------- Typography polish ---------- */
++.page-head h1 { font-weight: 600; letter-spacing: -.02em; color: #fff; }
++.page-head h1 svg { color: var(--cams-cyan); filter: drop-shadow(0 0 8px rgba(57, 208, 255, .6)); }
++.muted, .page-head p { color: hsl(var(--muted)); }
++.cy-step.active { box-shadow: var(--glow) !important; border-color: rgba(57, 208, 255, .5) !important; }
++.cy-ico.active { background: linear-gradient(135deg, var(--cams-blue-lit), var(--cams-cyan)); border-color: transparent; color: #04101f; box-shadow: 0 0 14px var(--cams-cyan); }
++.cy-ico.done { box-shadow: 0 0 12px rgba(47, 211, 155, .7); }
++.cy-step.done { background: linear-gradient(180deg, rgba(20, 70, 60, .45), rgba(10, 30, 36, .6)) !important; }
++.jb-step.current { background: rgba(47, 140, 240, .2); color: #fff; box-shadow: inset 0 0 0 1px rgba(57, 208, 255, .35); }
++.next-strip { background: rgba(47, 211, 155, .1); border-color: rgba(47, 211, 155, .3); color: #6ff3c3; }
++.kc-delta.up { color: #4ff0b4; } .kc-delta.down { color: #ff7d95; }
++.int-add, .neg { color: #ff7d95; }
++.cutoff-chip { background: rgba(14, 26, 54, .7); border-color: var(--edge); color: #cfe2ff; }
++.cutoff-chip.hot { background: rgba(255, 92, 122, .12); border-color: rgba(255, 92, 122, .45); color: #ff9aac; box-shadow: 0 0 16px -6px #ff5c7a; }
++.cmdk-item[data-selected="true"] { background: rgba(47, 140, 240, .2); box-shadow: inset 2px 0 0 var(--cams-cyan); }
++.note-row:hover { background: rgba(47, 140, 240, .12); }
++.ap-row.urgent { box-shadow: inset 3px 0 0 #ff5c7a; }
++.us-active, .us-invited, .us-expired, .us-deactivated { background: transparent !important; }
++.page-wrap, .metric { animation: none !important; }
++
++/* ============================ Visuals ============================ */
++.tilt { position: relative; transform-style: preserve-3d; transform-perspective: 900px; perspective: 900px; will-change: transform; }
++.tilt-glare { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(420px circle at var(--gx, 50%) var(--gy, 50%), rgba(57, 208, 255, .14), transparent 45%); z-index: 0; }
++.tilt > *:not(.tilt-glare) { position: relative; z-index: 1; }
++
++.core-orb { position: relative; flex: none; filter: drop-shadow(0 20px 40px rgba(11, 80, 157, .45)); }
++.core-orb svg { position: absolute; inset: 0; overflow: visible; }
++.orb-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
++.orb-center b { font-size: 44px; font-weight: 600; letter-spacing: -.03em; color: #fff; text-shadow: 0 0 24px rgba(57, 208, 255, .6); }
++.orb-center > span { font-size: 12.5px; color: #a9c4ee; font-weight: 500; }
++.orb-center small { font-size: 11px; color: #7f93b8; margin-top: 2px; }
++.orb-spin { transform-box: fill-box; transform-origin: center; animation: spin 24s linear infinite; }
++.orb-spin.rev { animation-duration: 40s; animation-direction: reverse; }
++.orb-orbit { transform-box: view-box; transform-origin: center; animation: spin 7s linear infinite; }
++@keyframes spin { to { transform: rotate(360deg); } }
++
++.ring-prog { position: relative; flex: none; }
++.ring-prog svg { position: absolute; inset: 0; }
++.ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
++.ring-center b { font-size: 28px; color: #fff; font-weight: 600; }
++.ring-center b em { font-style: normal; font-size: 15px; color: #7f93b8; }
++.ring-center > span { font-size: 11px; color: #8aa3cc; }
++
++.flow { width: 100%; }
++.flow svg { display: block; overflow: visible; }
++.flow-dash { animation: flowmove linear infinite; }
++@keyframes flowmove { to { stroke-dashoffset: -96; } }
++.flow-node { fill: #2f8cf0; filter: drop-shadow(0 0 8px #39d0ff); }
++.flow-lbl { font-size: 12.5px; fill: #e6edf9; font-weight: 600; }
++.flow-val { font-size: 11.5px; fill: #8aa3cc; font-variant-numeric: tabular-nums; }
++.core-bg { fill: url(#flowIn); fill: rgba(11, 80, 157, .45); stroke: rgba(57, 208, 255, .5); stroke-width: 1.5; filter: drop-shadow(0 0 18px rgba(57, 208, 255, .55)); }
++.core-ring { stroke: #39d0ff; stroke-width: 1.5; opacity: .7; }
++.core-t { font-family: var(--font-display); font-size: 14px; fill: #fff; font-weight: 600; }
++.core-s { font-size: 11px; fill: #a9c4ee; }
++
++.towers-wrap { display: grid; grid-template-columns: 1fr 220px; gap: 12px; align-items: center; perspective: 1200px; min-height: 290px; }
++.towers-scene { position: relative; width: 250px; height: 116px; margin: 70px auto 10px; transform-style: preserve-3d; }
++.towers-floor { position: absolute; inset: -30px; background: radial-gradient(closest-side, rgba(47, 140, 240, .25), transparent), repeating-linear-gradient(0deg, rgba(120, 165, 255, .12) 0 1px, transparent 1px 23px), repeating-linear-gradient(90deg, rgba(120, 165, 255, .12) 0 1px, transparent 1px 23px); border-radius: 12px; }
++.tower { position: absolute; left: 0; top: 0; width: 40px; height: 40px; transform-style: preserve-3d; transition: transform .3s cubic-bezier(.16, 1, .3, 1); cursor: pointer; animation: rise 1s cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(var(--i) * 60ms); }
++@keyframes rise { from { opacity: 0; } }
++.tw-face { position: absolute; transition: filter .2s; }
++.tw-top { left: 0; top: 0; width: 40px; height: 40px; transform: translateZ(var(--h)); background: linear-gradient(135deg, #aef0ff, #39d0ff 40%, #2f8cf0); box-shadow: 0 0 26px rgba(57, 208, 255, .8); }
++.tw-front { left: 0; top: 40px; width: 40px; height: var(--h); transform-origin: top; transform: rotateX(90deg); background: linear-gradient(0deg, rgba(47, 140, 240, .95), rgba(11, 80, 157, .9)); }
++.tw-side { left: 40px; top: 0; width: var(--h); height: 40px; transform-origin: left; transform: rotateY(-90deg); background: linear-gradient(90deg, rgba(8, 40, 90, .95), rgba(20, 70, 140, .9)); }
++.tower.bad .tw-top { background: linear-gradient(135deg, #ffd0d9, #ff6b86); box-shadow: 0 0 26px rgba(255, 92, 122, .85); }
++.tower.bad .tw-front { background: linear-gradient(0deg, rgba(220, 60, 90, .95), rgba(120, 20, 50, .9)); }
++.tower.bad .tw-side { background: linear-gradient(90deg, rgba(90, 10, 35, .95), rgba(150, 30, 60, .9)); }
++.tower.on .tw-face { filter: brightness(1.35); }
++.towers-legend { display: flex; flex-direction: column; gap: 2px; }
++.tl-row { display: flex; align-items: center; gap: 8px; background: none; border: none; color: #a9b8d4; font: inherit; font-size: 12.5px; padding: 5px 8px; border-radius: 6px; cursor: pointer; text-align: left; }
++.tl-row i { width: 8px; height: 8px; border-radius: 2px; background: #39d0ff; box-shadow: 0 0 8px #39d0ff; }
++.tl-row.bad i { background: #ff6b86; box-shadow: 0 0 8px #ff6b86; }
++.tl-row b { margin-left: auto; color: #fff; font-weight: 600; }
++.tl-row.on, .tl-row:hover { background: rgba(47, 140, 240, .15); color: #fff; }
++
++.mod-orbit { position: relative; flex: none; }
++.mod-orbit svg { position: absolute; inset: 0; }
++.orbit-link { stroke-dasharray: 3 5; animation: flowmove 6s linear infinite; }
++.mo-core { position: absolute; left: 50%; top: 50%; width: 92px; height: 92px; margin: -46px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at 35% 30%, rgba(57, 208, 255, .5), rgba(11, 80, 157, .85) 60%, rgba(6, 20, 50, .95)); box-shadow: 0 0 40px -4px rgba(57, 208, 255, .7), inset 0 0 20px rgba(255, 255, 255, .15); }
++.mo-core b { font-family: var(--font-display); font-size: 18px; color: #fff; letter-spacing: .04em; }
++.mo-core span { font-size: 11px; color: #cfe2ff; }
++.mo-node { position: absolute; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--mc) 70%, #fff); background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--mc) 70%, #fff), color-mix(in srgb, var(--mc) 55%, #000)); color: #fff; font: inherit; cursor: pointer; box-shadow: 0 0 22px -4px var(--mc); display: grid; place-items: center; }
++.mo-node b { font-family: var(--font-display); font-size: 14px; }
++.mo-node.on { box-shadow: 0 0 0 3px rgba(255, 255, 255, .7), 0 0 30px var(--mc); }
++.mo-label { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; font-size: 11px; color: #cfe2ff; white-space: nowrap; }
++
++/* ============================ Today: command deck ============================ */
++.deck { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
++.deck-head { display: flex; align-items: flex-end; justify-content: space-between; }
++.deck-head h1 { margin: 4px 0 0; font-size: 30px; font-weight: 600; letter-spacing: -.03em; color: #fff; }
++.eyebrow-sm { color: #8aa3cc; }
++.deck-hero { display: grid; grid-template-columns: 1fr 360px; gap: 16px; }
++.focus-card { border-radius: 18px; padding: 22px 24px; min-height: 270px; display: flex; flex-direction: column;
++  background: linear-gradient(140deg, rgba(30, 60, 120, .85), rgba(10, 22, 50, .9) 55%, rgba(8, 18, 40, .95)) !important;
++  border: 1px solid rgba(57, 208, 255, .28) !important;
++  box-shadow: 0 0 0 1px rgba(57, 208, 255, .08), 0 30px 60px -24px rgba(11, 80, 157, .9), inset 0 1px 0 rgba(255, 255, 255, .08) !important; overflow: hidden; }
++.focus-card::after { content: ""; position: absolute; right: -80px; top: -80px; width: 280px; height: 280px; border-radius: 50%; background: radial-gradient(circle, rgba(57, 208, 255, .25), transparent 65%); pointer-events: none; }
++.focus-card.tone-red { border-color: rgba(255, 92, 122, .45) !important; }
++.focus-card.tone-red::after { background: radial-gradient(circle, rgba(255, 92, 122, .22), transparent 65%); }
++.fc-top { display: flex; align-items: center; justify-content: space-between; }
++.fc-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #6cd6ff; }
++.fc-count { font-family: var(--font-display); font-size: 22px; color: #fff; font-weight: 600; }
++.fc-count em { font-style: normal; font-size: 13px; color: #7f93b8; font-weight: 400; }
++.fc-body { flex: 1; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
++.fc-kind { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #a9c4ee; font-weight: 500; }
++.fc-body h2 { margin: 2px 0 0; font-size: 26px; font-weight: 600; letter-spacing: -.02em; color: #fff; line-height: 1.2; max-width: 680px; }
++.fc-body p { margin: 0; color: #b8c8e4; font-size: 14.5px; }
++.fc-hint { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; color: #8aa3cc; margin-top: 2px; }
++.fc-actions { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 16px; flex-wrap: wrap; }
++.fc-nav { margin-left: auto; display: flex; gap: 6px; align-items: center; }
++.fc-nav .icon-btn:disabled { opacity: .3; }
++.fc-clear { align-items: center; justify-content: center; text-align: center; color: #4ff0b4; }
++.fc-clear h2 { color: #fff; }
++.mw-when.red { color: #ff8da2; } .mw-when.amber { color: #ffc56b; } .mw-when.green { color: #4ff0b4; }
++.day-panel { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px; border-radius: 18px !important; }
++.dp-stats { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
++.dp-stats > div { background: rgba(6, 13, 30, .5); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; }
++.dp-stats > div > span { font-size: 11px; color: #8aa3cc; }
++.dp-stats b { font-size: 20px; color: #fff; font-weight: 600; }
++
++.track { position: relative; padding: 18px 22px 14px; border-radius: 16px !important; }
++.track-line { position: absolute; left: calc(100% / 12); right: calc(100% / 12); top: 15px; z-index: 0; height: 2px; background: rgba(120, 165, 255, .15); }
++.track-line i { display: block; height: 100%; background: linear-gradient(90deg, #2f8cf0, #39d0ff); box-shadow: 0 0 12px #39d0ff; }
++.track ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); position: relative; }
++.st { z-index: 1; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px; cursor: pointer; padding: 0 4px; position: relative; }
++.st-node { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-display); font-weight: 600; font-size: 13px; color: #8aa3cc; background: #0b1730; border: 1.5px solid rgba(120, 165, 255, .3); transition: transform .2s, box-shadow .2s; }
++.st:hover .st-node { transform: scale(1.12); box-shadow: 0 0 18px -2px #39d0ff; }
++.st.done .st-node { background: linear-gradient(135deg, #22c38e, #10916a); border-color: transparent; color: #fff; box-shadow: 0 0 16px rgba(47, 211, 155, .7); }
++.st.active .st-node { background: linear-gradient(135deg, #2f8cf0, #39d0ff); color: #04101f; border-color: transparent; box-shadow: 0 0 0 5px rgba(57, 208, 255, .15), 0 0 22px #39d0ff; }
++.st.waiting .st-node { border-color: #ffc56b; color: #ffc56b; }
++.st.late:not(.done) .st-node { border-color: #ff6b86; box-shadow: 0 0 14px rgba(255, 92, 122, .6); }
++.st b { font-size: 12.5px; font-weight: 600; color: #e6edf9; margin-top: 4px; }
++.st small { font-size: 11px; color: #7f93b8; }
++.st.late:not(.done) small { color: #ff8da2; }
++.st em { font-style: normal; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #04101f; background: #39d0ff; padding: 1px 6px; border-radius: 4px; box-shadow: 0 0 12px #39d0ff; margin-top: 2px; }
++
++.upnext { border-radius: 16px !important; }
++.un-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 18px; background: none; border: none; border-top: 1px solid rgba(120, 165, 255, .08); color: #e6edf9; font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
++.un-row:hover, .un-row.on { background: linear-gradient(90deg, rgba(47, 140, 240, .15), transparent); }
++.un-row i { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #4ff0b4; box-shadow: 0 0 8px currentColor; color: #4ff0b4; }
++.un-row.tone-red i { background: #ff6b86; color: #ff6b86; } .un-row.tone-amber i { background: #ffc56b; color: #ffc56b; }
++.un-kind { font-size: 11.5px; color: #8aa3cc; min-width: 110px; }
++.un-num { font-family: var(--font-display); color: #7f93b8; width: 22px; }
++.un-title { flex: 1; font-weight: 500; display: flex; flex-direction: column; }
++.un-title small { font-size: 11.5px; color: #8aa3cc; font-weight: 400; }
++.q-list { margin: -8px -4px; }
++.cd-check li { color: #a9b8d4; } .cd-check li b { color: #fff; }
++.cd-check li.done svg { color: #4ff0b4; } .cd-check li:not(.done) svg { color: #ffc56b; }
++@media (max-width: 1100px) { .deck-hero { grid-template-columns: 1fr; } .track ol { grid-template-columns: repeat(3, 1fr); row-gap: 14px; } .track-line { display: none; } }
++
++/* ============================ Approvals split view ============================ */
++.inbox-page kbd, .sd-actions kbd { font: inherit; font-size: 11px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--edge-strong); background: rgba(255, 255, 255, .06); color: #cfe2ff; margin: 0 2px; }
++.inbox-done { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: #4ff0b4; background: rgba(47, 211, 155, .1); border: 1px solid rgba(47, 211, 155, .3); padding: 6px 12px; border-radius: 999px; }
++.split { display: grid; grid-template-columns: 380px 1fr; gap: 16px; height: calc(100vh - 260px); min-height: 440px; }
++.split-list { overflow-y: auto; border-radius: 16px !important; }
++.sl-group { position: sticky; top: 0; z-index: 2; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8aa3cc; padding: 10px 16px 6px; background: rgba(10, 20, 44, .95); backdrop-filter: blur(10px); display: flex; justify-content: space-between; border-bottom: 1px solid var(--edge); }
++.sl-row { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 11px 16px; background: none; border: none; border-bottom: 1px solid rgba(120, 165, 255, .07); color: #e6edf9; font: inherit; cursor: pointer; }
++.sl-row:hover { background: rgba(47, 140, 240, .08); }
++.sl-row.on { background: linear-gradient(90deg, rgba(47, 140, 240, .28), rgba(47, 140, 240, .04)); box-shadow: inset 3px 0 0 #39d0ff; }
++.sl-row.urgent .sl-title svg { color: #ff8da2; }
++.sl-title { font-size: 13.5px; font-weight: 500; display: flex; gap: 6px; align-items: center; }
++.sl-sub { font-size: 11.5px; color: #8aa3cc; }
++.split-detail { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
++.sd-card { padding: 26px 28px; border-radius: 18px !important; display: flex; flex-direction: column; gap: 12px;
++  background: linear-gradient(150deg, rgba(30, 60, 120, .75), rgba(10, 22, 50, .9) 60%) !important; border-color: rgba(57, 208, 255, .25) !important; box-shadow: 0 30px 60px -28px rgba(11, 80, 157, .9) !important; }
++.sd-top { display: flex; gap: 8px; align-items: center; }
++.sd-pos { margin-left: auto; font-family: var(--font-display); color: #7f93b8; }
++.sd-card h2 { margin: 0; font-size: 24px; font-weight: 600; color: #fff; letter-spacing: -.02em; }
++.sd-detail { margin: 0; color: #b8c8e4; font-size: 14.5px; }
++.sd-facts { display: grid; gap: 10px; margin-top: 6px; }
++.sd-facts > div { display: grid; grid-template-columns: 130px 1fr; gap: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(6, 13, 30, .5); border: 1px solid var(--edge); }
++.sd-facts span { font-size: 12px; color: #8aa3cc; }
++.sd-facts b { font-size: 13.5px; font-weight: 500; color: #e6edf9; }
++.sd-actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
++.sd-next { display: flex; gap: 6px; align-items: center; padding: 0 6px; }
++@media (max-width: 1000px) { .split { grid-template-columns: 1fr; height: auto; } .split-list { max-height: 320px; } }
++
++/* ============================ Dashboard ============================ */
++.dash { display: flex; flex-direction: column; gap: 16px; }
++.dash > .page-head { margin-bottom: 4px; }
++.dash-hero { display: grid; grid-template-columns: 430px 1fr; gap: 16px; }
++.orb-card, .flow-card { border-radius: 18px !important; }
++.orb-card { background: radial-gradient(500px 300px at 30% 40%, rgba(11, 80, 157, .55), transparent 70%), var(--glass) !important; }
++.orb-wrap { display: flex; align-items: center; gap: 18px; padding: 10px 20px 22px; }
++.orb-facts { display: flex; flex-direction: column; gap: 10px; }
++.orb-facts > div { display: flex; flex-direction: column; }
++.orb-facts > div > span { font-size: 11.5px; color: #8aa3cc; }
++.orb-facts b { font-size: 20px; color: #fff; font-weight: 600; }
++.live-dot { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #4ff0b4; }
++.live-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #4ff0b4; box-shadow: 0 0 0 0 rgba(79, 240, 180, .7); animation: pulse 1.8s infinite; }
++@keyframes pulse { 70% { box-shadow: 0 0 0 10px rgba(79, 240, 180, 0); } 100% { box-shadow: 0 0 0 0 rgba(79, 240, 180, 0); } }
++.kpi-cards { margin-bottom: 0; }
++.kpi-card { border-radius: 14px !important; padding: 16px 18px; }
++.kc-label { color: #8aa3cc; }
++.kc-row b { color: #fff; font-weight: 600; }
++.kc-note { color: #7f93b8; }
++.dash-2 { margin-bottom: 0; }
++.dash .card { border-radius: 16px !important; }
++@media (max-width: 1180px) { .dash-hero { grid-template-columns: 1fr; } }
++
++.fx-num { font-size: inherit; color: inherit; }
++.dash-2 > *, .dash-hero > *, .deck-hero > * { min-width: 0; }
++.flow, .lc { min-width: 0; overflow: hidden; }
++.towers-wrap { min-height: 250px; }
++
++/* ============================ Admin ============================ */
++.admin-hero { display: grid; grid-template-columns: 1fr 300px; gap: 16px; margin-bottom: 18px; }
++.orbit-card { border-radius: 18px !important; background: radial-gradient(420px 300px at 30% 55%, rgba(11, 80, 157, .5), transparent 70%), var(--glass) !important; }
++.orbit-wrap { display: flex; align-items: center; gap: 24px; padding: 6px 22px 26px; }
++.orbit-side { flex: 1; display: flex; flex-direction: column; gap: 4px; }
++.om-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; background: rgba(6, 13, 30, .45); border: 1px solid var(--edge); color: #e6edf9; font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
++.om-row i { width: 10px; height: 10px; border-radius: 3px; background: var(--mc); box-shadow: 0 0 10px var(--mc); }
++.om-row b { margin-left: auto; font-size: 16px; font-weight: 600; }
++.om-row em { font-style: normal; font-size: 11.5px; color: #6cc3ff; padding: 2px 6px; border-radius: 5px; }
++.om-row em:hover { background: rgba(47, 140, 240, .2); }
++.om-row:hover, .om-row.on { border-color: color-mix(in srgb, var(--mc) 70%, transparent); box-shadow: 0 0 18px -6px var(--mc); }
++.access-health { display: grid; grid-template-rows: repeat(4, 1fr); gap: 10px; }
++.ah-tile { border-radius: 14px; padding: 12px 16px; background: var(--glass); border: 1px solid var(--edge); display: flex; flex-direction: column; justify-content: center; box-shadow: var(--shadow-card); position: relative; overflow: hidden; }
++.ah-tile::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #39d0ff; box-shadow: 0 0 12px #39d0ff; }
++.ah-tile.tone-green::before { background: #4ff0b4; box-shadow: 0 0 12px #4ff0b4; }
++.ah-tile.tone-amber::before { background: #ffc56b; box-shadow: 0 0 12px #ffc56b; }
++.ah-tile.tone-red::before { background: #ff6b86; box-shadow: 0 0 12px #ff6b86; }
++.ah-tile > span { font-size: 12px; color: #8aa3cc; }
++.ah-tile b { font-size: 26px; color: #fff; font-weight: 600; }
++.user-management-page .role-badge, .user-management-page .us-pill { filter: none; }
++@media (max-width: 1100px) { .admin-hero { grid-template-columns: 1fr; } .access-health { grid-template-columns: repeat(2, 1fr); grid-template-rows: none; } }
++.sugg-focus { display: grid; grid-template-columns: 1fr 340px; gap: 16px; margin-bottom: 16px; align-items: start; }
++.sugg-card.focus { padding: 22px 24px; border-radius: 18px !important; gap: 14px; background: linear-gradient(150deg, rgba(30, 60, 120, .75), rgba(10, 22, 50, .9) 60%) !important; border-color: rgba(57, 208, 255, .28) !important; position: relative; }
++.sugg-card.focus .sc-sides { font-size: 14px; }
++.sugg-card.focus .sc-sides b { font-size: 20px; font-family: var(--font-display); color: #fff; }
++.sugg-card.focus .reasons { font-size: 13.5px; gap: 6px; }
++.sugg-card.focus .sc-actions .btn { font-size: 14px; padding: 10px 18px; }
++.sf-pos { position: absolute; right: 22px; top: 18px; font-family: var(--font-display); font-size: 20px; color: #fff; }
++.sf-pos em { font-style: normal; font-size: 12px; color: #7f93b8; }
++.sugg-rest { border-radius: 16px !important; }
++@media (max-width: 1100px) { .sugg-focus { grid-template-columns: 1fr; } }
++.sugg-card.focus .sc-head { padding-right: 76px; }
+diff --color -ruN r4a/frontend/src/index.css r4b/frontend/src/index.css
+--- r4a/frontend/src/index.css	2026-10-21 03:30:31
++++ r4b/frontend/src/index.css	2026-10-21 03:30:31
+@@ -1,4 +1,4 @@
+-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
++@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+ @tailwind base;
+ @tailwind components;
+ @tailwind utilities;
+diff --color -ruN r4a/frontend/src/index.js r4b/frontend/src/index.js
+--- r4a/frontend/src/index.js	2026-10-21 03:30:31
++++ r4b/frontend/src/index.js	2026-10-21 03:30:31
+@@ -4,6 +4,7 @@
+ import "@/styles.css";
+ import "@/ops.css";
+ import "@/theme.css";
++import "@/future.css";
+ import App from "@/App";
+ import { StoreProvider } from "@/state/store";
+ import { Toaster } from "sonner";
