@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import BankConfigLanding from "@/features/bankConfig/BankConfigLanding";
 import BankConfigWizard from "@/features/bankConfig/BankConfigWizard";
-import QuickSetup from "@/features/bankConfig/QuickSetup";
 import CreditMisLanding from "@/features/creditMis/CreditMisLanding";
 import CreditMisWizard from "@/features/creditMis/CreditMisWizard";
 import MappingSummary from "@/features/mapping/MappingSummary";
@@ -66,8 +65,7 @@ export default function App() {
           <Route path="/dashboard" element={<SetupApprovalsRedirect />} />
           <Route path="/bank-setup" element={<BankConfigLanding />} />
           <Route path="/bank-setup/:mode/:id" element={<BankConfigWizard />} />
-          <Route path="/bank-setup/new" element={<QuickSetup />} />
-          <Route path="/bank-setup/new/manual" element={<BankConfigWizard />} />
+          <Route path="/bank-setup/new" element={<BankConfigWizard />} />
           <Route path="/credit-mis" element={<CreditMisLanding />} />
           <Route path="/credit-mis/:mode/:id" element={<CreditMisWizard />} />
           <Route path="/credit-mis/new" element={<CreditMisWizard />} />

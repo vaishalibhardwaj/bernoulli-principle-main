@@ -2,13 +2,11 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { TODAY } from "@/mock/opsSeed";
-import { ACCOUNTS } from "@/mock/bankMaster";
 import { hasCap } from "@/lib/access";
 import { inrShort, num, dur } from "@/features/ops/ui";
 import { LineChart, Spark, BarList } from "@/features/ops/charts";
 import { useCycle } from "@/features/today/Cycle";
 import { TiltCard, CoreOrb, FlowStreams, Towers3D, CountUp } from "@/features/viz/Viz";
-import { C, Donut, HBar } from "@/features/dashboards/dashViz";
 import { Gauge, ArrowUpRight, ArrowDownRight, Hourglass } from "lucide-react";
 
 const BUCKETS = [["0–1d", 0, 24], ["1–2d", 24, 48], ["2–3d", 48, 72], ["3–5d", 72, 120], [">5d", 120, 9999]];
@@ -84,25 +82,6 @@ export default function CommandCentre() {
         <div className="actions"><span className="live-dot">Live</span><div className="segmented">{[[7, "7 days"], [14, "14 days"]].map(([v, l]) => <button key={v} className={range === v ? "on" : ""} onClick={() => setRange(v)}>{l}</button>)}</div></div>
       </div>
 
-      <div className="card age-watch" data-testid="ageing-watch">
-        <div className="card-head"><h3>Ageing watch</h3><span className="muted">Open cases by age · penalty interest starts after 5 days · click a row to open them</span></div>
-        <div className="aw-grid">
-          <div className="aw-h"><span /><span>Open</span>{BUCKETS.map(([l]) => <span key={l} className={l === ">5d" ? "hot" : ""}>{l}</span>)}<span>Past 5 days</span></div>
-          {heat.map((r) => (
-            <button key={r.type} className="aw-row" onClick={go("exceptions", "/exceptions?age=over5")} data-testid={"aw-" + r.type}>
-              <span className="aw-label"><b>{r.label}</b><em>{inrShort(r.amt)}</em></span>
-              <span className="aw-total fx-num">{r.total}</span>
-              {r.cells.map((c, i) => (
-                <span key={i} className={"aw-cell" + (i === 4 && c.n ? " hot" : "")} style={{ "--h": c.n / maxHeat }} title={`${r.label}, ${BUCKETS[i][0]}: ${c.n} · ${inrShort(c.amt)}`}>
-                  {c.n ? <><b>{c.n}</b><small>{inrShort(c.amt)}</small></> : <small className="muted">—</small>}
-                </span>
-              ))}
-              <span className={"aw-breach" + (r.breach ? " on" : "")}>{r.breach ? `${r.breach} breached` : "none"}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className="dash-hero">
         <TiltCard className="card orb-card">
           <div className="card-head"><h3>Reconciliation core</h3><span className="muted">Payments matched automatically today</span></div>
@@ -120,8 +99,6 @@ export default function CommandCentre() {
           <div className="card-pad"><FlowStreams sources={flowSources} outcomes={flowOut} format={inrShort} height={250} /></div>
         </div>
       </div>
-
-      <SvpPanel collections={collections} go={go} />
 
       <div className="kpi-cards">
         {kpis.map((k) => (
@@ -145,60 +122,23 @@ export default function CommandCentre() {
         </div>
       </div>
 
-    </div>
-  );
-}
-
-/**
- * SVP view (things chased today through SQL queries), drawn to be read at a glance:
- * setups missing by bank, excess credits by age, refunds by stage with the 5-day SLA.
- */
-function SvpPanel({ collections, go }) {
-  const cfg = collections.bank_config || [];
-  const configured = new Set(cfg.filter((c) => ["active", "inactive", "pending"].includes(c.status)).map((c) => c.accountNumber));
-  const all = Object.entries(ACCOUNTS).flatMap(([b, list]) => list.map((a) => ({ b, a, ok: configured.has(a.accountNumber) })));
-  const missing = all.filter((x) => !x.ok);
-  const byBank = Object.entries(missing.reduce((m, x) => ({ ...m, [x.b]: (m[x.b] || 0) + 1 }), {})).sort((a, b) => b[1] - a[1]);
-  const mapsMissing = [...new Set(cfg.filter((c) => c.status === "active").map((c) => c.bankName))].filter((b) => !(collections.bank_mapping || []).some((m) => m.bankName === b && m.status === "active"));
-  const excess = (collections.exceptions || []).filter((e) => e.type === "Excess credit" && e.status !== "closed");
-  const ageBands = [["0–5 d", 0, 5], ["6–10 d", 6, 10], ["11–20 d", 11, 20], ["20+ d", 21, 9999]].map(([l, lo, hi]) => { const x = excess.filter((e) => { const d = Math.floor(e.ageHours / 24); return d >= lo && d <= hi; }); return { l, n: x.length, amt: x.reduce((s, e) => s + e.amount, 0), late: lo > 5 }; });
-  const refunds = collections.refunds || [];
-  const sum = (l) => l.reduce((s, x) => s + (x.amount || 0), 0);
-  const stages = [["To prepare", ["draft"], C.warn], ["Awaiting approval", ["pending"], C.info], ["Approved", ["approved"], C.blue], ["Paid", ["paid"], C.ok]].map(([l, st, color]) => { const x = refunds.filter((r) => st.includes(r.status)); return { l, color, n: x.length, amt: sum(x) }; });
-  const overdue = refunds.filter((r) => r.status !== "paid" && r.ageDays > 5);
-  const totalR = stages.reduce((s, x) => s + x.n, 0) || 1;
-  return (
-    <div className="svp-grid" data-testid="svp-panel">
-      <div className="card svp-card" onClick={go("bank_setup", "/bank-setup")} role="button">
-        <div className="card-head"><h3>Setup missing</h3><span className="muted">Bank-master accounts with no approved setup</span></div>
-        <div className="svp-body">
-          <Donut size={128} thickness={12} value={missing.length} sub={`of ${all.length} accounts`} segments={[{ v: all.length - missing.length, color: C.ok }, { v: missing.length, color: C.bad }]} />
-          <div className="svp-side">
-            {byBank.slice(0, 5).map(([b, n]) => <HBar key={b} label={b} value={n} max={byBank[0][1]} color={C.bad} />)}
-            <span className="svp-note">{mapsMissing.length} bank{mapsMissing.length !== 1 ? "s" : ""} also have no active column mapping</span>
-          </div>
-        </div>
-      </div>
-      <div className="card svp-card" onClick={go("exceptions", "/exceptions")} role="button">
-        <div className="card-head"><h3>Excess credits</h3><span className="muted">Investor paid more than the application</span></div>
-        <div className="svp-big-row"><b className="fx-num">{excess.length}</b><span>open</span><b className="fx-num svp-amt">{inrShort(sum(excess))}</b><span>to refund</span></div>
-        <div className="svp-bands">
-          {ageBands.map((b) => (
-            <div key={b.l} className={"svp-band" + (b.late && b.n ? " late" : "")}>
-              <span className="svp-band-bar"><i style={{ height: `${(b.n / Math.max(1, ...ageBands.map((x) => x.n))) * 100}%` }} /></span>
-              <b>{b.n}</b><em>{inrShort(b.amt)}</em><span>{b.l}</span>
-            </div>
+      <div className="card age-watch" data-testid="ageing-watch">
+        <div className="card-head"><h3>Ageing watch</h3><span className="muted">Open cases by age · penalty interest starts after 5 days · click a row to open them</span></div>
+        <div className="aw-grid">
+          <div className="aw-h"><span /><span>Open</span>{BUCKETS.map(([l]) => <span key={l} className={l === ">5d" ? "hot" : ""}>{l}</span>)}<span>Past 5 days</span></div>
+          {heat.map((r) => (
+            <button key={r.type} className="aw-row" onClick={go("exceptions", "/exceptions?age=over5")} data-testid={"aw-" + r.type}>
+              <span className="aw-label"><b>{r.label}</b><em>{inrShort(r.amt)}</em></span>
+              <span className="aw-total fx-num">{r.total}</span>
+              {r.cells.map((c, i) => (
+                <span key={i} className={"aw-cell" + (i === 4 && c.n ? " hot" : "")} style={{ "--h": c.n / maxHeat }} title={`${r.label}, ${BUCKETS[i][0]}: ${c.n} · ${inrShort(c.amt)}`}>
+                  {c.n ? <><b>{c.n}</b><small>{inrShort(c.amt)}</small></> : <small className="muted">—</small>}
+                </span>
+              ))}
+              <span className={"aw-breach" + (r.breach ? " on" : "")}>{r.breach ? `${r.breach} breached` : "none"}</span>
+            </button>
           ))}
         </div>
-        <span className="svp-note">{ageBands.filter((b) => b.late).reduce((s, b) => s + b.n, 0)} past the 5-day threshold</span>
-      </div>
-      <div className="card svp-card" onClick={go("refunds", "/refunds")} role="button">
-        <div className="card-head"><h3>Refunds</h3><span className="muted">By stage, today</span></div>
-        <div className="svp-stack">{stages.map((x) => <i key={x.l} style={{ width: `${(x.n / totalR) * 100}%`, background: x.color, boxShadow: `0 0 10px ${x.color}88` }} title={`${x.l}: ${x.n}`} />)}</div>
-        <div className="svp-stages">
-          {stages.map((x) => <div key={x.l}><span><i style={{ background: x.color }} />{x.l}</span><b>{x.n}</b><em>{inrShort(x.amt)}</em></div>)}
-        </div>
-        <span className={"svp-note" + (overdue.length ? " bad" : "")}>{overdue.length ? `${overdue.length} refund${overdue.length > 1 ? "s" : ""} past 5 days — delayed interest is running` : "None past the 5-day limit"}</span>
       </div>
     </div>
   );

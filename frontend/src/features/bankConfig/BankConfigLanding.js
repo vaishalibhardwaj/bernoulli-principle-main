@@ -125,8 +125,7 @@ export default function BankConfigLanding() {
               <button className="bs-bank-h" onClick={() => setOpen({ ...open, [b.bank]: !o })} aria-expanded={o}>
                 <ChevronRight size={16} className="bs-chev" />
                 <b>{b.bank}</b>
-                <span className="muted">{b.accounts} account{b.accounts !== 1 ? "s" : ""}</span>
-                <span className="muted">· arrives by {modes.join(", ")}</span>
+                <span className="muted">{b.accounts} account{b.accounts !== 1 ? "s" : ""} · {modes.join(", ")}</span>
                 <span className="bs-badges">
                   {st("rejected") > 0 && <span className="bs-badge bad">{st("rejected")} needs fix</span>}
                   {st("pending") > 0 && <span className="bs-badge warn">{st("pending")} pending</span>}
@@ -143,7 +142,7 @@ export default function BankConfigLanding() {
                         <span className="bs-acct tnum"><b>{maskAccount(c.accountNumber)}</b><em>{c.schemeName || c.assetClass || ""}</em></span>
                         <span className="bs-mode"><Mode.icon size={14} /> {SHORT_MODE[c.downloadMode]}</span>
                         <span className="bs-tags">
-                          <span className={"bs-tag " + (c.priority === "high" ? "hi" : "lo")} data-testid={"prio-" + c.id}>{c.priority === "high" ? "High priority" : "Low priority"}</span>
+                          {c.priority === "high" && <span className="bs-tag hi">High priority</span>}
                           {c.formatName && <span className="bs-tag">{c.formatName}</span>}
                           {c.processing?.reconciliationType === "Liability" && <span className="bs-tag">Liability · {c.processing.liabilityCategory}</span>}
                         </span>
@@ -187,4 +186,3 @@ function SetupPanel({ c, canEdit, onClose, nav, onVersions }) {
     </Drawer>
   );
 }
-

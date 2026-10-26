@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer, useCallback } from "react";
-import { seedBankConfigs, seedCreditConfigs, seedMappings, seedStatusMap, newMappingFor, seedCutoffs, seedNarrationTags, seedBankConnections } from "../mock/seed";
+import { seedBankConfigs, seedCreditConfigs, seedMappings, seedStatusMap, newMappingFor, seedCutoffs, seedNarrationTags } from "../mock/seed";
 import { diffSetup, isStandard } from "../lib/setupSchema";
 import { seedUsers } from "../mock/userSeed";
 import { uid } from "../lib/format";
@@ -8,9 +8,9 @@ import { genTempPassword } from "../lib/credentials";
 import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
 import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp, seedBalances, seedJobs, seedFileTrack, seedLiability } from "../mock/opsSeed";
 
-const KEY = "cams_recon_state_v26";
+const KEY = "cams_recon_state_v24";
 // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
-const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp", "cutoffs", "narration_tags", "balances", "jobs", "liab_debits", "bank_connections"];
+const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp", "cutoffs", "narration_tags", "balances", "jobs", "liab_debits"];
 
 /** R7 — keep the live (last approved) version on a draft/pending edit so the checker sees a diff. */
 function baselineOf(prev, item) {
@@ -39,7 +39,7 @@ function buildSeed() {
       ],
       files, emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
       exceptions: seedExceptions(), documents: seedDocuments(),
-      releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(), bank_connections: seedBankConnections(configs), cutoffs: seedCutoffs(), narration_tags: seedNarrationTags(),
+      releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(), cutoffs: seedCutoffs(), narration_tags: seedNarrationTags(),
     },
     audit,
     persona: "usr_meera",

@@ -4,6 +4,7 @@ import { Landmark, ArrowLeft, Check, AlertTriangle, RotateCcw, Save, Send, Spark
 import { useStore } from "@/state/store";
 import StepIndicator from "@/components/StepIndicator";
 import PreviewTable from "@/components/PreviewTable";
+import FileDropZone from "@/components/FileDropZone";
 import { Modal } from "@/components/Modal";
 import { Chip, Toggle, Note } from "@/components/bits";
 import { buildPreview, detectFor, sampleTable } from "@/mock/sampleFiles";
@@ -31,6 +32,9 @@ export default function MappingEditor() {
   const [headerConfirmed, setHeaderConfirmed] = React.useState(rec?.headerConfirmed || false);
   const [dateFmt, setDateFmt] = React.useState(rec?.dateFmt || defaultDateFmt());
   const [hdr, setHdr] = React.useState(null); // header row picked by the user (0-based); null = detected
+  const [startCol, setStartCol] = React.useState(null); // first data column picked by the user; null = detected
+  const [replacing, setReplacing] = React.useState(false);
+  const [analysing, setAnalysing] = React.useState(false);
   const [dialog, setDialog] = React.useState(null);
   const [confirmSubmit, setConfirmSubmit] = React.useState(false);
   const [overrides, setOverrides] = React.useState(0);
@@ -54,6 +58,20 @@ export default function MappingEditor() {
   const preview = buildPreview(sampleFile);
   const table = sampleTable(sampleFile);
   const headerIdx = hdr ?? (preview ? preview.headerIdx : 0);
+  const firstCol = startCol ?? (meta?.detect.startColumn || 1);
+  // Replace the sample, as in bank statement setup: re-detect layout, then flag fields whose column is gone.
+  const pickSample = (name) => {
+    if (!detectFor(name)) { toast.error("Could not read this file — use one of the demo files"); return; }
+    setAnalysing(true); setReplacing(false);
+    setTimeout(() => {
+      const p = buildPreview(name);
+      const cols = (p.rows[p.headerIdx] || []).filter((c) => c && c.trim());
+      setMapping((m) => ({ ...m, sampleFileName: name, sampleReplacedAt: new Date().toISOString(),
+        fields: m.fields.map((f) => (f.status === "mapped" && !cols.includes(f.mappedColumn) ? { ...f, status: "mismatch", note: `“${f.mappedColumn}” is not in the new sample` } : f)) }));
+      setHdr(null); setStartCol(null); setAnalysing(false);
+      toast.success("Sample read — header row and start column detected. Check them below.");
+    }, 700);
+  };
   const columns = proposal ? proposal.newColumns : preview?.rows[headerIdx]?.filter((c) => c && c.trim()) || [];
   const acctCount = new Set((collections.bank_config || []).filter((c) => c.bankName === mapping.bankName && (c.formatName || "") === (mapping.formatName || "")).map((c) => c.accountNumber)).size;
   const fields = mapping.fields;
@@ -129,7 +147,7 @@ export default function MappingEditor() {
   };
 
   const label = `${mapping.bankName} mapping · ${(mapping.accountNumber || "").slice(-4)}`;
-  const payload = () => ({ ...mapping, headerConfirmed, headerRow: headerIdx + 1, dateFmt, dateFormat: fmtString(dateFmt), overrides });
+  const payload = () => ({ ...mapping, headerConfirmed, headerRow: headerIdx + 1, startColumn: firstCol, dateFmt, dateFormat: fmtString(dateFmt), overrides });
   const doSaveDraft = () => {
     const errs = validateSubmit().filter((e) => /required|incremental|Value date|Amount|Narration|account number/i.test(e));
     if (errs.length) { toast.error(errs[0]); return; }
@@ -186,8 +204,30 @@ export default function MappingEditor() {
         <div className="wiz-body">
           {step === 0 && (<>
             <div className="step-title">Sample File</div>
-            <div className="summary-banner" data-testid="sample-banner"><FileText size={16} /> Using the sample uploaded on <b>&nbsp;{formatDate(mapping.createdAt)}&nbsp;</b> during setup ({sampleFile}).</div>
-            <PreviewTable rows={preview.rows} headerIdx={headerIdx} maxRows={40} startColumn={meta?.detect.startColumn || 1} caption="Whole sample file" />
+            <p className="step-desc">The file the mapping is built from. Replace it if the bank's layout has changed, then check what was detected.</p>
+            {!replacing ? (
+              <div className="summary-banner" data-testid="sample-banner"><FileText size={16} />
+                <span>{mapping.sampleReplacedAt ? <>Sample replaced just now: <b>{sampleFile}</b></> : <>Using the sample uploaded on <b>&nbsp;{formatDate(mapping.createdAt)}&nbsp;</b> during setup ({sampleFile}).</>}</span>
+                {!isView && <button className="btn btn-outline btn-sm" style={{ marginLeft: "auto" }} onClick={() => setReplacing(true)} data-testid="replace-sample">Replace sample</button>}
+              </div>
+            ) : (
+              <div data-testid="replace-zone">
+                <FileDropZone fileName={null} onPick={pickSample} onClear={() => setReplacing(false)} hint="Drop a newer statement from this bank — the header row and columns are detected again" />
+                <button className="link" style={{ marginTop: 8 }} onClick={() => setReplacing(false)}>Keep the current sample</button>
+              </div>
+            )}
+            {analysing && <div className="analysing" data-testid="analysing"><div className="spinner" /><div><b>Reading the sample…</b><div style={{ fontSize: 12, color: "hsl(var(--muted))" }}>Finding the header row, separator and columns</div></div></div>}
+            {!analysing && (<>
+              <div className="form-grid" style={{ marginTop: 16 }} data-testid="sample-settings">
+                <div className="field"><label className="field-label">File type {hdr === null && startCol === null && <span className="chip chip-auto"><Sparkles size={10} /> Auto-detected</span>}</label><input className="input" value={meta?.detect.fileType || "—"} readOnly disabled /></div>
+                <div className="field"><label className="field-label">Header row {hdr === null ? <span className="chip chip-auto"><Sparkles size={10} /> Auto-detected</span> : <span className="chip chip-edited">Edited</span>}</label>
+                  <input className="input tnum" disabled={isView} value={headerIdx + 1} onChange={(e) => { const n = parseInt(e.target.value, 10); if (n >= 1 && n <= preview.rows.length) setHdr(n - 1); }} data-testid="map-header-row" /></div>
+                <div className="field"><label className="field-label">Start column {startCol === null ? <span className="chip chip-auto"><Sparkles size={10} /> Auto-detected</span> : <span className="chip chip-edited">Edited</span>}</label>
+                  <input className="input tnum" disabled={isView} value={firstCol} onChange={(e) => { const n = parseInt(e.target.value, 10); if (n >= 1) setStartCol(n); }} data-testid="map-start-col" /></div>
+              </div>
+              <PreviewTable rows={preview.rows} headerIdx={headerIdx} maxRows={40} startColumn={firstCol} caption="Whole sample file — the highlighted row is the header" onPickRow={isView ? undefined : (i) => setHdr(i)} />
+              {fields.some((f) => f.status === "mismatch") && <div className="note warn" style={{ marginTop: 12 }}><AlertTriangle size={14} /><div>{fields.filter((f) => f.status === "mismatch").length} mapped field(s) point to a column that isn't in this sample. You'll re-map them in step 3.</div></div>}
+            </>)}
             <div style={{ marginTop: 18 }}><button className="btn btn-primary" onClick={() => setStep(1)} data-testid="map-to-header">Continue to header</button></div>
           </>)}
 
@@ -197,7 +237,7 @@ export default function MappingEditor() {
             {meta && mapping.headerRow && meta.detect.startRow !== mapping.headerRow && (
               <div style={{ marginBottom: 12 }}><div className="note warn"><AlertTriangle /><div>Header scoring found the column names on <b>row {meta.detect.startRow}</b>, but the setup says <b>row {mapping.headerRow}</b>. Please confirm.</div></div></div>
             )}
-            <PreviewTable rows={preview.rows} headerIdx={headerIdx} maxRows={40} startColumn={meta?.detect.startColumn || 1} caption={`Whole sample — header on row ${headerIdx + 1}${hdr === null ? " (detected)" : " (your pick)"}`} onPickRow={isView ? undefined : (i) => setHdr(i)} />
+            <PreviewTable rows={preview.rows} headerIdx={headerIdx} maxRows={40} startColumn={firstCol} caption={`Whole sample — header on row ${headerIdx + 1}${hdr === null ? " (detected)" : " (your pick)"}`} onPickRow={isView ? undefined : (i) => setHdr(i)} />
             <div style={{ marginTop: 18, display: "flex", gap: 10 }}>
               <button className="btn btn-success" onClick={() => { setHeaderConfirmed(true); setStep(2); toast.success("Header confirmed"); }} data-testid="btn-confirm-header"><Check size={15} /> Confirm header</button>
               <button className="btn btn-outline" onClick={() => setStep(0)}>Back</button>
