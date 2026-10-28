@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useStore } from "@/state/store";
-import { MODULES, hasCap } from "@/lib/access";
+import { MODULES, MODULE_BY_KEY, hasCap } from "@/lib/access";
 import { TiltCard, ModuleOrbit, CountUp } from "@/features/viz/Viz";
 import Pagination from "@/components/Pagination";
 import { SkeletonRows, EmptyState } from "@/components/bits";
@@ -15,23 +15,23 @@ import { AMCS, userAmcs, inScope, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS, DO
 
 import {
   UserPlus, Search, Download, Shield, Pencil, Send, Power, PowerOff,
-  Users, Bell, X
+  Users, X, Building2, CalendarDays
 } from "lucide-react";
 import { toast } from "sonner";
 
+// Three ID statuses plus one common "Inactive" flag for active IDs that have gone quiet.
 const STATUS_FILTERS = [
-  { key: "all", label: "All Statuses" },
+  { key: "all", label: "All statuses" },
   { key: "active", label: "Active" },
+  { key: "inactive", label: "Inactive" },
   { key: "invited", label: "Invited" },
-  { key: "invite_expired", label: "Invite expired" },
-  { key: "deactivated", label: "Deactivated (all)" },
-  { key: "auto_deactivated", label: "Auto-deactivated · biometric" },
-  { key: "biometric_risk", label: `No punch-in 7+ days (still active)` },
-  { key: "dormant", label: `Not logged in ${DORMANT_DAYS}+ days` },
+  { key: "deactivated", label: "Deactivated" },
 ];
+/** Common inactivity status: no login for 10+ days, or no biometric punch-in for 7+ days. */
+const isInactive = (u) => u.status === "active" && (isDormant(u) || (u.lastBiometric && daysSince(u.lastBiometric) >= 7));
 
 const isoDay = (d) => d.toISOString().slice(0, 10);
-const STATUS_TEXT = { active: "Active", invited: "Invited", invite_expired: "Invite expired", deactivated: "Deactivated" };
+const STATUS_TEXT = { active: "Active", invited: "Invited", invite_expired: "Invited", deactivated: "Deactivated" };
 
 export default function UserManagement() {
   const {
@@ -43,7 +43,6 @@ export default function UserManagement() {
     requestReactivation,
     resendInvite,
     activateOnboardedUser,
-    adminNotifications,
     roles,
     perms,
     collections,
@@ -65,7 +64,6 @@ export default function UserManagement() {
   const [editingUser, setEditingUser] = useState(null);
   const [deactivatingUser, setDeactivatingUser] = useState(null);
   const [onboardingUser, setOnboardingUser] = useState(null);
-  const [dismissedNotifs, setDismissedNotifs] = useState([]);
 
   // Filters & Pagination
   const [search, setSearch] = useState("");
@@ -112,8 +110,6 @@ export default function UserManagement() {
       .map((u) => (u.status === "deactivated" && u.deactivatedAt && new Date(u.deactivatedAt).getTime() > toTs ? { ...u, status: "active", autoDeactivated: false } : u));
   }, [users, amcFilter, fromDate, toDate]);
   const scopeChanged = amcFilter !== "all" || fromDate !== today || toDate !== today;
-  const fmtDay = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-  const scopeLabel = `${amcFilter === "all" ? "All AMCs" : amcFilter} · ${fromDate === toDate ? `as on ${fmtDay(toDate)}` : `${fmtDay(fromDate)} – ${fmtDay(toDate)}`}`;
 
   // Live counts: users per module and per role (a user can count in several)
   const { moduleCounts, roleCounts } = useMemo(() => {
@@ -134,9 +130,8 @@ export default function UserManagement() {
       if (roleFilter !== "all" && !(u.roles || []).includes(roleFilter)) return false;
       if (moduleFilter !== "all" && !(u.roles || []).some((rid) => roleById[rid]?.module === moduleFilter)) return false;
       // Status filter
-      if (statusFilter === "auto_deactivated") { if (!(u.status === "deactivated" && u.autoDeactivated)) return false; }
-      else if (statusFilter === "dormant") { if (!isDormant(u)) return false; }
-      else if (statusFilter === "biometric_risk") { if (!(u.status === "active" && daysSince(u.lastBiometric) >= 7)) return false; }
+      if (statusFilter === "inactive") { if (!isInactive(u)) return false; }
+      else if (statusFilter === "invited") { if (!["invited", "invite_expired"].includes(u.status)) return false; }
       else if (statusFilter !== "all" && u.status !== statusFilter) return false;
       // Search
       if (debouncedSearch) {
@@ -180,12 +175,14 @@ export default function UserManagement() {
     toast.success(`Exported ${filteredUsers.length} users to CSV`);
   };
 
-  // Roles as plain text; privileged grants still awaiting a second admin are marked
+  // Roles as plain text, grouped by module so it's always clear which module a role belongs to
   const renderRoles = (u) => {
-    const names = (u.roles || []).map((rid) => roleById[rid]?.name).filter(Boolean);
-    const pending = (pendingByUser[u.id] || []).map((rid) => `${roleById[rid]?.name || rid} (pending approval)`);
-    const all = [...names, ...pending];
-    return all.length ? <span className="um-text" data-testid={`roles-${u.id}`}>{all.join(", ")}</span> : <span className="muted">No roles</span>;
+    const byMod = {};
+    (u.roles || []).forEach((rid) => { const r = roleById[rid]; if (r) (byMod[r.module] = byMod[r.module] || []).push(r.name.replace(/^(Recon|Brokerage|Posting|SIP|CRMS|Support|Purchase|MIS) · /, "")); });
+    (pendingByUser[u.id] || []).forEach((rid) => { const r = roleById[rid]; if (r) (byMod[r.module] = byMod[r.module] || []).push(`${r.name.replace(/^(Recon|Brokerage|Posting|SIP|CRMS|Support|Purchase|MIS) · /, "")} (pending approval)`); });
+    const mods = MODULES.filter((m) => byMod[m.key]);
+    if (!mods.length) return <span className="muted">No roles</span>;
+    return <span className="um-text" data-testid={`roles-${u.id}`}>{mods.map((m) => <span key={m.key} className="um-role-line"><b>{m.short || m.label}:</b> {byMod[m.key].join(", ")}</span>)}</span>;
   };
 
   const handleResendInvite = (user) => {
@@ -201,7 +198,6 @@ export default function UserManagement() {
   const pendingReactivation = useMemo(() => new Set((collections.access_requests || []).filter((r) => r.kind === "reactivate" && r.status === "pending").map((r) => r.userId)), [collections.access_requests]);
   const handleToggleReactivate = (user) => setReactivating(user);
 
-  const visibleNotifs = adminNotifications.filter((n) => !dismissedNotifs.includes(n.id));
 
   return (
     <div className="user-management-page" data-testid="user-management-page">
@@ -211,7 +207,6 @@ export default function UserManagement() {
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Users size={24} style={{ color: "#0f766e" }} /> User Management
           </h1>
-          <p>Assign roles and AMC access for every CAMS module. IDs themselves (activation, deactivation) are managed by the ID management team.</p>
         </div>
         <div className="actions">
           {/* Kept visible but off until the ID management integration is agreed */}
@@ -233,53 +228,27 @@ export default function UserManagement() {
         </div>
       </div>
 
-      {/* Admin Broadcast Notification Banners (e.g. Meera added Kiran Das as Operator) */}
-      {visibleNotifs.slice(0, 2).map((n) => (
-        <div
-          key={n.id}
-          className="sess-banner info"
-          style={{ marginBottom: 16 }}
-          data-testid="admin-notif-banner"
-        >
-          <span className="ico"><Bell size={18} /></span>
-          <div>
-            <b>Admin Notice:</b> {n.message} • <span style={{ opacity: 0.8, fontSize: 12 }}>{timeAgo(n.ts)}</span>
-          </div>
-          <button
-            type="button"
-            className="x"
-            onClick={() => setDismissedNotifs((prev) => [...prev, n.id])}
-            aria-label="Dismiss"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      ))}
 
       {/* Admin command view: modules orbit the CAMS core (click a node to filter) + access health */}
       <div className="um-scope" data-testid="um-scope">
-        <div className="field">
-          <label className="field-label">AMC</label>
-          <select className="select" value={amcFilter} onChange={(e) => setAmcFilter(e.target.value)} data-testid="scope-amc">
+        <div className="um-scope-bar">
+          <Building2 size={14} />
+          <select className="um-scope-sel" value={amcFilter} onChange={(e) => setAmcFilter(e.target.value)} data-testid="scope-amc" aria-label="AMC">
             <option value="all">All AMCs</option>
             {AMCS.map((a) => <option key={a} value={a}>{a}</option>)}
           </select>
+          <span className="um-scope-div" />
+          <CalendarDays size={14} />
+          <input className="um-scope-date tnum" type="date" value={fromDate} max={toDate} onChange={(e) => e.target.value && setFromDate(e.target.value)} data-testid="scope-from" aria-label="From date" />
+          <span className="muted">to</span>
+          <input className="um-scope-date tnum" type="date" value={toDate} min={fromDate} max={today} onChange={(e) => e.target.value && setToDate(e.target.value)} data-testid="scope-to" aria-label="To date" />
+          {scopeChanged && <button type="button" className="um-scope-reset" onClick={() => { setAmcFilter("all"); setFromDate(today); setToDate(today); }} data-testid="scope-reset" aria-label="Reset filters"><X size={13} /></button>}
         </div>
-        <div className="field">
-          <label className="field-label">From</label>
-          <input className="input tnum" type="date" value={fromDate} max={toDate} onChange={(e) => e.target.value && setFromDate(e.target.value)} data-testid="scope-from" />
-        </div>
-        <div className="field">
-          <label className="field-label">To (as on)</label>
-          <input className="input tnum" type="date" value={toDate} min={fromDate} max={today} onChange={(e) => e.target.value && setToDate(e.target.value)} data-testid="scope-to" />
-        </div>
-        <span className="um-scope-note">Showing <b>{scopeLabel}</b>. The AMC also filters the user list below.</span>
-        {scopeChanged && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAmcFilter("all"); setFromDate(today); setToDate(today); }} data-testid="scope-reset">Reset</button>}
       </div>
 
       <div className="admin-hero">
         <TiltCard className="card orbit-card" max={5}>
-          <div className="card-head"><h3>Access by module</h3><span className="muted">Click a module to filter users · node size = users with access</span></div>
+          <div className="card-head"><h3>Access by module</h3></div>
           <div className="orbit-wrap">
             <ModuleOrbit total={scoped.filter((u) => (u.roles || []).length).length} modules={MODULES.map((m) => ({ key: m.key, label: m.label, color: m.color, users: moduleCounts[m.key] || 0 }))} active={moduleFilter === "all" ? null : moduleFilter}
               onPick={(k) => { setModuleFilter(moduleFilter === k ? "all" : k); setRoleFilter("all"); }} />
@@ -296,19 +265,15 @@ export default function UserManagement() {
         <div className="access-health">
           {(() => {
             const active = scoped.filter((u) => u.status === "active");
-            const invited = scoped.filter((u) => u.status === "invited" || u.status === "invite_expired");
             const deact = scoped.filter((u) => u.status === "deactivated");
-            const dormant = active.filter(isDormant).length;
-            const auto = deact.filter((u) => u.autoDeactivated).length;
             return [
-              ["All users", scoped.length, "blue", "all", "Active + invites pending + deactivated", "total"],
-              ["Active", active.length, "green", "active", dormant ? `${dormant} not logged in ${DORMANT_DAYS}+ days` : null, "active", "dormant"],
-              ["Invites pending", invited.length, "amber", "invited", invited.filter((u) => u.status === "invite_expired").length ? `${invited.filter((u) => u.status === "invite_expired").length} expired` : null, "invited", "invite_expired"],
-              ["Deactivated", deact.length, "red", "deactivated", auto ? `${auto} by the biometric rule` : null, "deactivated", "auto_deactivated"],
-            ].map(([l, v, t, f, sub, id, subF]) => (
-              <div key={l} className={"ah-tile clickable tone-" + t + (statusFilter === f ? " on" : "")} onClick={() => setStatusFilter(f)} role="button" data-testid={`tile-${id}`}>
+              ["All users", scoped.length, "blue", "all", "total"],
+              ["Active", active.length, "green", "active", "active"],
+              ["Inactive", active.filter(isInactive).length, "amber", "inactive", "inactive", `No login for ${DORMANT_DAYS}+ days or no biometric punch-in for 7+ days`],
+              ["Deactivated", deact.length, "red", "deactivated", "deactivated"],
+            ].map(([l, v, t, f, id, tip]) => (
+              <div key={l} className={"ah-tile clickable tone-" + t + (statusFilter === f ? " on" : "")} onClick={() => setStatusFilter(f)} role="button" title={tip} data-testid={`tile-${id}`}>
                 <span>{l}</span><b className="fx-num"><CountUp value={v} /></b>
-                {sub && <small onClick={subF ? (e) => { e.stopPropagation(); setStatusFilter(subF); } : undefined} className={subF ? "link" : ""}>{sub}</small>}
               </div>
             ));
           })()}
@@ -332,21 +297,18 @@ export default function UserManagement() {
             />
           </div>
 
-          {/* Role Filter */}
-          <div className="field" style={{ minWidth: 160 }}>
-            <select
-              className="select"
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              data-testid="filter-role-select"
-            >
-              <option value="all">All Roles</option>
-              {MODULES.map((m) => (
-                <optgroup key={m.key} label={m.label}>
-                  {roles.filter((r) => r.module === m.key && r.status === "active").map((r) => (
-                    <option key={r.id} value={r.id}>{r.name} ({roleCounts[r.id] || 0})</option>
-                  ))}
-                </optgroup>
+          {/* Module, then the roles of that module only */}
+          <div className="field" style={{ minWidth: 170 }}>
+            <select className="select" value={moduleFilter} onChange={(e) => { setModuleFilter(e.target.value); setRoleFilter("all"); }} data-testid="filter-module-select" aria-label="Module">
+              <option value="all">All modules</option>
+              {MODULES.map((m) => <option key={m.key} value={m.key}>{m.label} ({moduleCounts[m.key] || 0})</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ minWidth: 190 }}>
+            <select className="select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} disabled={moduleFilter === "all"} title={moduleFilter === "all" ? "Pick a module first" : undefined} data-testid="filter-role-select" aria-label="Role">
+              <option value="all">{moduleFilter === "all" ? "Role — pick a module first" : `All ${MODULE_BY_KEY[moduleFilter]?.label} roles`}</option>
+              {moduleFilter !== "all" && roles.filter((r) => r.module === moduleFilter && r.status === "active").map((r) => (
+                <option key={r.id} value={r.id}>{r.name} ({roleCounts[r.id] || 0})</option>
               ))}
             </select>
           </div>
@@ -467,9 +429,7 @@ export default function UserManagement() {
                       {/* Status */}
                       <td>
                         <span className="um-text" data-testid={`status-${u.status}`}>{STATUS_TEXT[u.status] || u.status}</span>
-                        {u.status === "deactivated" && u.autoDeactivated && <div className="um-sub">Biometric rule · {daysSince(u.lastBiometric)}d no punch-in</div>}
-                        {pendingReactivation.has(u.id) && <div className="um-sub amber">Reactivation awaiting 2nd admin</div>}
-                        {isDormant(u) && <div className="um-sub red">Inactive {u.lastLogin ? daysSince(u.lastLogin) : daysSince(u.createdAt)} days</div>}
+                        {isInactive(u) && <div className="um-sub amber">Inactive · {isDormant(u) ? `no login ${u.lastLogin ? daysSince(u.lastLogin) : daysSince(u.createdAt)} days` : `no punch-in ${daysSince(u.lastBiometric)} days`}</div>}
                       </td>
 
                       {/* Last Login */}

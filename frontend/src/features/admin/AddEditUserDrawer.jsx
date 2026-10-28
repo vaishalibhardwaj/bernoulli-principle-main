@@ -1,21 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { AMCS } from "@/lib/org";
 import { Drawer } from "@/components/Drawer";
-import { MODULE_BY_KEY, isPrivileged } from "@/lib/access";
-import { idmDirectory, IDM_SYNCED_AT } from "@/mock/directory";
-import { formatDateTime } from "@/lib/format";
+import { MODULES, MODULE_BY_KEY } from "@/lib/access";
+import { idmDirectory } from "@/mock/directory";
 import PermissionMatrix from "./PermissionMatrix";
-import { Info, ShieldAlert, Check, Search, X, Copy, UserCheck } from "lucide-react";
+import { ShieldAlert, Check, Search, X, Copy, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 
-/** Functionalities an admin assigns access for; each maps to platform modules whose roles it offers. */
-const FUNCTIONALITIES = [
-  { key: "recon", label: "Recon", modules: ["recon"] },
-  { key: "brokerage", label: "Brokerage", modules: ["brokerage"] },
-  { key: "operations", label: "Operations", modules: ["posting", "purchase", "sip", "crms", "support"] },
-  { key: "common", label: "Common", modules: ["admin", "mis"] },
-];
-const funcOfModule = (m) => FUNCTIONALITIES.find((f) => f.modules.includes(m))?.key;
+/** Functionalities = the platform's modules, exactly as listed in the sidebar. */
+const FUNCTIONALITIES = MODULES.map((m) => ({ key: m.key, label: m.label, modules: [m.key] }));
+const funcOfModule = (m) => (MODULE_BY_KEY[m] ? m : null);
+const shortRole = (name) => name.replace(/^(Recon|Brokerage|Posting|SIP|CRMS|Support|Purchase|MIS) · /, "");
 
 /**
  * Recon roles that can't be held together. PROVISIONAL — Arun to confirm the full list of Recon roles and pairs.
@@ -41,7 +36,7 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
   const [form, setForm] = useState(EMPTY);
   const [target, setTarget] = useState(null); // existing platform user being changed, if any
   const [q, setQ] = useState("");
-  const [copyFrom, setCopyFrom] = useState("");
+  const [copyQ, setCopyQ] = useState("");
 
   const fill = (u) => ({
     name: u.name || "", empNo: u.empNo || "", phone: u.phone || "", email: u.email || "", designation: u.designation || "",
@@ -50,7 +45,7 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
   });
 
   useEffect(() => {
-    setQ(""); setCopyFrom("");
+    setQ(""); setCopyQ("");
     if (editingUser) { setForm(fill(editingUser)); setTarget(editingUser); } else { setForm(EMPTY); setTarget(null); }
   }, [editingUser, isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -75,7 +70,7 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
     if (!src) return;
     const f = fill(src);
     setForm((cur) => ({ ...cur, roles: f.roles, amcs: f.amcs, funcs: f.funcs }));
-    setCopyFrom("");
+    setCopyQ("");
     toast.success(`Copied ${f.roles.length} role(s) and AMC access from ${src.name}. Review before saving.`);
   };
 
@@ -92,8 +87,11 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
   // Recon-only role-conflict validation.
   const conflicts = RECON_CONFLICTS.filter(([a, b]) => form.roles.includes(a) && form.roles.includes(b))
     .map(([a, b, why]) => `${form.name || "This person"} can't be both ${roleById[a]?.name || a} and ${roleById[b]?.name || b} — ${why}.`);
-  const before = target?.roles || [];
-  const privilegedAdds = form.roles.filter((r) => !before.includes(r) && isPrivileged(roleById[r]));
+  const toggleRole = (rid) => (form.roles.includes(rid) ? removeRole(rid) : addRole(rid));
+  // Copy from someone similar: type a name, see at most five people with their roles grouped by module.
+  const cq = copyQ.trim().toLowerCase();
+  const copyHits = cq.length < 2 ? [] : allUsers.filter((u) => u.status === "active" && u.empNo !== form.empNo && (u.roles || []).length && u.name.toLowerCase().includes(cq)).slice(0, 5);
+  const rolesByModule = (ids) => MODULES.map((m) => [m, ids.filter((rid) => roleById[rid]?.module === m.key)]).filter(([, l]) => l.length);
 
   const effective = {};
   form.roles.forEach((rid) => {
@@ -115,9 +113,7 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
   };
 
   return (
-    <Drawer id="add-edit-user-drawer" title={target ? `Assign Roles — ${form.name}` : "Assign Roles"}
-      subtitle={target ? "Change what this person can access. Checker and admin roles wait for a second admin." : "Find the person, then choose what they can access. Checker and admin roles wait for a second admin."}
-      onClose={onClose}
+    <Drawer id="add-edit-user-drawer" title="Assign Roles" onClose={onClose}
       footer={<div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
         <button type="button" className="btn btn-outline" onClick={onClose} data-testid="drawer-cancel">Cancel</button>
         <button type="button" className="btn btn-primary" onClick={save} disabled={!picked || conflicts.length > 0 || isSelf} data-testid="drawer-save-user"><Check size={16} /> {target ? "Save roles" : "Assign roles and send invite"}</button>
@@ -128,7 +124,7 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
         {/* 1 — Person, from the IDM directory */}
         {!editingUser && (
           <div className="field">
-            <label className="field-label">Person <span className="muted" style={{ fontWeight: 500 }}>— from ID management (synced {formatDateTime(IDM_SYNCED_AT).split(", ")[1]}, active people only)</span></label>
+            <label className="field-label">Person</label>
             <div className="search ar-search"><Search /><input className="input" autoFocus placeholder="Name, employee number or work email" value={q} onChange={(e) => setQ(e.target.value)} data-testid="idm-search" /></div>
             {results.length > 0 && (
               <div className="ar-results" data-testid="idm-results">
@@ -154,19 +150,25 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
             {!editingUser && <button type="button" className="link" onClick={() => { setForm(EMPTY); setTarget(null); }}>Change person</button>}
           </div>
 
-          {/* 2 — Shortcut: start from someone similar (sits below Designation) */}
+          {/* 2 — Shortcut: copy roles from someone similar (type a name; no long list) */}
           {!isSelf && (
             <div className="ar-copy" data-testid="copy-roles">
               <Copy size={14} />
-              <span>Start from someone similar:</span>
-              <select className="select" value={copyFrom} onChange={(e) => copyRoles(e.target.value)} data-testid="copy-from">
-                <option value="">Copy roles from another user…</option>
-                {allUsers.filter((u) => u.status === "active" && u.empNo !== form.empNo && (u.roles || []).length).slice(0, 60).map((u) => <option key={u.id} value={u.id}>{u.name} — {(u.roles || []).map((r) => roleById[r]?.name).filter(Boolean).join(", ")}</option>)}
-              </select>
+              <div className="search ar-copy-search"><input className="input" placeholder="Copy roles from someone similar — type a name" value={copyQ} onChange={(e) => setCopyQ(e.target.value)} data-testid="copy-from" /></div>
+              {copyHits.length > 0 && (
+                <div className="ar-copy-hits" data-testid="copy-hits">
+                  {copyHits.map((u) => (
+                    <button type="button" key={u.id} className="ar-copy-hit" onClick={() => copyRoles(u.id)} data-testid={"copy-" + u.id}>
+                      <b>{u.name}</b>
+                      <span>{rolesByModule(u.roles || []).map(([m, l]) => `${m.label}: ${l.map((rid) => shortRole(roleById[rid].name)).join(", ")}`).join(" · ")}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
-          {/* 3 — Functionalities, then roles per functionality */}
+          {/* 3 — Modules, then that module's roles as one compact row each (no dropdown lists to scroll) */}
           <div className="field">
             <label className="field-label">Select functionality <span className="muted" style={{ fontWeight: 500 }}>— pick one or more</span></label>
             <div className="chip-row" data-testid="func-picker">
@@ -174,29 +176,26 @@ export default function AddEditUserDrawer({ isOpen, onClose, editingUser, allUse
             </div>
           </div>
 
-          {FUNCTIONALITIES.filter((f) => form.funcs.includes(f.key)).map((f) => {
-            const available = roles.filter((r) => f.modules.includes(r.module) && r.status === "active");
-            const chosen = form.roles.filter((rid) => f.modules.includes(roleById[rid]?.module));
-            return (
-              <div key={f.key} className="ar-func" data-testid={"roles-" + f.key}>
-                <div className="ar-func-h"><b>{f.label} roles</b></div>
-                <select className="select" value="" disabled={isSelf} onChange={(e) => addRole(e.target.value)} data-testid={"role-select-" + f.key}>
-                  <option value="">Add a {f.label} role…</option>
-                  {available.filter((r) => !chosen.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.name}{isPrivileged(r) ? " (needs 2nd admin)" : ""}</option>)}
-                </select>
-                <div className="ar-chosen">
-                  {chosen.length === 0 && <span className="muted">No {f.label} role yet.</span>}
-                  {chosen.map((rid) => (
-                    <span key={rid} className="ar-role" title={roleById[rid]?.description}>{roleById[rid]?.name}{!isSelf && <button type="button" onClick={() => removeRole(rid)} aria-label={`Remove ${roleById[rid]?.name}`}><X size={12} /></button>}</span>
-                  ))}
-                </div>
-                {f.key === "recon" && conflicts.map((c) => <div key={c} className="field-error ar-conflict" data-testid="role-conflict"><ShieldAlert size={13} /> {c}</div>)}
-              </div>
-            );
-          })}
-
-          {privilegedAdds.length > 0 && conflicts.length === 0 && (
-            <div className="note" data-testid="priv-note"><Info size={16} /><div>{privilegedAdds.map((r) => roleById[r]?.name).join(", ")} {privilegedAdds.length === 1 ? "gives" : "give"} checker/admin rights and will wait for a <b>second admin</b> in Roles & Access. Other roles apply right away.</div></div>
+          {form.funcs.length > 0 && (
+            <div className="ar-matrix" data-testid="role-matrix">
+              {FUNCTIONALITIES.filter((f) => form.funcs.includes(f.key)).map((f) => {
+                const available = roles.filter((r) => f.modules.includes(r.module) && r.status === "active");
+                const n = form.roles.filter((rid) => f.modules.includes(roleById[rid]?.module)).length;
+                return (
+                  <div key={f.key} className="ar-mrow" style={{ "--mc": MODULE_BY_KEY[f.key]?.color }} data-testid={"roles-" + f.key}>
+                    <div className="ar-mname"><i />{f.label}<em>{n ? `${n} role${n > 1 ? "s" : ""}` : "pick a role"}</em></div>
+                    <div className="ar-mroles">
+                      {available.map((r) => {
+                        const on = form.roles.includes(r.id);
+                        return <button type="button" key={r.id} disabled={isSelf} className={"ar-rchip" + (on ? " on" : "")} title={r.description} onClick={() => toggleRole(r.id)} data-testid={"role-" + r.id}>{on && <Check size={12} />}{shortRole(r.name)}</button>;
+                      })}
+                      {available.length === 0 && <span className="muted">No roles set up for this module yet.</span>}
+                    </div>
+                    {f.key === "recon" && conflicts.map((c) => <div key={c} className="field-error ar-conflict" data-testid="role-conflict"><ShieldAlert size={13} /> {c}</div>)}
+                  </div>
+                );
+              })}
+            </div>
           )}
 
           {/* 4 — AMC access */}
