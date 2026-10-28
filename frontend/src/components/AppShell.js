@@ -57,6 +57,8 @@ export default function AppShell() {
   }, [menuOpen, personaOpen, bellOpen]);
 
   const modules = navFor(perms, simple);
+  // Admin-only personas (Central Setup Team) manage users across AMCs, so they never pick a working AMC.
+  const worksOnAmc = modules.some((m) => m.key !== "admin");
   const screen = screenForPath(loc.pathname);
   const allowed = !screen || hasCap(perms, screen.key, "view");
 
@@ -150,7 +152,7 @@ export default function AppShell() {
               </React.Fragment>
             ))}
           </nav>
-          <div style={{ position: "relative" }}>
+          {worksOnAmc && <div style={{ position: "relative" }}>
             <button className="amc-chip" onClick={(e) => { e.stopPropagation(); if (myAmcs.length > 1) setAmcOpen((o) => !o); }} data-testid="amc-switch" title={myAmcs.length > 1 ? "Switch AMC" : "Your AMC"}>
               <Building2 size={14} /><span>{amcName}</span>{myAmcs.length > 1 && <ChevronDown size={13} />}
             </button>
@@ -161,7 +163,7 @@ export default function AppShell() {
                 {myAmcs.map((a) => <button key={a} className={"menu-item" + (activeAmc === a ? " on" : "")} onClick={() => { setAmc(a); setAmcOpen(false); }} data-testid={"amc-opt-" + a.split(" ")[0]}><span className="dot" />{a}</button>)}
               </div>
             )}
-          </div>
+          </div>}
           <button className="search-trigger" onClick={() => setPaletteOpen(true)} data-testid="open-search"><Search size={14} /><span>Search or jump to…</span><kbd>⌘K</kbd></button>
           <div className="topbar-spacer" />
           <div style={{ position: "relative" }}>
@@ -222,7 +224,7 @@ export default function AppShell() {
             )}
           </div>
         </header>
-        {myAmcs.length > 1 && !activeAmc && (
+        {worksOnAmc && myAmcs.length > 1 && !activeAmc && (
           <div className="overlay amc-pick" data-testid="amc-picker">
             <div className="modal" style={{ maxWidth: 460 }}>
               <div className="modal-head"><h3>Hello {currentUser.split(" ")[0]} — which AMC are you working on?</h3></div>

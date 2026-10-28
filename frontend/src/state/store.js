@@ -74,7 +74,7 @@ function load() {
           parsed.collections[k] = [...fresh.map((x) => ({ ...x, ...(saved.get(x.id) || {}) , amcs: x.amcs, amc: x.amc, source: x.source, fileType: x.fileType })), ...[...saved.values()].filter((x) => !fresh.some((y) => y.id === x.id))];
         });
         const seedPerms = Object.fromEntries(seedRoles().map((r) => [r.id, r.perms]));
-        parsed.collections.roles = parsed.collections.roles.map((r) => (r.system && seedPerms[r.id] ? { ...r, perms: { ...seedPerms[r.id], ...r.perms } } : r));
+        parsed.collections.roles = parsed.collections.roles.map((r) => (r.id === "role_platform_admin" ? { ...r, perms: seedPerms[r.id] } : r.system && seedPerms[r.id] ? { ...r, perms: { ...seedPerms[r.id], ...r.perms } } : r));
         if (!Array.isArray(parsed.collections.file_uploads)) parsed.collections.file_uploads = [];
         if (!Array.isArray(parsed.collections.no_action)) parsed.collections.no_action = seedNoAction();
         // Platform Admin was renamed to Central Setup Team; carry the rename into saved demo state.
