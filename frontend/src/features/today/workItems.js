@@ -7,8 +7,14 @@ import { maskAccount } from "@/lib/format";
 import { inr, timeLeftWords } from "@/features/ops/ui";
 import { useMatchActions, isFastTrack, isAmbiguous } from "@/features/match/matchActions";
 import { toast } from "sonner";
+import { EVENT_TYPES, repeatHistory } from "@/lib/events";
+import { patternsFor, hhmm as clock } from "@/lib/uploadPatterns";
 
-/** Everything a maker could do right now, as one prioritised list (red → amber → green). */
+/**
+ * Everything a maker could do right now, as one prioritised list (red → amber → green).
+ * Each item carries its event type and the date it first happened (firstAt). Repeating events
+ * (file format errors, API and bot failures) arrive once with a repeat count — see lib/events.js.
+ */
 const TONE_ORDER = { red: 0, amber: 1, green: 2 };
 
 export function useWorkItems() {
@@ -29,7 +35,7 @@ export function useWorkItems() {
       const mine = e.owner === me; const clock = e.amount > 0;
       items.push({
         id: e.id, tone: clock && e.interestHoursLeft < 24 ? "red" : clock && e.interestHoursLeft < 72 ? "amber" : "green", sort: clock ? e.interestHoursLeft : 999,
-        kind: "Problem case", step: 3, title: PLAIN_EXCEPTION[e.type] || e.type,
+        kind: "Problem case", step: 3, eventType: "problem_case", firstAt: e.createdAt, title: PLAIN_EXCEPTION[e.type] || e.type,
         detail: `${e.investor !== "—" ? e.investor + " · " : ""}${e.amount ? inr(e.amount) : e.bankName}`,
         when: clock ? timeLeftWords(e.interestHoursLeft) : null,
         hint: mine ? `What to do: ${e.suggestion.action.replace("Open in Match Workbench", "Find the matching purchase").replace("Open File Inbox", "Check the bank file")}` : "Nobody is working on this yet",
@@ -44,7 +50,7 @@ export function useWorkItems() {
       if (!cs.length || !ps.length) return;
       const amount = cs.reduce((a, c) => a + c.amount, 0); const sure = s.confidence >= 0.9;
       items.push({
-        id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100, kind: "Match a payment", step: 2,
+        id: s.id, tone: sure ? "green" : "amber", sort: 500 + (1 - s.confidence) * 100, kind: "Match a payment", step: 2, eventType: "match_suggestion", firstAt: s.createdAt || cs[0].valueDate || new Date().toISOString(),
         title: cs.length > 1 ? `${cs.length} payments from ${cs[0].remitter} add up to ${ps[0].investor}'s purchase` : ps.length > 1 ? `One payment from ${cs[0].remitter} covers ${ps.length} purchases by ${ps[0].investor}` : `Payment from ${cs[0].remitter} looks like ${ps[0].investor}'s purchase`,
         detail: `${inr(amount)} · ${ps.map((p) => p.appNo).join(", ")}`, light: sure && !isAmbiguous(s) ? "Very likely" : "Please check",
         hint: isAmbiguous(s) ? "Based on amount and name only — check carefully; a checker confirms it" : isFastTrack(s.confidence, amount) ? "Say yes and it's done — no approval needed" : "Say yes and your checker approves it",
@@ -55,12 +61,12 @@ export function useWorkItems() {
   if (hasCap(perms, "extraction", "edit")) {
     (collections.documents || []).filter((d) => d.status === "needs_review").forEach((d) => {
       const n = d.fields.filter((f) => f.conf < 0.95 || (f.validator && !f.validator.ok)).length + d.lines.reduce((k, l) => k + Object.values(l).filter((v) => v[1] < 0.95).length, 0);
-      items.push({ id: d.id, tone: "amber", sort: 600, kind: "Check a document", step: 2, title: `Check ${n} value${n !== 1 ? "s" : ""} the system wasn't sure about`, detail: `${d.docType} · ${d.name}`, hint: "Everything else on it was read correctly", primary: { label: "Check values", run: () => nav(`/extraction?doc=${d.id}`) } });
+      items.push({ id: d.id, tone: "amber", sort: 600, kind: "Check a document", step: 2, eventType: "document_review", firstAt: d.receivedAt, title: `Check ${n} value${n !== 1 ? "s" : ""} the system wasn't sure about`, detail: `${d.docType} · ${d.name}`, hint: "Everything else on it was read correctly", primary: { label: "Check values", run: () => nav(`/extraction?doc=${d.id}`) } });
     });
   }
   if (hasCap(perms, "refunds", "edit")) {
     (collections.refunds || []).filter((r) => r.status === "draft").forEach((r) => items.push({
-      id: r.id, tone: r.ageDays >= 4 ? "red" : "amber", sort: 300 - r.ageDays, kind: "Refund", step: 5, title: `Refund ${inr(r.amount)} to ${r.investor}`, detail: `${r.reason} · to ${r.bankAcct}`,
+      id: r.id, tone: r.ageDays >= 4 ? "red" : "amber", sort: 300 - r.ageDays, kind: "Refund", step: 5, eventType: "refund", firstAt: new Date(Date.now() - r.ageDays * 86400000).toISOString(), title: `Refund ${inr(r.amount)} to ${r.investor}`, detail: `${r.reason} · to ${r.bankAcct}`,
       when: r.ageDays >= 5 ? "Late — interest is being added" : `${5 - r.ageDays} day${5 - r.ageDays !== 1 ? "s" : ""} before interest applies`,
       hint: r.verified ? "Bank account already verified" : "Verify the bank account first", primary: { label: "Prepare refund", run: () => nav(`/refunds?refund=${r.id}`) },
     }));
@@ -69,36 +75,45 @@ export function useWorkItems() {
     const setup = hasCap(perms, "bank_setup", "edit");
     (collections.files || []).filter((f) => ["late", "missing", "check_failed", "retrying", "unknown"].includes(f.status) || (f.status === "drift" && setup)).forEach((f) => {
       const manual = f.channel === "manual";
+      const eventType = { late: "statement_missing", missing: "statement_missing", check_failed: "file_format", retrying: "file_format", unknown: "file_unknown", drift: "file_layout_changed" }[f.status];
+      const rep = EVENT_TYPES[eventType].dedupe ? repeatHistory(f.id, 15) : { firstAt: f.expectedBy };
       const how = { late: manual ? "upload" : "pull", missing: manual ? "upload" : "pull", check_failed: f.corrected ? "reprocess" : "corrected", retrying: "reprocess", unknown: "onboard", drift: "drift" }[f.status];
       items.push({
-        id: f.id, tone: ["late", "missing"].includes(f.status) ? "red" : "amber", sort: 100, kind: "Bank file", step: 1,
+        id: f.id, tone: ["late", "missing"].includes(f.status) ? "red" : "amber", sort: 100, kind: "Bank file", step: 1, eventType, ...rep,
         title: { upload: `Upload today's ${f.bankName} statement`, pull: `${f.bankName} statement hasn't arrived`, corrected: `${f.bankName} statement balances don't add up`, refetch: `${f.bankName} statement balances don't add up`, reprocess: `Reprocess the ${f.bankName} statement`, onboard: `${f.bankName} sent a file we don't recognise`, drift: `${f.bankName} changed its file layout` }[how],
         detail: `Account ·${f.accountNumber.slice(-4)} · arrives by ${{ manual: "manual upload", email: "email", api: "API", auto: "portal bot" }[f.channel]}`,
         hint: { upload: "Download it from internet banking, then upload it here", pull: "Pull it now, or upload it by hand", corrected: "Ask the bank for a corrected statement, then upload it", refetch: "Re-fetch the full statement, then reprocess", reprocess: "A fresh copy is ready — reprocess it", onboard: "Needs a new setup", drift: "The system has proposed the new mapping — confirm it" }[how],
         primary: { label: { upload: "Upload statement", pull: "Get the file", corrected: "Upload corrected file", refetch: "Open file", reprocess: "Reprocess", onboard: "Open file", drift: "Review new layout" }[how], run: () => nav(`/ingestion?file=${f.id}${["upload", "corrected"].includes(how) ? "&upload=1" : ""}`) },
       });
     });
+    // Manual SFTP accounts whose learned upload time has passed by 15+ minutes with nothing in the folder.
+    patternsFor(collections.files).filter((p) => p.state === "late").forEach((p) => items.push({
+      id: "mpl_" + p.fileId, tone: "red", sort: 90, kind: "Manual SFTP upload", step: 1, eventType: "manual_upload_late", firstAt: new Date(new Date().setHours(0, p.expected + 15, 0, 0)).toISOString(),
+      title: `${p.bankName} ·${p.accountNumber.slice(-4)} upload is ${p.lateBy} min late`, detail: `Usually placed in SFTP by ${clock(p.expected)} (learned over ${p.seen} days)`,
+      hint: "Remind whoever uploads it, or upload it yourself", primary: { label: "Open SFTP folders", run: () => nav("/ingestion?tab=sftp") },
+    }));
     const loadedIds = (collections.files || []).filter((f) => ["loaded", "nil"].includes(f.status)).map((f) => f.id);
     // An email alert leaves the focus list once the statement is loaded another way, or it was dismissed / parked.
     const emailOpen = (e) => e.status === "rejected" && !e.dismissed && !e.waiting && e.reason !== "duplicate" && !(e.suggestFileId && loadedIds.includes(e.suggestFileId));
     (collections.emails || []).filter(emailOpen).forEach((e) => { const useful = e.suggestFileId && !loadedIds.includes(e.suggestFileId); items.push({
-      id: e.id, tone: useful ? "red" : "amber", sort: 150, kind: "Rejected email", step: 1,
+      id: e.id, tone: useful ? "red" : "amber", sort: 150, kind: "Rejected email", step: 1, eventType: "rejected_email", firstAt: e.receivedAt || e.at || new Date().toISOString(),
       title: useful ? "A statement email was rejected, but it's the one we're missing" : `Email from ${e.from} was rejected`,
       detail: e.reasonText, hint: e.attachment.name ? `Attachment: ${e.attachment.name}` : "No attachment",
       primary: { label: useful ? "Use this attachment" : "Open email", run: () => nav(`/ingestion?tab=email&email=${e.id}`) },
     }); });
     (collections.connections || []).filter((x) => x.status === "failing" && !x.dismissed).forEach((x) => items.push({
-      id: x.id, tone: "amber", sort: 160, kind: "Bank connection", step: 1, title: `${x.bankName} ${x.type === "api" ? "API" : "portal bot"} is failing`, detail: x.error,
+      id: x.id, tone: "amber", sort: 160, kind: "Bank connection", step: 1, eventType: x.type === "api" ? "api_failure" : "bot_failure", ...repeatHistory(x.id, x.every || 30, 2), title: `${x.bankName} ${x.type === "api" ? "API" : "portal bot"} is failing`, detail: x.error,
       hint: x.captcha ? "Download the statement by hand and upload it" : "The token needs renewing in Bank statement setup",
       primary: { label: "Open connection", run: () => nav("/ingestion?tab=conns") },
     }));
   }
   if (hasCap(perms, "bank_setup", "edit")) {
     (collections.bank_config || []).filter((x) => x.status === "rejected" && x.owner === currentUser).forEach((x) => items.push({
-      id: x.id, tone: "amber", sort: 200, kind: "Rejected setup", title: `Fix ${x.bankName} ${maskAccount(x.accountNumber)} — sent back by checker`, detail: x.rejection?.comment || "", hint: "Make the change and resubmit",
+      id: x.id, tone: "amber", sort: 200, kind: "Rejected setup", eventType: "rejected_setup", firstAt: x.rejection?.at || x.lastUpdated || new Date().toISOString(), title: `Fix ${x.bankName} ${maskAccount(x.accountNumber)} — sent back by checker`, detail: x.rejection?.comment || "", hint: "Make the change and resubmit",
       primary: { label: "Fix setup", run: () => nav(`/bank-setup/edit/${x.id}`) },
     }));
   }
+  items.forEach((it) => { it.dedupe = Boolean(EVENT_TYPES[it.eventType]?.dedupe); it.lastAt = it.lastAt || it.firstAt; });
   items.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || a.sort - b.sort);
   return items;
 }

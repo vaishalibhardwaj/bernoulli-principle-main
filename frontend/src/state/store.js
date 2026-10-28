@@ -3,10 +3,12 @@ import { seedBankConfigs, seedCreditConfigs, seedMappings, seedStatusMap, newMap
 import { diffSetup, isStandard } from "../lib/setupSchema";
 import { seedUsers } from "../mock/userSeed";
 import { uid } from "../lib/format";
+import { userAmcs } from "../lib/org";
+import { seedNoAction } from "../lib/events";
 import { ACTIONS, authorize, INVITE_TTL_MS } from "../lib/rbac";
 import { genTempPassword } from "../lib/credentials";
 import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
-import { seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp, seedBalances, seedJobs, seedFileTrack, seedLiability } from "../mock/opsSeed";
+import { earlierFailures, seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp, seedBalances, seedJobs, seedFileTrack, seedLiability } from "../mock/opsSeed";
 
 const KEY = "cams_recon_state_v24";
 // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
@@ -37,14 +39,15 @@ function buildSeed() {
       access_requests: [
         { id: "acr_seed1", kind: "assign", status: "pending", userId: "usr_sanjay", roleIds: ["role_recon_checker"], requestedBy: "Meera Iyer", requestedAt: new Date(Date.now() - 2 * 3600000).toISOString(), note: "Sanjay to cover Arun's approvals during leave (21–31 Oct)" },
       ],
-      files, emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
+      files: files.map((f) => ({ ...f, histV2: true })), emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], file_uploads: [], no_action: seedNoAction(), dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
       exceptions: seedExceptions(), documents: seedDocuments(),
       releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(), cutoffs: seedCutoffs(), narration_tags: seedNarrationTags(),
     },
     audit,
     persona: "usr_meera",
     simpleOverride: {},
-    amcChoice: {}, // persona id → AMC they're working on ("*" = all of theirs)
+    amcChoice: {}, // persona id → the one AMC they are working on
+    vertical: "MF",
     adminNotifications: [
       { id: uid("notif"), message: "Meera added Kiran Das as Operator", ts: new Date(Date.now() - 3 * 3600000).toISOString() },
     ],
@@ -60,6 +63,22 @@ function load() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed.collections && REQUIRED.every((k) => Array.isArray(parsed.collections[k])) && parsed.collections.users.length >= 100) {
+        // Newer seed jobs, tracked files and role screens are merged into saved demo state (saved edits win).
+        // Earlier failed scheduler runs (shown voided in file history) for saved demo state that predates them.
+        parsed.collections.files = parsed.collections.files.map((f) => (f.histV2 ? f : { ...f, histV2: true, history: [...earlierFailures(f), ...(f.history || [])] }));
+        // Balances are read-only daily facts in the prototype, so they always come fresh from the seed.
+        parsed.collections.balances = seedBalances();
+        const seeded = { jobs: seedJobs(), file_track: seedFileTrack() };
+        Object.entries(seeded).forEach(([k, fresh]) => {
+          const saved = new Map((parsed.collections[k] || []).map((x) => [x.id, x]));
+          parsed.collections[k] = [...fresh.map((x) => ({ ...x, ...(saved.get(x.id) || {}) , amcs: x.amcs, amc: x.amc, source: x.source, fileType: x.fileType })), ...[...saved.values()].filter((x) => !fresh.some((y) => y.id === x.id))];
+        });
+        const seedPerms = Object.fromEntries(seedRoles().map((r) => [r.id, r.perms]));
+        parsed.collections.roles = parsed.collections.roles.map((r) => (r.system && seedPerms[r.id] ? { ...r, perms: { ...seedPerms[r.id], ...r.perms } } : r));
+        if (!Array.isArray(parsed.collections.file_uploads)) parsed.collections.file_uploads = [];
+        if (!Array.isArray(parsed.collections.no_action)) parsed.collections.no_action = seedNoAction();
+        // Platform Admin was renamed to Central Setup Team; carry the rename into saved demo state.
+        parsed.collections.roles = parsed.collections.roles.map((r) => (r.id === "role_platform_admin" ? { ...r, name: "Central Setup Team", description: seedRoles()[0].description } : r));
         return parsed;
       }
     }
@@ -71,6 +90,7 @@ function reducer(state, action) {
   switch (action.type) {
     case "SET": return { ...state, ...action.payload };
     case "SET_SIMPLE": return { ...state, simpleOverride: { ...(state.simpleOverride || {}), [action.id]: action.on } };
+    case "SET_VERTICAL": return { ...state, vertical: action.vertical };
     case "SET_AMC": return { ...state, amcChoice: { ...(state.amcChoice || {}), [state.persona]: action.amc } };
     case "SWITCH_PERSONA": return { ...state, persona: action.id, bannerDismissed: false, sessionId: uid("ses") };
     case "TOGGLE_SIDEBAR": return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
@@ -101,9 +121,15 @@ export function StoreProvider({ children }) {
   const roles = React.useMemo(() => state.collections.roles || [], [state.collections.roles]);
   const personaUser = (state.collections.users || []).find((u) => u.id === state.persona) || state.collections.users[0];
   // The AMC this person is working on right now (picked at sign-in, switchable in the header). Drives every list.
-  const activeAmc = (state.amcChoice || {})[state.persona] || null;
-  const amcUser = React.useMemo(() => (activeAmc && activeAmc !== "*" ? { ...personaUser, amcs: [activeAmc] } : personaUser), [personaUser, activeAmc]);
+  // One AMC at a time: a user with several AMCs works on the one they picked (there is no "all my AMCs" view).
+  const myAmcList = userAmcs(personaUser);
+  const choice = (state.amcChoice || {})[state.persona];
+  const activeAmc = myAmcList.includes(choice) ? choice : null;
+  const workingAmc = activeAmc || myAmcList[0];
+  const amcUser = React.useMemo(() => (myAmcList.length > 1 ? { ...personaUser, amcs: [workingAmc] } : personaUser), [personaUser, workingAmc, myAmcList.length]);
   const setAmc = useCallback((amc) => dispatch({ type: "SET_AMC", amc }), []);
+  const vertical = state.vertical || "MF";
+  const setVertical = useCallback((v) => dispatch({ type: "SET_VERTICAL", vertical: v }), []);
   const perms = React.useMemo(() => permsFor(personaUser, roles), [personaUser, roles]);
   // Short name ("Priya") is what records store as owner — keeps the existing screens' maker–checker checks working.
   const activePersona = { id: personaUser.id, name: personaUser.name.split(" ")[0], fullName: personaUser.name };
@@ -523,6 +549,8 @@ export function StoreProvider({ children }) {
     amcUser,
     activeAmc,
     setAmc,
+    vertical,
+    setVertical,
     perms,
     roles,
     roleNames,

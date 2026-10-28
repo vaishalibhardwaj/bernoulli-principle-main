@@ -36,31 +36,44 @@ export function RunStrip({ runs }) {
  * Day timeline from `start` to `end` (minutes of day): one lane per row with run dots, a "now" line,
  * optional vertical marks (cutoffs) and a ghost dot for the next expected run.
  */
-export function DayTimeline({ lanes, start = 7 * 60, end = 21 * 60, marks = [], height = 30 }) {
+export function DayTimeline({ lanes, start = 7 * 60, end = 21 * 60, marks = [], height = 30, pxPerHour }) {
   const ref = React.useRef(null);
+  const scrollRef = React.useRef(null);
   const [w, setW] = React.useState(700);
   React.useEffect(() => { const ro = new ResizeObserver(([e]) => setW(Math.max(320, e.contentRect.width))); if (ref.current) ro.observe(ref.current); return () => ro.disconnect(); }, []);
-  const L = 190; const x = (m) => L + ((Math.min(end, Math.max(start, m)) - start) / (end - start)) * (w - L - 12);
+  // Scrollable mode: lane names stay pinned on the left, the hours scroll sideways and open on "now".
+  const scroll = Boolean(pxPerHour);
+  const L = scroll ? 0 : 190;
+  const width = scroll ? Math.max(w - 200, ((end - start) / 60) * pxPerHour + 24) : w;
+  const x = (m) => L + 12 + ((Math.min(end, Math.max(start, m)) - start) / (end - start)) * (width - L - 24);
   const now = minsNow(); const H = lanes.length * height + 26;
-  const hours = []; for (let h = Math.ceil(start / 60); h <= end / 60; h += 2) hours.push(h * 60);
+  const hours = []; for (let h = Math.ceil(start / 60); h <= end / 60; h += scroll ? 1 : 2) hours.push(h * 60);
+  React.useEffect(() => { if (scroll && scrollRef.current) scrollRef.current.scrollLeft = Math.max(0, x(now) - scrollRef.current.clientWidth * 0.7); }, [scroll, width]); // eslint-disable-line react-hooks/exhaustive-deps
+  const svg = (
+    <svg width={width} height={H}>
+      {hours.map((m) => <g key={m}><line x1={x(m)} x2={x(m)} y1={0} y2={H - 20} className="dz-grid" /><text x={x(m)} y={H - 6} className="dz-axis" textAnchor="middle">{hhmm(m % (24 * 60)).replace(":00", "")}</text></g>)}
+      {marks.map((mk) => <g key={mk.label}><line x1={x(mk.t)} x2={x(mk.t)} y1={0} y2={H - 20} stroke={mk.color || C.warn} strokeDasharray="4 4" strokeWidth="1.5" /><text x={x(mk.t) + 4} y={10} fill={mk.color || C.warn} fontSize="10.5">{mk.label}</text></g>)}
+      {lanes.map((ln, i) => {
+        const cy = i * height + height / 2 + 4;
+        return (
+          <g key={ln.label}>
+            {!scroll && <text x={0} y={cy + 4} className="dz-lane">{ln.label.length > 28 ? ln.label.slice(0, 27) + "…" : ln.label}</text>}
+            <line x1={L + 12} x2={width - 12} y1={cy} y2={cy} className="dz-lane-line" />
+            {ln.runs.map((r, k) => <circle key={k} cx={x(r.t)} cy={cy} r={r.big ? 5 : 3.5} fill={r.ok ? C.ok : r.warn ? C.warn : C.bad} style={{ filter: `drop-shadow(0 0 4px ${r.ok ? C.ok : C.bad})` }}><title>{`${hhmm(r.t)} — ${r.ok ? "ok" : "failed"}${r.note ? " · " + r.note : ""}`}</title></circle>)}
+            {ln.next != null && <circle cx={x(ln.next)} cy={cy} r={4} fill="none" stroke={ln.nextLate ? C.bad : C.info} strokeDasharray="2 2"><title>{`next ${hhmm(ln.next)}`}</title></circle>}
+          </g>
+        );
+      })}
+      {now > start && now < end && <g><line x1={x(now)} x2={x(now)} y1={0} y2={H - 20} stroke={C.info} strokeWidth="1.5" style={{ filter: `drop-shadow(0 0 6px ${C.info})` }} /><text x={x(now)} y={H - 20 + 0} dy="-4" textAnchor="middle" fill={C.info} fontSize="10">now</text></g>}
+    </svg>
+  );
+  if (!scroll) return <div ref={ref} className="dz-timeline">{svg}</div>;
   return (
-    <div ref={ref} className="dz-timeline">
-      <svg width={w} height={H}>
-        {hours.map((m) => <g key={m}><line x1={x(m)} x2={x(m)} y1={0} y2={H - 20} className="dz-grid" /><text x={x(m)} y={H - 6} className="dz-axis" textAnchor="middle">{hhmm(m).replace(":00", "")}</text></g>)}
-        {marks.map((mk) => <g key={mk.label}><line x1={x(mk.t)} x2={x(mk.t)} y1={0} y2={H - 20} stroke={mk.color || C.warn} strokeDasharray="4 4" strokeWidth="1.5" /><text x={x(mk.t) + 4} y={10} fill={mk.color || C.warn} fontSize="10.5">{mk.label}</text></g>)}
-        {lanes.map((ln, i) => {
-          const cy = i * height + height / 2 + 4;
-          return (
-            <g key={ln.label}>
-              <text x={0} y={cy + 4} className="dz-lane">{ln.label.length > 28 ? ln.label.slice(0, 27) + "…" : ln.label}</text>
-              <line x1={L} x2={w - 12} y1={cy} y2={cy} className="dz-lane-line" />
-              {ln.runs.map((r, k) => <circle key={k} cx={x(r.t)} cy={cy} r={r.big ? 5 : 3.5} fill={r.ok ? C.ok : r.warn ? C.warn : C.bad} style={{ filter: `drop-shadow(0 0 4px ${r.ok ? C.ok : C.bad})` }}><title>{`${hhmm(r.t)} — ${r.ok ? "ok" : "failed"}${r.note ? " · " + r.note : ""}`}</title></circle>)}
-              {ln.next != null && <circle cx={x(ln.next)} cy={cy} r={4} fill="none" stroke={ln.nextLate ? C.bad : C.info} strokeDasharray="2 2"><title>{`next ${hhmm(ln.next)}`}</title></circle>}
-            </g>
-          );
-        })}
-        {now > start && now < end && <g><line x1={x(now)} x2={x(now)} y1={0} y2={H - 20} stroke={C.info} strokeWidth="1.5" style={{ filter: `drop-shadow(0 0 6px ${C.info})` }} /><text x={x(now)} y={H - 20 + 0} dy="-4" textAnchor="middle" fill={C.info} fontSize="10">now</text></g>}
-      </svg>
+    <div ref={ref} className="dz-timeline dz-timeline-scroll" data-testid="day-timeline">
+      <div className="dz-tl-labels" style={{ paddingTop: 4 }}>
+        {lanes.map((ln) => <div key={ln.label} style={{ height }} title={ln.label}>{ln.label}</div>)}
+      </div>
+      <div className="dz-tl-scroll" ref={scrollRef}>{svg}</div>
     </div>
   );
 }

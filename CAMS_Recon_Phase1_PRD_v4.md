@@ -698,6 +698,73 @@ All user management mutations pass through the central `authorize()` function an
 
 ---
 
+## 5.8 Today home — event definitions, de-duplication and No action
+
+**Layout.** Date range filter at the top (default: today; quick picks Today / 7 days / 30 days). An item is in range if it was active at any point in the range (first occurrence on or before the end date, last occurrence on or after the start date). Below: the focus card, Up next (next three in range), and **Overall pending** — every open item with **no date limit**, oldest first, including yesterday and earlier. The "Your steps today" track is removed (it repeated the focus list). The approvals tile is labelled **Checker approval**.
+
+**Widgets depend on the persona.** Fund release cut-off and *Realised today* show only to operations personas (match / release access) and never to setup users. Checkers see their approval queue instead of maker work.
+
+**De-duplication.** An event that fires again on every scheduler run until someone fixes it is shown **once**, dated to its **first occurrence**, with a repeat count ("repeated 38× since 25 Oct"). Lists put the oldest first. Events that are distinct each time are never merged.
+
+| Event | De-duplicates? | Key that identifies a repeat | Why |
+|---|---|---|---|
+| File format error (balances don't add up, columns wrong) | **Yes** | bank account + error | Re-detected on every pickup until the setup or file is fixed |
+| Bank changed its file layout | **Yes** | bank account | Every new file fails the fingerprint until the new layout is approved |
+| Unrecognised file | **Yes** | file fingerprint | The same unknown file lands again on every run |
+| API failure | **Yes** | connection | Each scheduled pull fails the same way until the token or endpoint is fixed |
+| Portal bot failure | **Yes** | connection | Each bot run hits the same block (e.g. CAPTCHA) |
+| Statement late or missing | No | — | Each day's statement is a separate expectation |
+| Rejected email | **No** | — | Every email is its own message and may carry a different attachment |
+| Problem case, suggested match, document to check, refund, setup sent back | No | — | Each is a separate record |
+| Fund release, day close | No | — | Once per day |
+
+**No action.** Every maker work item has a *No action* option. The maker picks a reason (already handled outside the system; not a real issue; expected — known bank or partner behaviour; duplicate; not my AMC or team; other) and may add a note ("Other" needs one). The item leaves the maker's list and goes to their **supervisor** (reporting line from IDM; prototype: Functional Manager) on the **No-action review** screen:
+- The supervisor **agrees**, or **sends it back** with a note; a sent-back item returns to the maker's Today with that note.
+- Every call, whatever the outcome, is also **feedback on the event definition**: the review screen rolls calls up by event type (count, agreed / waiting / sent back, most-given reason, number of people) and flags an event type for the rule owners when two or more calls are agreed or two or more people mark it. Exportable as CSV.
+- Every No-action call and review is written to the audit trail.
+
+## 5.9 Closing balance and fund utilisation
+
+**Counting.** Everything is counted **per bank account** (e.g. 265 accounts), never per bank. Each account's statement is in one of three states, shown separately:
+- **Received** — statement in, with transactions today;
+- **No transactions today** — statement in, nothing moved (closing balance = opening balance);
+- **Not received** — no statement yet (chase the bank).
+
+**Closing balance check (graph 1).**
+1. Statements are downloaded **after 3 PM**.
+2. Take the **last transaction before 3 PM** (no transactions → the opening balance).
+3. Compare its closing balance with the **system's closing balance**: **green** if they match, **orange** if not. Accounts without a statement are grey; before 3 PM the check shows "not checked yet".
+Standard Chartered statements carry no closing balance, so the bank side is computed from our data and labelled "computed".
+
+**Fund utilisation (graph 2).** Of the matched accounts, how many are **fully swept**, and when: a cumulative line of % fully swept through the day, with the completion % **always labelled at 3 PM and 4 PM**, plus counts of fully swept / partly swept / not swept yet. It uses a different palette (violet / blue) from graph 1 (green / orange).
+
+**By persona.** Bank statement makers see graph 1 only ("Closing balance check"). Recon managers (personas that approve fund release: Recon checker, Functional Manager) see both graphs and a Sweep column.
+
+**Filters** (apply to both graphs and the account list): bank; account (narrowed by bank); asset class Equity / Debt / Cash; liquid vs non-liquid; index vs non-index; scheme account vs common collection account. Asset class, liquid and index come from each scheme's **SEBI category in the scheme master** (Liquid and Overnight funds count as Cash and liquid; Index Funds / ETFs count as index; hybrid follows its equity tilt — to confirm with the product owner).
+
+## 5.10 Bank files — auto-void, manual SFTP timing, unresolved fingerprints
+
+**Auto-void earlier errors.** When a later scheduler run for the same file succeeds, error rows from the earlier runs it supersedes are **voided automatically**. They stay in the file's processing history for audit, struck through, with "Voided automatically — a later run succeeded at HH:MM", and they stop counting as open errors anywhere (Today, Scheduler monitor, reports).
+
+| Error row | Voided by a later success? |
+|---|---|
+| API pull failed (timeout, token, endpoint) | **Yes** |
+| Portal bot run failed | **Yes** |
+| Scheduler missed its slot | **Yes** |
+| Statement not received yet | **Yes** — once it arrives and loads |
+| File checks failed (format / balance) | **Yes** — once a corrected or reprocessed file loads |
+| Reprocess failed | **Yes** |
+| Upload rejected (manual upload) | **Yes** — once a later upload for the same account loads |
+| Rejected email | **No** — every email is its own record |
+| Duplicate file discarded | **No** |
+| Problem cases, refunds, user decisions | **No** — closed only by a person |
+
+**Manual SFTP accounts — learned upload timing.** For accounts where an operator (not the bank's host-to-host link) places the statement in SFTP, the system learns each account's usual upload time from the last **10–15 working days** (median time, spread). Until 10 days are seen it only learns and never alerts. After that, if nothing has landed about **15 minutes past the usual time**, it raises a "Manual SFTP upload late" item on Today (not de-duplicated — each day is separate). Bank files → SFTP folders shows each account's learned time, how many days it was learned from, and today's state (learning / due / arrived on time / arrived late / late). Which accounts are manual is flagged in bank statement setup.
+
+**Unresolved fingerprint cases → product report.** A file the AI layout mapping can't resolve on its own — an unrecognised layout, or a layout change where any proposed column is below **85% confidence** — is logged to **Reports → Product → Unresolved fingerprint cases** (bank, account, file, fingerprint, why, lowest confidence, columns in doubt). The file's detail panel says it has been logged. The product team uses the report to improve the detector.
+
+**Column mapping screen.** One action bar at the bottom of the page only (Reset to last saved · Save as draft · **Submit for approval**). The layout-change proposal's button reads **Allow these changes** (it fills the grid; a checker still approves). Fields already listed in the proposal are not repeated in the changes list below it. Existing mappings are always pre-filled in each column picker — a mapped column that isn't in the new file shows as "current — not in this file" rather than a blank "Select".
+
 # 6. Cross-Cutting Rules
 *(Retained in full from v3 baseline: Maker–Authoriser Dual Control, RBAC, Audit Trail, Search Standards, Server-Side Pagination, Notifications & In-App Alerts, Status Lifecycle, Reset Standards, Secrets Management, Step Indicator, and Sample File Auto-Detection).*
 

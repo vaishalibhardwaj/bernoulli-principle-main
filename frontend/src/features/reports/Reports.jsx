@@ -3,6 +3,7 @@ import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
 import { AMC_BREAKDOWN, TODAY, delayedInterest } from "@/mock/opsSeed";
 import { downloadCsv } from "./csv";
+import { unresolvedFingerprints } from "@/lib/events";
 import { FileBarChart, Download, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,6 +27,7 @@ export default function Reports() {
     { group: "Refunds", key: "rf", name: "Refund process report", ref: "PRD v1 §4.8 · v4 Stage 6", desc: "All refunds with SLA, delayed interest and payment status.", run: () => downloadCsv(`refunds_${d}.csv`, ["Ref", "Investor", "Reason", "Amount", "Interest", "Status"], (c.refunds || []).map((r) => [r.ref, r.investor, r.reason, r.amount, delayedInterest(r.amount, r.ageDays), r.status])) },
     { group: "Regulatory & finance", key: "pr", name: "Purchase register", ref: "PRD v1 §4.9", desc: "All purchase applications with realisation status.", run: () => downloadCsv(`purchase_register_${d}.csv`, ["App no", "Investor", "Amount", "Status"], purchases.map((x) => [x.appNo, x.investor, x.amount, x.status])) },
     { group: "Regulatory & finance", key: "brs", name: "Bank reconciliation statement (BRS)", ref: "PRD v1 §6", desc: "Book vs bank balance per collection account, with reconciling items.", run: () => downloadCsv(`brs_${d}.csv`, ["Account", "Bank balance", "Book balance", "Difference"], (c.files || []).slice(0, 8).map((f) => [f.accountNumber, f.creditAmount, f.creditAmount, 0])) },
+    { group: "Product", key: "fp", name: `Unresolved fingerprint cases (${unresolvedFingerprints(c.files).length})`, ref: "PRD v4 §5.10", desc: "Files the AI layout mapping could not resolve on its own — unknown layouts and low-confidence column changes — so the product team can improve the detector.", run: () => downloadCsv(`unresolved_fingerprints_${d}.csv`, ["Bank", "Account", "File", "Fingerprint", "Status", "Why it needs a person", "Lowest confidence", "Columns in doubt", "Received"], unresolvedFingerprints(c.files).map(({ file: f, reason, lowest, fields }) => [f.bankName, f.accountNumber, f.fileName, f.fingerprint || "", f.status, reason, lowest != null ? Math.round(lowest * 100) + "%" : "", fields.join("; "), f.receivedAt || ""])) },
     { group: "Regulatory & finance", key: "audit", name: "Audit trail export", ref: "PRD v4 §6", desc: "Every action, by whom and when, including denied attempts.", run: () => downloadCsv(`audit_${d}.csv`, ["Time", "User", "Action", "Entity", "From", "To"], (audit || []).map((a) => [a.ts, a.user, a.action, a.entityLabel, a.from, a.to])) },
   ];
   const groups = [...new Set(REPORTS.map((r) => r.group))];
