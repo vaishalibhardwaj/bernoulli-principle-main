@@ -121,7 +121,7 @@ export function seedRoles() {
   const r = (id, name, module, description, perms, extra = {}) => ({ id, name, module, description, perms, status: "active", system: true, createdBy: "System", createdAt: at, ...extra });
   return [
     r("role_platform_admin", "Central Setup Team", "admin", "Assigns roles and AMC access across all modules. Cannot operate any module or manage IDs (activation and deactivation sit with ID management).",
-      { users: ["view", "edit", "export"] }), // Central Setup Team: Administration → Users only
+      { users: ["view", "edit", "export"], roles: ["view", "edit"] }), // Central Setup Team: Administration → Users and Roles & Access
     r("role_access_approver", "Access Approver", "admin", "Second-admin approval of role changes and privileged role grants.",
       { users: ["view", "approve"], roles: ["view", "approve"] }),
     r("role_recon_setup_maker", "Recon · Setup Maker", "recon", "Onboards banks and aggregators: setups, mappings, cutoffs and status values.",
