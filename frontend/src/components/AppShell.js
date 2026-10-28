@@ -12,7 +12,7 @@ import { dailyCycle } from "@/lib/journey";
 import { useStore } from "@/state/store";
 import { userAmcs } from "@/lib/org";
 import { ConfirmModal } from "@/components/Modal";
-import { navFor, homePath, screenForPath, hasCap, PERSONAS, screenLabel } from "@/lib/access";
+import { navFor, homePath, screenForPath, hasCap, PERSONAS, VERTICALS, screenLabel } from "@/lib/access";
 import { toast } from "sonner";
 
 const ICONS = {
@@ -31,10 +31,10 @@ const EXTRA_CRUMBS = [
 ];
 
 export default function AppShell() {
-  const { state, role, currentUser, currentRole, persona, perms, switchPersona, toggleSidebar, resetDemo, collections, simple, setSimple, personaUser, activeAmc, setAmc } = useStore();
+  const { state, role, currentUser, currentRole, persona, perms, switchPersona, toggleSidebar, resetDemo, collections, simple, setSimple, personaUser, activeAmc, setAmc, vertical, setVertical } = useStore();
   const myAmcs = userAmcs(personaUser);
   const [amcOpen, setAmcOpen] = React.useState(false);
-  const amcName = activeAmc && activeAmc !== "*" ? activeAmc : myAmcs.length === 1 ? myAmcs[0] : `All my AMCs (${myAmcs.length})`;
+  const amcName = activeAmc || myAmcs[0];
   const nav = useNavigate();
   const loc = useLocation();
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -156,10 +156,9 @@ export default function AppShell() {
             </button>
             {amcOpen && (
               <div className="menu-pop" style={{ width: 280, left: 0, right: "auto" }} onClick={(e) => e.stopPropagation()} data-testid="amc-menu">
-                <div className="menu-head"><b>Work on which AMC?</b><span>Every list shows only this AMC's records</span></div>
+                <div className="menu-head"><b>Work on which AMC?</b><span>One AMC at a time — every list shows only its records</span></div>
                 <div className="menu-sep" />
                 {myAmcs.map((a) => <button key={a} className={"menu-item" + (activeAmc === a ? " on" : "")} onClick={() => { setAmc(a); setAmcOpen(false); }} data-testid={"amc-opt-" + a.split(" ")[0]}><span className="dot" />{a}</button>)}
-                <button className={"menu-item" + (activeAmc === "*" ? " on" : "")} onClick={() => { setAmc("*"); setAmcOpen(false); }}><span className="dot" />All my AMCs</button>
               </div>
             )}
           </div>
@@ -199,6 +198,14 @@ export default function AppShell() {
             )}
           </div>
 
+          {/* Business vertical — MF by default; KRA is listed but not live yet */}
+          <label className="vertical-pick" title="Business vertical">
+            <span>Vertical</span>
+            <select value={vertical} onChange={(e) => setVertical(e.target.value)} data-testid="vertical-select">
+              {VERTICALS.map((v) => <option key={v.key} value={v.key} disabled={v.later}>{v.label}{v.later ? " (later)" : ""}</option>)}
+            </select>
+          </label>
+
           <div style={{ position: "relative" }}>
             <button className="avatar" data-testid="avatar-menu-btn" onClick={(e) => { e.stopPropagation(); setMenuOpen((o) => !o); }}>
               {currentUser[0]}
@@ -220,10 +227,9 @@ export default function AppShell() {
             <div className="modal" style={{ maxWidth: 460 }}>
               <div className="modal-head"><h3>Hello {currentUser.split(" ")[0]} — which AMC are you working on?</h3></div>
               <div className="modal-body">
-                <p className="muted" style={{ marginTop: 0 }}>You have access to {myAmcs.length} AMCs. Pick one; you can switch any time from the AMC name at the top.</p>
+                <p className="muted" style={{ marginTop: 0 }}>You have access to {myAmcs.length} AMCs. You work on one AMC at a time — pick one; switch any time from the AMC name at the top.</p>
                 <div className="amc-grid">
                   {myAmcs.map((a) => <button key={a} className="amc-card" onClick={() => setAmc(a)} data-testid={"amc-pick-" + a.split(" ")[0]}><Building2 size={16} />{a}</button>)}
-                  <button className="amc-card all" onClick={() => setAmc("*")} data-testid="amc-pick-all"><Building2 size={16} />All my AMCs</button>
                 </div>
               </div>
             </div>

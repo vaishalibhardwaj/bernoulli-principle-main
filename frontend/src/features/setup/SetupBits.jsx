@@ -66,8 +66,11 @@ export function TestConnection({ conn, mode, onResult }) {
 }
 
 /** R7 — what this submission changes against the live (last approved) version. */
-export function ChangesCard({ base, cur, compact }) {
-  const diff = diffSetup(base, cur);
+export function ChangesCard({ base, cur, compact, exclude = [] }) {
+  const full = diffSetup(base, cur);
+  // Fields already shown elsewhere on the page (e.g. a layout-change proposal) are not repeated.
+  const diff = full && exclude.length ? full.filter((d) => !exclude.some((x) => String(d.field).includes(x))) : full;
+  if (full && full.length && exclude.length && !diff.length) return null;
   return (
     <div className="chg-card" data-testid="changes-card">
       <div className="chg-head"><GitCompareArrows size={15} /> {diff === null ? "New setup — nothing is live for this yet" : diff.length === 0 ? "No changes against the live version" : `${diff.length} change${diff.length > 1 ? "s" : ""} against the live version`}</div>

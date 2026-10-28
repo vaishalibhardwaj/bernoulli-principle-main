@@ -8,12 +8,13 @@ import { formatDateTime, timeAgo } from "@/lib/format";
 import { inrShort, num, Conf, ReadOnlyNote } from "@/features/ops/ui";
 import { Spark } from "@/features/ops/charts";
 import { CHANNEL_LABEL } from "@/mock/opsSeed";
-import { Inbox, CheckCircle2, XCircle, Fingerprint, ArrowRight, RefreshCw, Send, Trash2, Wand2, Clock, UploadCloud, Mail, Plug, Bot, Server, PauseCircle, PlayCircle, KeyRound, History, FileText, Loader2, RotateCcw, Paperclip } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Fingerprint, ArrowRight, RefreshCw, Send, Trash2, Wand2, Clock, UploadCloud, Mail, Plug, Bot, Server, PauseCircle, PlayCircle, KeyRound, History, FileText, Loader2, RotateCcw, Paperclip, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { JourneyBar } from "@/features/today/Cycle";
 import { PLAIN_FILE_STATUS } from "@/lib/plain";
 import { scopeToUser } from "@/lib/journey";
 import { uiStatus, StatusStrip, BalanceBreak, TxnDupSection, DismissModal, SftpTab, ManualUploadModal, ManualLog } from "./ingestionBits";
+import { withAutoVoid, unresolvedFingerprints } from "@/lib/events";
 
 const STATUS = {
   loaded: { label: "Loaded", cls: "pill-active" },
@@ -469,11 +470,16 @@ export default function FileInbox() {
             {open.status === "unknown" && canSetup && <button className="btn btn-primary" onClick={() => nav("/bank-setup/new")}><ArrowRight size={14} /> Start onboarding for this format</button>}
           </div>
 
+          {unresolvedFingerprints([open]).map(({ reason }) => (
+            <div key="fp" className="note warn" style={{ marginTop: 12 }} data-testid="fp-logged"><AlertTriangle size={14} /><div><b>Logged to the product report.</b> {reason}. The AI mapping couldn't resolve this on its own, so it is listed under Reports → Product → Unresolved fingerprint cases for the team to act on.</div></div>
+          ))}
+
           <div className="fd-section">
             <h4><History size={14} /> Processing history <span className="muted">· {open.attempts || 0} attempt{open.attempts === 1 ? "" : "s"}</span></h4>
             <ol className="ph-list">
-              {(open.history || []).slice().reverse().map((h, i) => (
-                <li key={i} className={h.bad ? "bad" : ""}><i /><div><b>{h.step}</b> <span className="muted">{formatDateTime(h.at).split(", ")[1]} · {h.by}</span><div className="muted">{h.text}</div></div></li>
+              {withAutoVoid(open.history || []).slice().reverse().map((h, i) => (
+                <li key={i} className={(h.bad ? "bad" : "") + (h.voided ? " voided" : "")} data-testid={h.voided ? "ph-voided" : undefined}><i /><div><b>{h.step}</b> <span className="muted">{formatDateTime(h.at).split(", ")[1]} · {h.by}</span><div className="muted">{h.text}</div>
+                  {h.voided && <div className="ph-void">Voided automatically — a later run succeeded at {formatDateTime(h.voidedAt).split(", ")[1]}</div>}</div></li>
               ))}
             </ol>
           </div>

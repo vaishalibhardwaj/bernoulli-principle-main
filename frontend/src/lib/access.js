@@ -23,7 +23,9 @@ export const MODULES = [
       { key: "inbox", label: "Approvals", plain: "Approvals", path: "/approvals", group: "Home", caps: ["view", "approve"] },
       { key: "balances", label: "Closing balances", plain: "Closing balances", path: "/closing-balances", group: "Home", caps: ["view", "export"] },
       { key: "scheduler", label: "Scheduler monitor", plain: "File pickups", path: "/scheduler", group: "Home", caps: ["view", "export"] },
+      { key: "no_action_review", label: "No-action review", plain: "No-action review", path: "/no-action-review", group: "Home", caps: ["view", "approve", "export"] },
       { key: "command", label: "Dashboard", plain: "Team overview", path: "/command", group: "Home", caps: ["view", "export"], analytics: true },
+      { key: "file_upload", label: "File upload", plain: "Upload files", path: "/upload", group: "Daily cycle", caps: ["view", "edit"] },
       { key: "ingestion", label: "Bank files", plain: "Bank files", path: "/ingestion", group: "Daily cycle", step: 1, caps: ["view", "edit", "approve"] },
       { key: "manual_upload", label: "Manual upload (exception)", plain: "Manual upload", path: "/ingestion?manual=1", group: "Daily cycle", caps: ["view", "edit"], hidden: true },
       { key: "match", label: "Match payments", plain: "Match payments", path: "/match", group: "Daily cycle", step: 2, phase: "P2", caps: ["view", "edit", "approve"] },
@@ -120,19 +122,19 @@ export function seedRoles() {
   const at = new Date(Date.now() - 200 * 86400000).toISOString();
   const r = (id, name, module, description, perms, extra = {}) => ({ id, name, module, description, perms, status: "active", system: true, createdBy: "System", createdAt: at, ...extra });
   return [
-    r("role_platform_admin", "Platform Admin", "admin", "Manages users, roles and access across all modules. Cannot operate any module.",
+    r("role_platform_admin", "Central Setup Team", "admin", "Assigns roles and AMC access across all modules. Cannot operate any module or manage IDs (activation and deactivation sit with ID management).",
       { users: ["view", "edit", "export"], roles: ["view", "edit"], status_std: ["view", "edit"], scheduler: ["view"] }),
     r("role_access_approver", "Access Approver", "admin", "Second-admin approval of role changes and privileged role grants.",
       { users: ["view", "approve"], roles: ["view", "approve"], status_std: ["view", "approve"] }),
     r("role_recon_setup_maker", "Recon · Setup Maker", "recon", "Onboards banks and aggregators: setups, mappings, match rules.",
-      { today: ["view"], balances: ["view", "export"], scheduler: ["view"], cutoffs: ["view", "edit"], narration_tags: ["view", "edit"], command: ["view"], ingestion: ["view", "edit"], bank_setup: ["view", "edit", "export"], credit_mis: ["view", "edit", "export"], mapping: ["view", "edit"], rules: ["view", "edit"], approvals: ["view"], reports: ["view", "export"], audit: ["view"] }),
+      { today: ["view"], balances: ["view", "export"], scheduler: ["view"], cutoffs: ["view", "edit"], narration_tags: ["view", "edit"], command: ["view"], file_upload: ["view", "edit"], ingestion: ["view", "edit"], bank_setup: ["view", "edit", "export"], credit_mis: ["view", "edit", "export"], mapping: ["view", "edit"], rules: ["view", "edit"], approvals: ["view"], reports: ["view", "export"], audit: ["view"] }),
     r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Runs the daily cycle: uploads and reprocesses bank files, matching, problem cases, documents, fund release and refunds. No setup screens. Uses the simple view.",
-      { today: ["view"], balances: ["view", "export"], scheduler: ["view"], command: ["view"], ingestion: ["view", "edit"], manual_upload: ["view", "edit"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], release: ["view", "edit"], refunds: ["view", "edit", "export"], reports: ["view", "export"], audit: ["view"] }, { simple: true }),
+      { today: ["view"], balances: ["view", "export"], scheduler: ["view"], command: ["view"], file_upload: ["view", "edit"], ingestion: ["view", "edit"], manual_upload: ["view", "edit"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], release: ["view", "edit"], refunds: ["view", "edit", "export"], reports: ["view", "export"], audit: ["view"] }, { simple: true }),
     r("role_recon_checker", "Recon · Checker", "recon", "Approves everything makers submit: setups, rules, matches, case closures, fund release, refunds and day close.",
-      { today: ["view"], balances: ["view", "export"], scheduler: ["view", "export"], cutoffs: ["view", "approve"], narration_tags: ["view", "approve"], inbox: ["view", "approve"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], reports: ["view", "export"], command: ["view", "export"], ingestion: ["view", "approve"], match: ["view", "approve"], exceptions: ["view", "approve", "export"], extraction: ["view", "approve"], bank_setup: ["view", "approve"], credit_mis: ["view", "approve"], mapping: ["view", "approve"], rules: ["view", "approve"], approvals: ["view", "approve"], audit: ["view", "export"] }),
+      { today: ["view"], no_action_review: ["view"], balances: ["view", "export"], scheduler: ["view", "export"], cutoffs: ["view", "approve"], narration_tags: ["view", "approve"], inbox: ["view", "approve"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], reports: ["view", "export"], command: ["view", "export"], file_upload: ["view"], ingestion: ["view", "approve"], match: ["view", "approve"], exceptions: ["view", "approve", "export"], extraction: ["view", "approve"], bank_setup: ["view", "approve"], credit_mis: ["view", "approve"], mapping: ["view", "approve"], rules: ["view", "approve"], approvals: ["view", "approve"], audit: ["view", "export"] }),
     r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", all("recon", ["view", "export"])),
     r("role_functional_manager", "Recon · Functional Manager", "recon", "Sees every process across Reconciliation and Brokerage. Acts only through dashboards, approvals and authorisation screens — never as a maker.",
-      { today: ["view"], balances: ["view", "export"], scheduler: ["view", "export"], command: ["view", "export"], inbox: ["view", "approve"], ingestion: ["view"], match: ["view"], extraction: ["view"], exceptions: ["view", "export"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], bank_setup: ["view"], credit_mis: ["view"], mapping: ["view"], rules: ["view"], reports: ["view", "export"], audit: ["view", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"], brk_master: ["view"] }),
+      { today: ["view"], no_action_review: ["view", "approve", "export"], balances: ["view", "export"], scheduler: ["view", "export"], command: ["view", "export"], inbox: ["view", "approve"], ingestion: ["view"], match: ["view"], extraction: ["view"], exceptions: ["view", "export"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], bank_setup: ["view"], credit_mis: ["view"], mapping: ["view"], rules: ["view"], reports: ["view", "export"], audit: ["view", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"], brk_master: ["view"] }),
     r("role_it_support", "IT Support · Monitoring", "recon", "Watches file pickups and scheduler jobs across sources. Read-only; no business data changes.",
       { scheduler: ["view", "export"], balances: ["view"] }),
     r("role_sip_viewer", "SIP · Viewer", "sip", "Read-only view of SIP registrations, failures and mandates.", all("sip", ["view"])),
@@ -222,9 +224,18 @@ export function screenForPath(pathname) {
   return best;
 }
 
+/** Business verticals the platform serves. KRA is planned but not live yet. */
+export const VERTICALS = [
+  { key: "MF", label: "MF" },
+  { key: "AIF", label: "AIF" },
+  { key: "GIFT", label: "GIFT City" },
+  { key: "SIF", label: "SIF" },
+  { key: "KRA", label: "KRA", later: true },
+];
+
 /** Demo personas — real seeded users with different role mixes. */
 export const PERSONAS = [
-  { id: "usr_meera", label: "Meera · Platform Admin" },
+  { id: "usr_meera", label: "Meera · Central Setup Team" },
   { id: "usr_rohit", label: "Rohit · Access Approver" },
   { id: "usr_priya", label: "Priya · Recon Setup Maker" },
   { id: "usr_deepa", label: "Deepa · Recon Ops Maker" },
@@ -238,6 +249,8 @@ export const PERSONAS = [
 /** Functions (actions) the global search can jump to. Each needs a capability, so nobody sees a function they can't use. */
 export const FUNCTIONS = [
   { label: "Upload a statement by hand (exception)", screen: "manual_upload", cap: "edit", path: "/ingestion?manual=1", words: "manual upload statement outage" },
+  { label: "Upload a bank statement, Credit MIS or remitter file", screen: "file_upload", cap: "edit", path: "/upload", words: "upload file drag drop gcs bank statement credit mis remitter" },
+  { label: "Review items your team marked No action", screen: "no_action_review", cap: "view", path: "/no-action-review", words: "no action supervisor review feedback event definition" },
   { label: "Check SFTP folders", screen: "ingestion", cap: "view", path: "/ingestion?tab=sftp", words: "sftp folder bulk ingestion" },
   { label: "Rejected emails", screen: "ingestion", cap: "view", path: "/ingestion?tab=email", words: "email intake rejected attachment" },
   { label: "Bank API & portal connections", screen: "ingestion", cap: "view", path: "/ingestion?tab=conns", words: "api portal bot pull" },

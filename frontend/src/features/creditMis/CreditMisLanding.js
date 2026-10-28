@@ -4,7 +4,7 @@ import { Plus, Search, ChevronRight, AlertTriangle, Hourglass, FilePen, CheckCir
 import { useStore } from "@/state/store";
 import { CREDIT_MODES } from "@/lib/constants";
 import { hasCap } from "@/lib/access";
-import { inScope, amcOfAccount } from "@/lib/org";
+import { inScope, amcOfAccount, userAmcs } from "@/lib/org";
 import { StatusPill } from "@/components/bits";
 import { Drawer } from "@/components/Drawer";
 import { maskAccount, timeAgo, formatDate } from "@/lib/format";
@@ -32,7 +32,7 @@ function describe(c) {
  *  3. Rows show only what differs from the default; everything else is one click away in a side panel.
  */
 export default function CreditMisLanding() {
-  const { collections, perms, amcUser, activeAmc } = useStore();
+  const { collections, perms, amcUser } = useStore();
   const nav = useNavigate();
   const canEdit = hasCap(perms, "credit_mis", "edit");
   const canApprove = hasCap(perms, "credit_mis", "approve");
@@ -73,7 +73,7 @@ export default function CreditMisLanding() {
       weight: list.reduce((w, c) => w + ({ rejected: 100, pending: 10, draft: 1 }[c.status] || 0), 0) }))
     .sort((a, b) => b.weight - a.weight || paName(a.pa).localeCompare(paName(b.pa)));
   const isOpen = (g) => (open[g.pa] !== undefined ? open[g.pa] : Boolean(needle) || g.issues > 0 || groups.length <= 2);
-  const scopeLabel = activeAmc && activeAmc !== "*" ? activeAmc : "all your AMCs";
+  const scopeLabel = userAmcs(amcUser).length === 1 ? userAmcs(amcUser)[0] : "all your AMCs";
 
   const exportCsv = () => {
     const lines = [["Payment aggregator", "Bank", "Account", "Arrives by", "Feed option", "File format", "Status"].join(",")]

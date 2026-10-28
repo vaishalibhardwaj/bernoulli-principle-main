@@ -1,3 +1,4 @@
+import { patternsFor, hhmm, LEARN_MIN_DAYS, LEARN_MAX_DAYS, LATE_AFTER_MIN } from "@/lib/uploadPatterns";
 import React from "react";
 import { useStore } from "@/state/store";
 import { Modal } from "@/components/Modal";
@@ -106,7 +107,8 @@ export function SftpTab({ folders, files, canEdit, onOpenFile }) {
     act({ screen: "ingestion", cap: "edit", kind: "sftp", id: fo.id, patch: { scanning: { by: currentUser, at: new Date().toISOString() } }, audit: { entityLabel: `SFTP ${fo.root}`, action: "Scan SFTP folder now" } });
     setTimeout(() => act({ screen: "ingestion", cap: "edit", kind: "sftp", id: fo.id, patch: { scanning: null, lastScan: new Date().toISOString() } }), 2500);
   };
-  return (
+  return (<>
+    <ManualPatterns files={files} onOpenFile={onOpenFile} />
     <div className="sftp-grid" data-testid="sftp-tab">
       {folders.map((f0) => ({ ...f0, accounts: f0.accounts.filter((a) => files.some((x) => x.id === a.fileId)) })).filter((fo) => fo.accounts.length).map((fo) => {
         const counts = Object.fromEntries(Object.keys(STATE).map((k) => [k, fo.accounts.filter((a) => a.state === k).length]));
@@ -123,6 +125,33 @@ export function SftpTab({ folders, files, canEdit, onOpenFile }) {
             {canEdit && <div className="cc-actions">
               <button className="btn btn-outline btn-sm" onClick={() => scan(fo)} data-testid={"scan-" + fo.id}>{fo.scanning ? <><Loader2 size={13} className="spin" /> Scanning… (started by {fo.scanning.by})</> : <><Clock size={13} /> Scan now</>}</button>
             </div>}
+          </div>
+        );
+      })}
+    </div>
+  </>);
+}
+
+const PATTERN_STATE = { learning: ["Learning", "wait"], due: ["Due", "prog"], on_time: ["Arrived on time", "ok"], arrived_late: ["Arrived late", "warn"], late: ["Late", "bad"] };
+
+/** Manual SFTP accounts: usual upload time learned over 10–15 days; alert ~15 min after it if nothing has landed. */
+function ManualPatterns({ files, onOpenFile }) {
+  const rows = patternsFor(files).sort((a, b) => ({ late: 0, due: 1, arrived_late: 2, learning: 3, on_time: 4 }[a.state] - { late: 0, due: 1, arrived_late: 2, learning: 3, on_time: 4 }[b.state]));
+  if (!rows.length) return null;
+  return (
+    <div className="card mp-card" data-testid="manual-patterns">
+      <div className="card-head"><h3><Clock size={15} /> Manual SFTP uploads — learned timing</h3>
+        <span className="muted">Usual upload time learned over {LEARN_MIN_DAYS}–{LEARN_MAX_DAYS} days · alert when {LATE_AFTER_MIN} min past it with nothing in the folder</span></div>
+      <div className="mp-h"><span>Account</span><span>Learned from</span><span>Usual time</span><span>Today</span><span>Status</span></div>
+      {rows.map((p) => {
+        const [label, cls] = PATTERN_STATE[p.state];
+        return (
+          <div key={p.fileId} className={"mp-row s-" + p.state} onClick={() => onOpenFile(p.fileId)} data-testid={"mp-" + p.fileId}>
+            <span><b>{p.bankName}</b> <code>·{p.accountNumber.slice(-4)}</code></span>
+            <span className="mp-days" title={p.days.map(hhmm).join(", ")}>{p.days.map((d, i) => <i key={i} style={{ height: 6 + ((d - p.expected + 12) / 24) * 12 }} />)}<em>{p.seen} day{p.seen !== 1 ? "s" : ""}{p.learning ? ` · ${LEARN_MIN_DAYS - p.seen} more to learn` : ""}</em></span>
+            <span className="tnum">{p.learning ? "—" : `${hhmm(p.expected)} ± ${p.spread}m`}</span>
+            <span className="tnum">{p.todayAt != null ? `landed ${hhmm(p.todayAt)}` : p.learning ? "not yet" : p.state === "late" ? `${p.lateBy} min past usual` : `expected ${hhmm(p.expected)}`}</span>
+            <span className={"sc " + cls}>{label}</span>
           </div>
         );
       })}

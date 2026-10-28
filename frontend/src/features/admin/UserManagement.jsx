@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useStore } from "@/state/store";
-import { MODULES, MODULE_BY_KEY, hasCap } from "@/lib/access";
+import { MODULES, hasCap } from "@/lib/access";
 import { TiltCard, ModuleOrbit, CountUp } from "@/features/viz/Viz";
 import Pagination from "@/components/Pagination";
 import { SkeletonRows, EmptyState } from "@/components/bits";
@@ -11,11 +11,11 @@ import DeactivateUserModal from "./DeactivateUserModal";
 import OnboardingModal from "./OnboardingModal";
 import "./userManagement.css";
 import { Modal } from "@/components/Modal";
-import { amcLabel, userAmcs, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS, DORMANT_DAYS } from "@/lib/org";
+import { AMCS, userAmcs, inScope, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS, DORMANT_DAYS } from "@/lib/org";
 
 import {
   UserPlus, Search, Download, Shield, Pencil, Send, Power, PowerOff,
-  ExternalLink, Users, Bell, X, CheckCircle2, AlertCircle
+  Users, Bell, X
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,6 +30,9 @@ const STATUS_FILTERS = [
   { key: "dormant", label: `Not logged in ${DORMANT_DAYS}+ days` },
 ];
 
+const isoDay = (d) => d.toISOString().slice(0, 10);
+const STATUS_TEXT = { active: "Active", invited: "Invited", invite_expired: "Invite expired", deactivated: "Deactivated" };
+
 export default function UserManagement() {
   const {
     users,
@@ -38,7 +41,6 @@ export default function UserManagement() {
     updateUser,
     deactivateUser,
     requestReactivation,
-    runBiometricCheck,
     resendInvite,
     activateOnboardedUser,
     adminNotifications,
@@ -47,6 +49,9 @@ export default function UserManagement() {
     collections,
   } = useStore();
   const canEdit = hasCap(perms, "users", "edit");
+  // Activating, deactivating and reactivating IDs belongs to the ID-management persona (not built yet).
+  // The Central Setup Team only assigns roles and AMC access, so nobody holds this capability today.
+  const canManageIds = hasCap(perms, "users", "deactivate");
   const pendingByUser = useMemo(() => {
     const m = {};
     (collections.access_requests || []).filter((r) => r.status === "pending" && r.kind === "assign").forEach((r) => { m[r.userId] = [...(m[r.userId] || []), ...r.roleIds]; });
@@ -68,6 +73,11 @@ export default function UserManagement() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [moduleFilter, setModuleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  // Scope for "Access by module" and the user tiles: all AMCs, as on today, unless changed
+  const today = isoDay(new Date());
+  const [amcFilter, setAmcFilter] = useState("all");
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const [loading, setLoading] = useState(false);
@@ -83,27 +93,43 @@ export default function UserManagement() {
     setLoading(true);
     const t = setTimeout(() => setLoading(false), 200);
     return () => clearTimeout(t);
-  }, [debouncedSearch, roleFilter, moduleFilter, statusFilter, page, pageSize]);
+  }, [debouncedSearch, roleFilter, moduleFilter, statusFilter, amcFilter, page, pageSize]);
 
   // Reset page when filter changes
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, roleFilter, moduleFilter, statusFilter]);
+  }, [debouncedSearch, roleFilter, moduleFilter, statusFilter, amcFilter]);
+
+  // Users in scope: AMC filter, and holding an ID at some point between From and To.
+  // Status is read as on the To date (someone deactivated after To still counts as active).
+  const scoped = useMemo(() => {
+    const fromTs = new Date(fromDate + "T00:00:00").getTime();
+    const toTs = new Date(toDate + "T23:59:59").getTime();
+    return users
+      .filter((u) => amcFilter === "all" || inScope(u, amcFilter))
+      .filter((u) => !u.createdAt || new Date(u.createdAt).getTime() <= toTs)
+      .filter((u) => !(u.status === "deactivated" && u.deactivatedAt && new Date(u.deactivatedAt).getTime() < fromTs))
+      .map((u) => (u.status === "deactivated" && u.deactivatedAt && new Date(u.deactivatedAt).getTime() > toTs ? { ...u, status: "active", autoDeactivated: false } : u));
+  }, [users, amcFilter, fromDate, toDate]);
+  const scopeChanged = amcFilter !== "all" || fromDate !== today || toDate !== today;
+  const fmtDay = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const scopeLabel = `${amcFilter === "all" ? "All AMCs" : amcFilter} · ${fromDate === toDate ? `as on ${fmtDay(toDate)}` : `${fmtDay(fromDate)} – ${fmtDay(toDate)}`}`;
 
   // Live counts: users per module and per role (a user can count in several)
   const { moduleCounts, roleCounts } = useMemo(() => {
     const mc = {}; const rc = {};
-    users.forEach((u) => {
+    scoped.forEach((u) => {
       const mods = new Set();
       (u.roles || []).forEach((rid) => { rc[rid] = (rc[rid] || 0) + 1; const r = roleById[rid]; if (r) mods.add(r.module); });
       mods.forEach((m) => { mc[m] = (mc[m] || 0) + 1; });
     });
     return { moduleCounts: mc, roleCounts: rc };
-  }, [users, roleById]);
+  }, [scoped, roleById]);
 
   // Filtered users
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
+      if (amcFilter !== "all" && !inScope(u, amcFilter)) return false;
       // Role filter
       if (roleFilter !== "all" && !(u.roles || []).includes(roleFilter)) return false;
       if (moduleFilter !== "all" && !(u.roles || []).some((rid) => roleById[rid]?.module === moduleFilter)) return false;
@@ -122,7 +148,7 @@ export default function UserManagement() {
       }
       return true;
     });
-  }, [users, roleFilter, moduleFilter, statusFilter, debouncedSearch, roleById]);
+  }, [users, amcFilter, roleFilter, moduleFilter, statusFilter, debouncedSearch, roleById]);
 
   const total = filteredUsers.length;
   const pageRows = useMemo(() => {
@@ -154,42 +180,18 @@ export default function UserManagement() {
     toast.success(`Exported ${filteredUsers.length} users to CSV`);
   };
 
-  // Status Chip Renderer
-  const renderStatusChip = (status) => {
-    switch (status) {
-      case "active":
-        return <span className="us-pill us-active" data-testid="status-active"><span className="dot" />Active</span>;
-      case "invited":
-        return <span className="us-pill us-invited" data-testid="status-invited"><span className="dot" />Invited</span>;
-      case "invite_expired":
-        return <span className="us-pill us-expired" data-testid="status-expired"><span className="dot" />Invite expired</span>;
-      case "deactivated":
-        return <span className="us-pill us-deactivated" data-testid="status-deactivated"><span className="dot" />Deactivated</span>;
-      default:
-        return <span className="us-pill us-deactivated">{status}</span>;
-    }
+  // Roles as plain text; privileged grants still awaiting a second admin are marked
+  const renderRoles = (u) => {
+    const names = (u.roles || []).map((rid) => roleById[rid]?.name).filter(Boolean);
+    const pending = (pendingByUser[u.id] || []).map((rid) => `${roleById[rid]?.name || rid} (pending approval)`);
+    const all = [...names, ...pending];
+    return all.length ? <span className="um-text" data-testid={`roles-${u.id}`}>{all.join(", ")}</span> : <span className="muted">No roles</span>;
   };
-
-  // Role chips: one per role, coloured by module; pending privileged grants shown dashed
-  const renderRoles = (u) => (
-    <div className="role-chips">
-      {(u.roles || []).map((rid) => {
-        const r = roleById[rid];
-        if (!r) return null;
-        return <span key={rid} className="role-chip" style={{ "--mc": MODULE_BY_KEY[r.module]?.color }} title={r.description} data-testid={`role-chip-${rid}`}>{r.name}</span>;
-      })}
-      {(pendingByUser[u.id] || []).map((rid) => (
-        <span key={"p" + rid} className="role-chip pending" title="Awaiting second-admin approval">{roleById[rid]?.name || rid} · pending</span>
-      ))}
-      {!(u.roles || []).length && !(pendingByUser[u.id] || []).length && <span className="muted">No roles</span>}
-    </div>
-  );
 
   const handleResendInvite = (user) => {
     const res = resendInvite(user.id);
     if (res.ok) {
-      toast.success(`Fresh invite and temporary password dispatched for ${user.name}`);
-      setOnboardingUser(res.user);
+      toast.success(`Fresh invite and temporary password sent to ${user.name}`);
     } else {
       toast.error(res.error || "Failed to resend invite");
     }
@@ -198,10 +200,6 @@ export default function UserManagement() {
   const [reactivating, setReactivating] = useState(null);
   const pendingReactivation = useMemo(() => new Set((collections.access_requests || []).filter((r) => r.kind === "reactivate" && r.status === "pending").map((r) => r.userId)), [collections.access_requests]);
   const handleToggleReactivate = (user) => setReactivating(user);
-  const runCheck = () => {
-    const n = runBiometricCheck();
-    toast(n ? `${n} ID${n > 1 ? "s" : ""} disabled: no biometric punch-in for ${BIOMETRIC_LIMIT_DAYS}+ consecutive days.` : `Nobody has crossed ${BIOMETRIC_LIMIT_DAYS} days without a biometric punch-in.`);
-  };
 
   const visibleNotifs = adminNotifications.filter((n) => !dismissedNotifs.includes(n.id));
 
@@ -213,10 +211,13 @@ export default function UserManagement() {
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Users size={24} style={{ color: "#0f766e" }} /> User Management
           </h1>
-          <p>One identity layer for every CAMS module. Users hold one or more roles; each role grants screen-level View / Maker / Checker / Export.</p>
+          <p>Assign roles and AMC access for every CAMS module. IDs themselves (activation, deactivation) are managed by the ID management team.</p>
         </div>
         <div className="actions">
-          {canEdit && <button type="button" className="btn btn-outline" onClick={runCheck} data-testid="btn-biometric-check" title={`Disables IDs with no biometric punch-in for ${BIOMETRIC_LIMIT_DAYS} consecutive days. Policy to be confirmed with the identity management team.`}><Shield size={15} /> Run biometric check</button>}
+          {/* Kept visible but off until the ID management integration is agreed */}
+          <span title={`Disabled until the ID management integration is confirmed. It will disable IDs with no biometric punch-in for ${BIOMETRIC_LIMIT_DAYS} consecutive days.`}>
+            <button type="button" className="btn btn-outline" disabled data-testid="btn-biometric-check"><Shield size={15} /> Run biometric check</button>
+          </span>
           {canEdit && <button
             type="button"
             className="btn btn-primary"
@@ -227,7 +228,7 @@ export default function UserManagement() {
             }}
             data-testid="btn-add-user"
           >
-            <UserPlus size={16} /> Add user
+            <UserPlus size={16} /> Assign roles
           </button>}
         </div>
       </div>
@@ -237,10 +238,10 @@ export default function UserManagement() {
         <div
           key={n.id}
           className="sess-banner info"
-          style={{ background: "#f0fdfa", border: "1px solid #99f6e4", color: "#134e4a", marginBottom: 16 }}
+          style={{ marginBottom: 16 }}
           data-testid="admin-notif-banner"
         >
-          <span className="ico"><Bell size={18} color="#0f766e" /></span>
+          <span className="ico"><Bell size={18} /></span>
           <div>
             <b>Admin Notice:</b> {n.message} • <span style={{ opacity: 0.8, fontSize: 12 }}>{timeAgo(n.ts)}</span>
           </div>
@@ -256,11 +257,31 @@ export default function UserManagement() {
       ))}
 
       {/* Admin command view: modules orbit the CAMS core (click a node to filter) + access health */}
+      <div className="um-scope" data-testid="um-scope">
+        <div className="field">
+          <label className="field-label">AMC</label>
+          <select className="select" value={amcFilter} onChange={(e) => setAmcFilter(e.target.value)} data-testid="scope-amc">
+            <option value="all">All AMCs</option>
+            {AMCS.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label className="field-label">From</label>
+          <input className="input tnum" type="date" value={fromDate} max={toDate} onChange={(e) => e.target.value && setFromDate(e.target.value)} data-testid="scope-from" />
+        </div>
+        <div className="field">
+          <label className="field-label">To (as on)</label>
+          <input className="input tnum" type="date" value={toDate} min={fromDate} max={today} onChange={(e) => e.target.value && setToDate(e.target.value)} data-testid="scope-to" />
+        </div>
+        <span className="um-scope-note">Showing <b>{scopeLabel}</b>. The AMC also filters the user list below.</span>
+        {scopeChanged && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAmcFilter("all"); setFromDate(today); setToDate(today); }} data-testid="scope-reset">Reset</button>}
+      </div>
+
       <div className="admin-hero">
         <TiltCard className="card orbit-card" max={5}>
           <div className="card-head"><h3>Access by module</h3><span className="muted">Click a module to filter users · node size = users with access</span></div>
           <div className="orbit-wrap">
-            <ModuleOrbit total={users.filter((u) => (u.roles || []).length).length} modules={MODULES.map((m) => ({ key: m.key, label: m.label, color: m.color, users: moduleCounts[m.key] || 0 }))} active={moduleFilter === "all" ? null : moduleFilter}
+            <ModuleOrbit total={scoped.filter((u) => (u.roles || []).length).length} modules={MODULES.map((m) => ({ key: m.key, label: m.label, color: m.color, users: moduleCounts[m.key] || 0 }))} active={moduleFilter === "all" ? null : moduleFilter}
               onPick={(k) => { setModuleFilter(moduleFilter === k ? "all" : k); setRoleFilter("all"); }} />
             <div className="orbit-side">
               {MODULES.map((m) => (
@@ -273,15 +294,24 @@ export default function UserManagement() {
           </div>
         </TiltCard>
         <div className="access-health">
-          {[
-            ["Active users", users.filter((u) => u.status === "active").length, "green"],
-            ["Invites pending", users.filter((u) => u.status === "invited" || u.status === "invite_expired").length, "amber"],
-            ["Access changes to approve", (collections.access_requests || []).filter((r) => r.status === "pending").length, "blue"],
-            [`Not logged in ${DORMANT_DAYS}+ days`, users.filter(isDormant).length, "red", "dormant"],
-            ["Auto-deactivated (biometric)", users.filter((u) => u.status === "deactivated" && u.autoDeactivated).length, "amber", "auto_deactivated"],
-          ].map(([l, v, t, f]) => (
-            <div key={l} className={"ah-tile tone-" + t + (f ? " clickable" : "")} onClick={f ? () => setStatusFilter(f) : undefined} role={f ? "button" : undefined}><span>{l}</span><b className="fx-num"><CountUp value={v} /></b></div>
-          ))}
+          {(() => {
+            const active = scoped.filter((u) => u.status === "active");
+            const invited = scoped.filter((u) => u.status === "invited" || u.status === "invite_expired");
+            const deact = scoped.filter((u) => u.status === "deactivated");
+            const dormant = active.filter(isDormant).length;
+            const auto = deact.filter((u) => u.autoDeactivated).length;
+            return [
+              ["All users", scoped.length, "blue", "all", "Active + invites pending + deactivated", "total"],
+              ["Active", active.length, "green", "active", dormant ? `${dormant} not logged in ${DORMANT_DAYS}+ days` : null, "active", "dormant"],
+              ["Invites pending", invited.length, "amber", "invited", invited.filter((u) => u.status === "invite_expired").length ? `${invited.filter((u) => u.status === "invite_expired").length} expired` : null, "invited", "invite_expired"],
+              ["Deactivated", deact.length, "red", "deactivated", auto ? `${auto} by the biometric rule` : null, "deactivated", "auto_deactivated"],
+            ].map(([l, v, t, f, sub, id, subF]) => (
+              <div key={l} className={"ah-tile clickable tone-" + t + (statusFilter === f ? " on" : "")} onClick={() => setStatusFilter(f)} role="button" data-testid={`tile-${id}`}>
+                <span>{l}</span><b className="fx-num"><CountUp value={v} /></b>
+                {sub && <small onClick={subF ? (e) => { e.stopPropagation(); setStatusFilter(subF); } : undefined} className={subF ? "link" : ""}>{sub}</small>}
+              </div>
+            ));
+          })()}
         </div>
       </div>
 
@@ -376,7 +406,7 @@ export default function UserManagement() {
                 <th>Designation</th>
                 <th>Work Email</th>
                 <th style={{ width: 150 }}>AMC access</th>
-                <th style={{ width: 260 }}>Roles</th>
+                <th style={{ width: 260 }}>Role</th>
                 <th style={{ width: 130 }}>Status</th>
                 <th style={{ width: 130 }}>Last Login</th>
                 <th style={{ width: 160, textAlign: "right" }}>Actions</th>
@@ -421,7 +451,7 @@ export default function UserManagement() {
                       </td>
 
                       {/* Designation */}
-                      <td style={{ color: "#334155" }}>{u.designation || "—"}</td>
+                      <td>{u.designation || "—"}</td>
 
                       {/* Email */}
                       <td className="tnum" style={{ fontSize: 12 }}>
@@ -429,14 +459,14 @@ export default function UserManagement() {
                       </td>
 
                       {/* AMC access */}
-                      <td style={{ fontSize: 12 }} title={userAmcs(u).join(", ")} data-testid={`amc-${u.id}`}>{amcLabel(u)}</td>
+                      <td data-testid={`amc-${u.id}`}><AmcCell user={u} /></td>
 
                       {/* Role */}
                       <td>{renderRoles(u)}</td>
 
                       {/* Status */}
                       <td>
-                        {renderStatusChip(u.status)}
+                        <span className="um-text" data-testid={`status-${u.status}`}>{STATUS_TEXT[u.status] || u.status}</span>
                         {u.status === "deactivated" && u.autoDeactivated && <div className="um-sub">Biometric rule · {daysSince(u.lastBiometric)}d no punch-in</div>}
                         {pendingReactivation.has(u.id) && <div className="um-sub amber">Reactivation awaiting 2nd admin</div>}
                         {isDormant(u) && <div className="um-sub red">Inactive {u.lastLogin ? daysSince(u.lastLogin) : daysSince(u.createdAt)} days</div>}
@@ -451,24 +481,11 @@ export default function UserManagement() {
                       {/* Actions */}
                       <td style={{ textAlign: "right" }}>
                         <div className="cell-actions" style={{ justifyContent: "flex-end" }}>
-                          {/* View Onboarding preview for invited / expired */}
-                          {canResend && (
-                            <button
-                              type="button"
-                              className="row-icon-btn"
-                              title="Preview Onboarding & Invite Email"
-                              onClick={() => setOnboardingUser(u)}
-                              data-testid={`action-preview-${u.id}`}
-                            >
-                              <ExternalLink size={15} color="#0f766e" />
-                            </button>
-                          )}
-
                           {/* Edit user */}
                           {canEdit && <button
                             type="button"
                             className="row-icon-btn"
-                            title="Edit user details"
+                            title="Edit roles and AMC access"
                             onClick={() => {
                               setEditingUser(u);
                               setAddEditOpen(true);
@@ -492,7 +509,7 @@ export default function UserManagement() {
                           )}
 
                           {/* Deactivate / Reactivate */}
-                          {!canEdit ? null : u.status === "deactivated" ? (
+                          {!canManageIds ? null : u.status === "deactivated" ? (
                             <button
                               type="button"
                               className="row-icon-btn"
@@ -625,5 +642,33 @@ function ReactivateModal({ user, onClose, onSubmit }) {
         <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, fontSize: 13 }}><input type="checkbox" checked={bio} onChange={(e) => setBio(e.target.checked)} data-testid="reactivate-bio" /> The user has punched in on the biometric system again</label>
       </>}
     </Modal>
+  );
+}
+
+/** AMC access: the first AMC by name, the rest one click away in a small list. */
+function AmcCell({ user }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const all = !user?.amcs || user.amcs.includes("ALL");
+  const list = userAmcs(user);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+  if (all) return <span className="um-text">All AMCs ({list.length})</span>;
+  if (list.length === 1) return <span className="um-text">{list[0]}</span>;
+  return (
+    <span className="amc-cell" ref={ref}>
+      <span className="um-text">{list[0]}</span>{" "}
+      <button type="button" className="amc-more" onClick={() => setOpen((o) => !o)} aria-expanded={open} data-testid={`amc-more-${user.id}`}>+{list.length - 1} more</button>
+      {open && (
+        <div className="amc-pop" data-testid={`amc-pop-${user.id}`}>
+          <div className="amc-pop-head">{user.name.split(" ")[0]} · {list.length} AMCs</div>
+          <ul>{list.map((a) => <li key={a}>{a}</li>)}</ul>
+        </div>
+      )}
+    </span>
   );
 }

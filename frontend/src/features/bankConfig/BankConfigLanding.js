@@ -5,7 +5,7 @@ import VersionsDrawer from "./VersionsDrawer";
 import { useStore } from "@/state/store";
 import { BANK_MODES } from "@/lib/constants";
 import { hasCap } from "@/lib/access";
-import { inScope, amcOfAccount } from "@/lib/org";
+import { inScope, amcOfAccount, userAmcs } from "@/lib/org";
 import { StatusPill } from "@/components/bits";
 import { Drawer } from "@/components/Drawer";
 import { maskAccount, timeAgo, formatDate } from "@/lib/format";
@@ -22,7 +22,7 @@ const TAB_KEY = "cams_bank_setup_tab";
  *  3. Rows show only what differs from the default; everything else is one click away in a side panel.
  */
 export default function BankConfigLanding() {
-  const { collections, perms, amcUser, activeAmc } = useStore();
+  const { collections, perms, amcUser } = useStore();
   const nav = useNavigate();
   const [sp, setSp] = useSearchParams();
   const canEdit = hasCap(perms, "bank_setup", "edit");
@@ -65,7 +65,7 @@ export default function BankConfigLanding() {
       weight: list.reduce((w, c) => w + ({ rejected: 100, pending: 10, draft: 1 }[c.status] || 0), 0) }))
     .sort((a, b) => b.weight - a.weight || a.bank.localeCompare(b.bank));
   const isOpen = (b) => (open[b.bank] !== undefined ? open[b.bank] : Boolean(needle) || b.issues > 0 || banks.length <= 2);
-  const scopeLabel = activeAmc && activeAmc !== "*" ? activeAmc : "all your AMCs";
+  const scopeLabel = userAmcs(amcUser).length === 1 ? userAmcs(amcUser)[0] : "all your AMCs";
 
   return (
     <div className="bs" data-testid="bank-config-landing">

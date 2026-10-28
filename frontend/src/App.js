@@ -15,6 +15,8 @@ import Cutoffs from "@/features/cutoffs/Cutoffs";
 import NarrationTags from "@/features/narration/NarrationTags";
 import ClosingBalances from "@/features/dashboards/ClosingBalances";
 import SchedulerMonitor from "@/features/dashboards/SchedulerMonitor";
+import FileUpload from "@/features/upload/FileUpload";
+import NoActionReview from "@/features/today/NoActionReview";
 import CommandCentre from "@/features/command/CommandCentre";
 import FileInbox from "@/features/ingestion/FileInbox";
 import MatchRules from "@/features/rules/MatchRules";
@@ -76,6 +78,8 @@ export default function App() {
           <Route path="/narration-tags" element={<NarrationTags />} />
           <Route path="/closing-balances" element={<ClosingBalances />} />
           <Route path="/scheduler" element={<SchedulerMonitor />} />
+          <Route path="/upload" element={<FileUpload />} />
+          <Route path="/no-action-review" element={<NoActionReview />} />
           <Route path="/m/:module/:screen" element={<ModulePlaceholder />} />
           <Route path="*" element={<HomeRedirect />} />
         </Route>

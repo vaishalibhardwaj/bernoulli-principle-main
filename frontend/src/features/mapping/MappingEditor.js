@@ -157,11 +157,12 @@ export default function MappingEditor() {
   const doSubmit = () => { submit("bank_mapping", payload(), label); toast.success("Mapping submitted for approval"); setConfirmSubmit(false); nav(`/mapping?tab=${type}`); };
   const doReset = () => { setMapping(JSON.parse(JSON.stringify(rec))); setOverrides(0); setKeyHint(null); toast("Mapping reset to last saved"); };
 
+  // One action bar, at the bottom of the page only.
   const actionBar = !isView && (
-    <div className="map-actions">
-      <button className="btn btn-success" onClick={openSubmit} data-testid="btn-map-submit"><Send size={15} /> Submit for Approval</button>
-      <button className="btn btn-outline" onClick={doSaveDraft} data-testid="btn-map-draft"><Save size={15} /> Save Mapping</button>
-      <button className="btn btn-ghost" onClick={doReset}><RotateCcw size={15} /> Reset</button>
+    <div className="map-actions map-actions-foot" data-testid="map-actions">
+      <button className="btn btn-ghost" onClick={doReset} data-testid="btn-map-reset"><RotateCcw size={15} /> Reset to last saved</button>
+      <button className="btn btn-outline" onClick={doSaveDraft} data-testid="btn-map-draft"><Save size={15} /> Save as draft</button>
+      <button className="btn btn-success" onClick={openSubmit} data-testid="btn-map-submit"><Send size={15} /> Submit for approval</button>
     </div>
   );
 
@@ -174,8 +175,11 @@ export default function MappingEditor() {
         <td style={{ color: "hsl(var(--muted))" }}>{f.attribute}</td>
         <td>
           <select className="map-select" value={f.mappedColumn} disabled={isView || disabled} data-testid={"select-col-" + f.systemField} onChange={(e) => onMapColumn(idx, e.target.value)}>
-            <option value="">{disabled ? "Not used — INSTRM_AMOUNT is mapped" : "— Select —"}</option>
+            {/* An existing mapping is always shown as the selected value, never a blank "Select" */}
+            {!f.mappedColumn && <option value="">{disabled ? "Not used — INSTRM_AMOUNT is mapped" : "Not mapped — pick a column"}</option>}
+            {f.mappedColumn && !columns.includes(f.mappedColumn) && <option value={f.mappedColumn}>{f.mappedColumn} (current — not in this file)</option>}
             {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+            {f.mappedColumn && <option value="">Clear mapping</option>}
           </select>
           {f.status === "mismatch" && <div className="field-warn"><AlertTriangle size={11} /> {f.note || "Re-map this field"}</div>}
           {f.systemField === "VALUE_DATE" && f.status === "mapped" && <DateFormatBuilder value={dateFmt} onChange={setDateFmt} sample={meta?.dateSample} disabled={isView} />}
@@ -249,10 +253,10 @@ export default function MappingEditor() {
             {proposal && <ProposalCard file={proposalFile} proposal={proposal} isView={isView} onApply={() => {
               const byField = Object.fromEntries(proposal.changes.filter((c) => proposal.newColumns.includes(c.proposed)).map((c) => [c.field, c.proposed]));
               setMapping((m) => ({ ...m, fields: m.fields.map((f) => byField[f.systemField] ? { ...f, mappedColumn: byField[f.systemField], source: "pattern", status: "mapped", note: null } : f), narrationSplit: m.narrationSplit || Object.keys(byField).some((k) => k.startsWith("EXTRACT_")) }));
-              toast.success("Proposal filled in. Check it, then submit — a checker must approve before it's used.");
+              toast.success("Changes allowed in the grid. Check them, then Submit for approval at the bottom.");
             }} />}
-            {actionBar}
-            {mapping.baseline && <ChangesCard base={{ ...mapping.baseline, kind: "bank_mapping" }} cur={{ ...mapping, kind: "bank_mapping" }} compact />}
+            {/* Fields already listed in the proposal above are not repeated here */}
+            {mapping.baseline && <ChangesCard base={{ ...mapping.baseline, kind: "bank_mapping" }} cur={{ ...mapping, kind: "bank_mapping" }} compact exclude={proposal ? proposal.changes.map((c) => c.field) : []} />}
             <div className="summary-banner" data-testid="map-summary-banner"><Sparkles size={16} /> {prevCount} from the last approved mapping, {headerCount} by header name, {pendingCount} pending.
               {!isView && <button className="btn btn-outline btn-sm" style={{ marginLeft: "auto" }} onClick={autoMapByName} data-testid="btn-auto-map"><Sparkles size={13} /> Auto-map by header name</button>}</div>
 
@@ -376,7 +380,7 @@ function ProposalCard({ file, proposal, onApply, isView }) {
       <div className="pc-head"><AlertTriangle size={15} /> <b>{file.bankName} changed its file layout</b> <span className="muted">— {proposal.summary} · {proposal.rowsHeld.toLocaleString("en-IN")} rows held in Bank files</span></div>
       <table className="grid compact"><thead><tr><th>Field</th><th>Approved layout</th><th>Proposed</th><th>Confidence</th></tr></thead>
         <tbody>{proposal.changes.map((c) => <tr key={c.field}><td className="tnum">{c.field}</td><td>{c.old || <span className="muted">not mapped</span>}</td><td><b>{c.proposed}</b><div className="muted">{c.reason}</div></td><td className="tnum">{Math.round(c.confidence * 100)}%</td></tr>)}</tbody></table>
-      <div className="pc-foot"><span className="muted">The system suggests; it never switches the mapping on by itself. Submit, and a checker approves before held rows load.</span>{!isView && <button className="btn btn-primary btn-sm" onClick={onApply} data-testid="apply-proposal">Pre-fill the proposal</button>}</div>
+      <div className="pc-foot"><span className="muted">The system suggests; it never switches the mapping on by itself. Allow these changes, then Submit for approval at the bottom — a checker approves before held rows load.</span>{!isView && <button className="btn btn-primary btn-sm" onClick={onApply} data-testid="apply-proposal">Allow these changes</button>}</div>
     </div>
   );
 }

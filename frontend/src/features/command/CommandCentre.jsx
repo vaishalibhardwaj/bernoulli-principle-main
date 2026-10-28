@@ -7,7 +7,9 @@ import { inrShort, num, dur } from "@/features/ops/ui";
 import { LineChart, Spark, BarList } from "@/features/ops/charts";
 import { useCycle } from "@/features/today/Cycle";
 import { TiltCard, CoreOrb, FlowStreams, Towers3D, CountUp } from "@/features/viz/Viz";
-import { Gauge, ArrowUpRight, ArrowDownRight, Hourglass } from "lucide-react";
+import { Gauge, ArrowUpRight, ArrowDownRight, Download } from "lucide-react";
+import { downloadCsv } from "@/features/reports/csv";
+import ManagerData from "./ManagerData";
 
 const BUCKETS = [["0–1d", 0, 24], ["1–2d", 24, 48], ["2–3d", 48, 72], ["3–5d", 72, 120], [">5d", 120, 9999]];
 const dayLabel = (back) => { const d = new Date(); d.setDate(d.getDate() - back); return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }); };
@@ -18,6 +20,8 @@ export default function CommandCentre() {
   const nav = useNavigate();
   const { all: steps } = useCycle();
   const [range, setRange] = React.useState(14);
+  const canExport = hasCap(perms, "command", "export") || hasCap(perms, "reports", "export");
+  const today = new Date().toISOString().slice(0, 10);
   const go = (screen, path) => (hasCap(perms, screen) ? () => nav(path) : undefined);
   const files = collections.files || [];
   const ex = collections.exceptions || [];
@@ -113,7 +117,8 @@ export default function CommandCentre() {
 
       <div className="dash-2">
         <div className="card">
-          <div className="card-head"><h3>Auto-match rate by bank</h3><span className="muted">Taller = better · red = dropped today · click to open bank files</span></div>
+          <div className="card-head"><h3>Auto-match rate by bank</h3><span className="muted">Taller = better · red = dropped today · click to open bank files</span>
+            {canExport && <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => downloadCsv(`auto_match_by_bank_${today}.csv`, ["Bank", ...TODAY.matchTrend[0].series.map((_, i) => dayLabel(TODAY.matchTrend[0].series.length - 1 - i))], TODAY.matchTrend.map((b) => [b.bank, ...b.series.map((v) => v.toFixed(1))]))} data-testid="export-towers"><Download size={13} /> Export</button>}</div>
           <div className="card-pad"><Towers3D items={towers} format={(v) => `${v.toFixed(1)}%`} onPick={() => go("ingestion", "/ingestion")?.()} /></div>
         </div>
         <div className="card">
@@ -122,8 +127,11 @@ export default function CommandCentre() {
         </div>
       </div>
 
+      <ManagerData />
+
       <div className="card age-watch" data-testid="ageing-watch">
-        <div className="card-head"><h3>Ageing watch</h3><span className="muted">Open cases by age · penalty interest starts after 5 days · click a row to open them</span></div>
+        <div className="card-head"><h3>Ageing watch</h3><span className="muted">Open cases by age · penalty interest starts after 5 days · click a row to open them</span>
+          {canExport && <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => downloadCsv(`ageing_watch_${today}.csv`, ["Case type", "Open", ...BUCKETS.map(([l]) => l), "Amount", "Past 5 days"], heat.map((r) => [r.label, r.total, ...r.cells.map((x) => x.n), r.amt, r.breach]))} data-testid="export-ageing"><Download size={13} /> Export</button>}</div>
         <div className="aw-grid">
           <div className="aw-h"><span /><span>Open</span>{BUCKETS.map(([l]) => <span key={l} className={l === ">5d" ? "hot" : ""}>{l}</span>)}<span>Past 5 days</span></div>
           {heat.map((r) => (
