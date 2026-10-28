@@ -329,8 +329,8 @@ export default function MappingEditor() {
 }
 
 /**
- * R8 + PRD v4 §5.3 — how this file says credit vs debit, checked against the admin-maintained standardisation table.
- * Values the table does not know are flagged; the maker can only ask an admin to add them (the table is admin-only).
+ * R8 + PRD v4 §5.3 — how this file says credit vs debit, checked against the status standardisation table (setup maker maintains, checker approves).
+ * Values the table does not know are flagged; the maker asks for them to be added (setup maker adds, checker approves).
  */
 function StatusValues({ mapping, table, meta, collections, act, me, isView }) {
   const statusField = mapping.fields.find((f) => f.systemField === "INSTRM_STATUS");
@@ -348,12 +348,12 @@ function StatusValues({ mapping, table, meta, collections, act, me, isView }) {
     const row = { id: uid("sm"), source: v, system: "", seenAt: mapping.bankName, table: "RECON_BANK_TXN", column: "INSTRM_STATUS", status: "requested", owner: me, createdAt: new Date().toISOString(), note: `Seen in ${mapping.bankName} sample` };
     const r = act({ screen: "mapping", cap: "edit", kind: "status_map", id: row.id, target: row, patch: () => row, audit: { entityLabel: `Status value “${v}”`, action: "Request status mapping", from: null, to: "Requested" } });
     if (!r.ok) { toast.error(r.error); return; }
-    toast.success(`Asked an admin to add “${v}” to the status standardisation table`);
+    toast.success(`Asked for “${v}” to be added to the status standardisation table`);
   };
   return (
     <div className="map-group" data-testid="status-values">
       <h4><Scale size={14} style={{ verticalAlign: -2 }} /> Credit / debit values in this file</h4>
-      <p className="muted" style={{ fontSize: 12.5, margin: "0 0 8px" }}>{meta?.status?.note}. Each value is converted with the admin-maintained status standardisation table.</p>
+      <p className="muted" style={{ fontSize: 12.5, margin: "0 0 8px" }}>{meta?.status?.note}. Each value is converted with the status standardisation table.</p>
       {style === "separate" ? <Note kind="info">Credit and debit come from which amount column is filled — no status values to convert.</Note> : (
         <table className="map status-tbl"><thead><tr><th>Value in file</th><th>Rows in sample</th><th>System value</th><th /></tr></thead>
           <tbody>{values.map((v) => {
@@ -364,7 +364,7 @@ function StatusValues({ mapping, table, meta, collections, act, me, isView }) {
               <tr key={v} data-testid={"status-val-" + v}>
                 <td className="tnum"><b>{v}</b></td><td className="tnum">{n}</td>
                 <td>{hit ? <span className={"chip " + (hit.system === "CREDIT" ? "chip-previous" : "chip-manual")}>{hit.system}</span> : <span className="field-warn"><AlertTriangle size={12} /> Not in the table — rows with this value will be held</span>}</td>
-                <td>{!hit && (req ? <span className="muted">Requested from admin</span> : !isView && <button className="link" onClick={() => ask(v)} data-testid={"ask-admin-" + v}>Ask an admin to add it</button>)}</td>
+                <td>{!hit && (req ? <span className="muted">Requested</span> : !isView && <button className="link" onClick={() => ask(v)} data-testid={"ask-admin-" + v}>Ask to add it</button>)}</td>
               </tr>
             );
           })}</tbody></table>

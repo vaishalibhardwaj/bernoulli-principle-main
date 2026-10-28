@@ -62,9 +62,6 @@ export function useApprovals() {
     reject: () => act({ screen: "ingestion", cap: "approve", kind: "files", id: f.id, patch: { status: "drift" }, audit: { entityLabel: `${f.bankName} ·${f.accountNumber.slice(-4)}`, action: "Return mapping change", from: "Mapping change pending", to: "Format drift" } }),
   }));
   // Need a side-by-side review → open their own screen
-  (c.rule_drafts || []).filter((d) => d.status === "pending").forEach((d) => add("rules", {
-    id: d.id, kind: "Match rule", title: `Rule change: ${d.draft.name}`, detail: `+${d.sim.newMatches} new / −${d.sim.lostMatches} lost matches · FP risk ${d.sim.fpRisk}%`, owner: d.owner, priority: 6, review: "/rules",
-  }));
   ["bank_config", "credit_config", "bank_mapping"].forEach((k) => (c[k] || []).filter((x) => x.status === "pending").forEach((x) => add(k === "bank_config" ? "bank_setup" : k === "credit_config" ? "credit_mis" : "mapping", {
     id: x.id, kind: { bank_config: "Bank setup", credit_config: "Credit MIS setup", bank_mapping: "Column mapping" }[k], title: `${x.bankName || x.paCode || "Setup"} · ${maskAccount(x.accountNumber)}`, detail: `Submitted by ${x.owner || "—"}`, owner: x.owner, priority: 7, record: { ...x, _kind: k }, needsComment: true,
     config: { kind: k, approve: () => { try { approve(k, x.id, `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } } },

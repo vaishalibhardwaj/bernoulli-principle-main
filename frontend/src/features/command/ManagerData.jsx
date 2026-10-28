@@ -12,7 +12,7 @@ import { Modal } from "@/components/Modal";
 
 const d = () => new Date().toISOString().slice(0, 10);
 const hhmm = (m) => (m == null ? "" : `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
-const SCREENS = ["Recon dashboard", "Today", "Match payments", "Exceptions", "Bank files", "Closing balances", "Fund release", "Refunds", "Reports", "Scheduler monitor"];
+const SCREENS = ["Recon dashboard", "Today", "Match payments", "Exceptions", "Bank files", "Closing balances", "Fund release", "Refunds", "Scheduler monitor"];
 
 /**
  * What a recon manager would otherwise ask IT to query: who is carrying the work, and every raw and
@@ -22,7 +22,7 @@ export default function ManagerData() {
   const { collections: raw, amcUser, perms, act, personaUser } = useStore();
   const c = scopeToUser(raw, amcUser);
   const balances = (raw.balances || []).filter((b) => inScope(amcUser, b.amc));
-  const canExport = hasCap(perms, "command", "export") || hasCap(perms, "reports", "export");
+  const canExport = hasCap(perms, "command", "export");
   const [ask, setAsk] = React.useState(null);
 
   // ---- Team workload: open cases per person, how old, and what is stuck with the checker ----

@@ -471,7 +471,7 @@ export default function FileInbox() {
           </div>
 
           {unresolvedFingerprints([open]).map(({ reason }) => (
-            <div key="fp" className="note warn" style={{ marginTop: 12 }} data-testid="fp-logged"><AlertTriangle size={14} /><div><b>Logged to the product report.</b> {reason}. The AI mapping couldn't resolve this on its own, so it is listed under Reports → Product → Unresolved fingerprint cases for the team to act on.</div></div>
+            <div key="fp" className="note warn" style={{ marginTop: 12 }} data-testid="fp-logged"><AlertTriangle size={14} /><div><b>Logged to the product report.</b> {reason}. The AI mapping couldn't resolve this on its own, so the product team gets it in their unresolved fingerprint list to act on.</div></div>
           ))}
 
           <div className="fd-section">

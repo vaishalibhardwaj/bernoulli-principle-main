@@ -171,7 +171,7 @@ export default function Exceptions() {
             {causes.map((x) => (
               <div key={x.c} className="cause-row"><span>{x.c}</span><span className="fn-bar tone-violet"><i style={{ width: `${(x.n / maxCause) * 100}%` }} /></span><b>{x.n}</b></div>
             ))}
-            <div className="muted" style={{ marginTop: 10 }}>A spike in "Bank narration format changed" points to a drift case or a new rule. Check File Inbox and Match Rules.</div>
+            <div className="muted" style={{ marginTop: 10 }}>A spike in "Bank narration format changed" points to a bank file layout change. Check Bank files.</div>
           </div>
         </div>}
       </div>

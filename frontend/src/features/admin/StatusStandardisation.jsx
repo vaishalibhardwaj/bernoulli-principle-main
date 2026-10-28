@@ -9,7 +9,7 @@ import { toast } from "sonner";
 /**
  * PRD v1 "Transaction Status Standardization" + PRD v4 §5.3 — admin-maintained table that converts
  * bank-specific credit/debit indicators into the system values CREDIT / DEBIT.
- * Admin only (not the recon team); every add/change waits for a second admin.
+ * Maintained by the recon setup maker; every add/change waits for the recon checker.
  */
 export default function StatusStandardisation() {
   const { collections, perms, act, currentUser } = useStore();
@@ -31,7 +31,7 @@ export default function StatusStandardisation() {
   const save = (row, label) => {
     const r = act({ screen: "status_std", cap: "edit", kind: "status_map", id: row.id, target: row, patch: () => row, audit: { entityLabel: `Status “${row.source}” → ${row.system}`, action: label, from: null, to: "Pending approval" } });
     if (!r.ok) { toast.error(r.error); return false; }
-    toast.success("Sent to a second admin for approval");
+    toast.success("Sent to the checker for approval");
     return true;
   };
   const add = () => {
@@ -50,10 +50,10 @@ export default function StatusStandardisation() {
     <div data-testid="status-std">
       <div className="page-head"><div>
         <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Scale size={22} /> Transaction status standardisation</h1>
-        <p>How each bank's credit/debit indicator is converted to the system value. Used when a statement is loaded; maintained by admins only.</p>
+        <p>How each bank's credit/debit indicator is converted to the system value. Used when a statement is loaded. The setup maker adds or changes values; the checker approves them.</p>
       </div></div>
 
-      {!canEdit && <div style={{ marginBottom: 14 }}><Note kind="info">{canApprove ? "You are the second admin: approve or send back values another admin added. Approved values apply to files loaded from then on." : "Read-only for you. Only admins add or change these values; makers can ask for a missing value from Column mapping."}</Note></div>}
+      {!canEdit && <div style={{ marginBottom: 14 }}><Note kind="info">{canApprove ? "You are the checker: approve or send back values the setup maker added. Approved values apply to files loaded from then on." : "Read-only for you. The recon setup maker adds or changes these values; anyone can ask for a missing value from Column mapping."}</Note></div>}
 
       {canEdit && requests.length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 16 }} data-testid="std-requests">
@@ -91,7 +91,7 @@ export default function StatusStandardisation() {
             <input className="input tnum" placeholder="Value as in file, e.g. CR" value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })} data-testid="std-source" />
             <select className="select" value={draft.system} onChange={(e) => setDraft({ ...draft, system: e.target.value })}><option>CREDIT</option><option>DEBIT</option></select>
             <input className="input" placeholder="Bank (optional)" value={draft.seenAt} onChange={(e) => setDraft({ ...draft, seenAt: e.target.value })} />
-            <button className="btn btn-primary" onClick={add} data-testid="std-add-btn"><Plus size={15} /> Add — needs second admin</button>
+            <button className="btn btn-primary" onClick={add} data-testid="std-add-btn"><Plus size={15} /> Add — checker approves</button>
           </div>
         )}
       </div>

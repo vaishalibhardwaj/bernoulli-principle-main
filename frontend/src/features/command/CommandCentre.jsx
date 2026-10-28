@@ -20,7 +20,7 @@ export default function CommandCentre() {
   const nav = useNavigate();
   const { all: steps } = useCycle();
   const [range, setRange] = React.useState(14);
-  const canExport = hasCap(perms, "command", "export") || hasCap(perms, "reports", "export");
+  const canExport = hasCap(perms, "command", "export");
   const today = new Date().toISOString().slice(0, 10);
   const go = (screen, path) => (hasCap(perms, screen) ? () => nav(path) : undefined);
   const files = collections.files || [];
