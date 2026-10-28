@@ -7,7 +7,7 @@ import { userAmcs } from "../lib/org";
 import { seedNoAction } from "../lib/events";
 import { ACTIONS, authorize, INVITE_TTL_MS } from "../lib/rbac";
 import { genTempPassword } from "../lib/credentials";
-import { seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
+import { PERSONAS, seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
 import { earlierFailures, seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp, seedBalances, seedJobs, seedFileTrack, seedLiability } from "../mock/opsSeed";
 
 const KEY = "cams_recon_state_v24";
@@ -74,7 +74,17 @@ function load() {
           parsed.collections[k] = [...fresh.map((x) => ({ ...x, ...(saved.get(x.id) || {}) , amcs: x.amcs, amc: x.amc, source: x.source, fileType: x.fileType })), ...[...saved.values()].filter((x) => !fresh.some((y) => y.id === x.id))];
         });
         const seedPerms = Object.fromEntries(seedRoles().map((r) => [r.id, r.perms]));
-        parsed.collections.roles = parsed.collections.roles.map((r) => (r.id === "role_platform_admin" ? { ...r, perms: seedPerms[r.id] } : r.system && seedPerms[r.id] ? { ...r, perms: { ...seedPerms[r.id], ...r.perms } } : r));
+        // Screens that moved between roles: Scheduler monitor is IT support only; Status standardisation moved from admin to the setup maker / checker; Match rules and Reports are not in Phase 1.
+        const MOVED = ["scheduler", "status_std", "rules", "reports"];
+        parsed.collections.roles = parsed.collections.roles.map((r) => {
+          if (r.id === "role_platform_admin") return { ...r, perms: seedPerms[r.id] };
+          if (!(r.system && seedPerms[r.id])) return r;
+          const perms = { ...seedPerms[r.id], ...r.perms };
+          MOVED.forEach((k) => { if (seedPerms[r.id][k]) perms[k] = seedPerms[r.id][k]; else delete perms[k]; });
+          return { ...r, perms };
+        });
+        // Personas removed from the demo switcher fall back to Meera.
+        if (!PERSONAS.some((x) => x.id === parsed.persona)) parsed.persona = "usr_meera";
         if (!Array.isArray(parsed.collections.file_uploads)) parsed.collections.file_uploads = [];
         if (!Array.isArray(parsed.collections.no_action)) parsed.collections.no_action = seedNoAction();
         // Platform Admin was renamed to Central Setup Team; carry the rename into saved demo state.

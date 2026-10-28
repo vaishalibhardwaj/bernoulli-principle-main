@@ -1,10 +1,10 @@
 import React from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
-  LayoutDashboard, Landmark, CreditCard, GitCompareArrows, History, Gauge, Inbox, Combine, Siren, ScanText, ListOrdered,
+  LayoutDashboard, Landmark, CreditCard, GitCompareArrows, History, Gauge, Inbox, Combine, Siren, ScanText,
   PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound, Lock,
   Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, Eye,
-  Home, ClipboardCheck, FileInput, Banknote, FileBarChart, Search, Building2, Scale, Clock, Activity, Tags,
+  Home, ClipboardCheck, FileInput, Banknote, Search, Building2, Scale, Clock, Activity, Tags,
 } from "lucide-react";
 import CommandPalette from "@/components/CommandPalette";
 import { useApprovals } from "@/features/approvals/useApprovals";
@@ -17,9 +17,9 @@ import { toast } from "sonner";
 
 const ICONS = {
   balances: Banknote, scheduler: Activity, cutoffs: Clock, narration_tags: Tags, status_std: Scale,
-  today: Home, inbox: ClipboardCheck, release: Banknote, refunds: Undo2, reports: FileBarChart,
+  today: Home, inbox: ClipboardCheck, release: Banknote, refunds: Undo2,
   command: Gauge, ingestion: FileInput, match: Combine, exceptions: Siren, extraction: ScanText,
-  bank_setup: Landmark, credit_mis: CreditCard, mapping: GitCompareArrows, rules: ListOrdered,
+  bank_setup: Landmark, credit_mis: CreditCard, mapping: GitCompareArrows,
   approvals: LayoutDashboard, audit: History, users: Users, roles: KeyRound,
   brk_compute: Calculator, brk_payout: Wallet, brk_master: BookUser,
   pst_queue: FileStack, pst_nigo: FileWarning, pst_batch: Layers, rf_queue: Undo2, rf_interest: Percent,

@@ -19,7 +19,6 @@ import FileUpload from "@/features/upload/FileUpload";
 import NoActionReview from "@/features/today/NoActionReview";
 import CommandCentre from "@/features/command/CommandCentre";
 import FileInbox from "@/features/ingestion/FileInbox";
-import MatchRules from "@/features/rules/MatchRules";
 import MatchWorkbench from "@/features/match/MatchWorkbench";
 import Exceptions from "@/features/exceptions/Exceptions";
 import DocumentExtraction from "@/features/extraction/DocumentExtraction";
@@ -28,7 +27,6 @@ import Today from "@/features/today/Today";
 import Approvals from "@/features/approvals/Approvals";
 import FundRelease from "@/features/release/FundRelease";
 import Refunds from "@/features/refunds/Refunds";
-import Reports from "@/features/reports/Reports";
 import { useStore } from "@/state/store";
 import { homePath, hasCap } from "@/lib/access";
 
@@ -51,16 +49,17 @@ export default function App() {
           <Route path="/" element={<HomeRedirect />} />
           <Route path="/admin/users" element={<UserManagement />} />
           <Route path="/admin/roles" element={<RolesAccess />} />
-          <Route path="/admin/status-standardisation" element={<StatusStandardisation />} />
+          <Route path="/status-standardisation" element={<StatusStandardisation />} />
+          <Route path="/admin/status-standardisation" element={<Navigate to="/status-standardisation" replace />} />
           <Route path="/today" element={<Today />} />
           <Route path="/my-work" element={<Navigate to="/today" replace />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/release" element={<FundRelease />} />
           <Route path="/refunds" element={<Refunds />} />
-          <Route path="/reports" element={<Reports />} />
+          <Route path="/reports" element={<HomeRedirect />} />
           <Route path="/command" element={<CommandCentre />} />
           <Route path="/ingestion" element={<FileInbox />} />
-          <Route path="/rules" element={<MatchRules />} />
+          <Route path="/rules" element={<HomeRedirect />} />
           <Route path="/match" element={<MatchWorkbench />} />
           <Route path="/exceptions" element={<Exceptions />} />
           <Route path="/extraction" element={<DocumentExtraction />} />
