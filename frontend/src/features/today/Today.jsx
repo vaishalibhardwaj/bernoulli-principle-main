@@ -8,7 +8,7 @@ import { useApprovals } from "@/features/approvals/useApprovals";
 import { RELEASE_CUTOFF } from "@/mock/opsSeed";
 import { Drawer } from "@/components/Drawer";
 import { Modal } from "@/components/Modal";
-import { TiltCard, RingProgress, CountUp } from "@/features/viz/Viz";
+import { TiltCard, CountUp } from "@/features/viz/Viz";
 import { downloadCsv } from "@/features/reports/csv";
 import { useCycle } from "./Cycle";
 import { useWorkItems } from "./workItems";
@@ -144,7 +144,6 @@ export default function Today() {
   const i = Math.min(idx, Math.max(0, ranged.length - 1));
   const focus = ranged[i];
   const upNext = ranged.slice(i + 1, i + 4);
-  const doneSteps = steps.filter((s) => s.state === "done").length;
   const pickItem = (it) => { const k = ranged.findIndex((x) => x.id === it.id); if (k >= 0) setIdx(k); else { setFrom(isoDay(it.firstAt)); setTo(today); setIdx(0); toast(`Date range widened to ${fmtDay(it.firstAt)} – today so this item is in your focus list.`); } window.scrollTo({ top: 0, behavior: "smooth" }); };
   const markNoAction = (reason, comment) => {
     const it = naItem;
@@ -237,15 +236,19 @@ export default function Today() {
         </TiltCard>
 
         {/* 2 — Where the day stands */}
-        <div className="day-panel card">
-          <RingProgress value={doneSteps} max={Math.max(1, steps.length)} label={`of your ${steps.length} steps done`} size={132} />
-          <div className="dp-stats">
-            <div><span>Done by you</span><b className="fx-num"><CountUp value={doneToday} /></b></div>
-            <div><span>{isChecker ? "Waiting for you" : "In range"}</span><b className="fx-num"><CountUp value={ranged.length} /></b></div>
-            {!isChecker && <div><span>Checker approval</span><b className="fx-num"><CountUp value={waitingMine} /></b></div>}
-            <div><span>Overall pending</span><b className="fx-num"><CountUp value={overall.length} /></b></div>
-            {isOps && !isSetup && <div><span>Realised today</span><b className="fx-num">{inrShort(release.amount || 19874410000)}</b></div>}
-            {(collections.no_action || []).some((n) => n.by === personaUser.name && n.status === "pending") && <div><span>With {supervisor.split(" ")[0]} (No action)</span><b className="fx-num"><CountUp value={(collections.no_action || []).filter((n) => n.by === personaUser.name && n.status === "pending").length} /></b></div>}
+        <div className="day-panel card" data-testid="day-panel">
+          <div className="dp-head"><span>Where your day stands</span><small>{from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`}</small></div>
+          <button type="button" className="dp-hero" onClick={() => document.querySelector('[data-testid="overall-pending"]')?.scrollIntoView({ behavior: "smooth" })} data-testid="dp-overall">
+            <span>Overall pending</span>
+            <b className="fx-num"><CountUp value={overall.length} /></b>
+            <small>{overall.length ? `Oldest from ${ageWords(overall[0].firstAt)} · no date limit` : "Nothing open"}</small>
+            <ArrowRight size={15} className="dp-go" />
+          </button>
+          <div className="dp-rows">
+            <div><Inbox size={14} /><span>{isChecker ? "Waiting for you" : "In range"}</span><b className="fx-num"><CountUp value={ranged.length} /></b></div>
+            {!isChecker && <div><Hourglass size={14} /><span>Checker approval</span><b className="fx-num"><CountUp value={waitingMine} /></b></div>}
+            <div><CheckCircle2 size={14} /><span>Done by you today</span><b className="fx-num"><CountUp value={doneToday} /></b></div>
+            {isOps && !isSetup && <div><Sparkles size={14} /><span>Realised today</span><b className="fx-num">{inrShort(release.amount || 19874410000)}</b></div>}
           </div>
         </div>
       </div>
