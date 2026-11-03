@@ -206,9 +206,11 @@ export default function RolesAccess() {
               <input className="input" value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} placeholder="What is this role for?" /></div>
             <label className="toggle-inline"><input type="checkbox" className="cb" checked={Boolean(editing.simple)} onChange={(e) => setEditing({ ...editing, simple: e.target.checked })} data-testid="role-simple" />
               <span><b>Daily user: simple view</b><br /><span className="muted">Plain words, one "My Work" queue, no charts or percentages. Use for people who work the daily queue.</span></span></label>
+            <label className="toggle-inline"><input type="checkbox" className="cb" checked={Boolean(editing.peer)} onChange={(e) => setEditing({ ...editing, peer: e.target.checked })} data-testid="role-peer" />
+              <span><b>Peer team: members check each other</b><br /><span className="muted">Holders can both submit and approve on the same screen. Anyone in the team approves anyone else's work, never their own. Used by the Central Setup Team.</span></span></label>
             <div className="field"><label className="field-label">Screen permissions</label>
               <PermissionMatrix module={editing.module} perms={editing.perms} onChange={(p) => setEditing({ ...editing, perms: p })} /></div>
-            {Object.values(editing.perms).some((c) => c.includes("edit")) && Object.values(editing.perms).some((c) => c.includes("approve")) && (
+            {!editing.peer && Object.values(editing.perms).some((c) => c.includes("edit")) && Object.values(editing.perms).some((c) => c.includes("approve")) && (
               <div className="note warn"><div>This role mixes Maker and Checker rights. That's allowed on <i>different</i> screens, but a user will be blocked if any combination of their roles gives both on the <i>same</i> screen.</div></div>
             )}
             {editing.id && <div className="field"><label className="field-label">Reason for change</label>

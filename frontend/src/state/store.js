@@ -10,7 +10,7 @@ import { genTempPassword } from "../lib/credentials";
 import { PERSONAS, seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
 import { earlierFailures, seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp, seedBalances, seedJobs, seedFileTrack, seedLiability } from "../mock/opsSeed";
 
-const KEY = "cams_recon_state_v24";
+const KEY = "cams_recon_state_v25";
 // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
 const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp", "cutoffs", "narration_tags", "balances", "jobs", "liab_debits"];
 
@@ -29,8 +29,8 @@ function buildSeed() {
   const { credits, purchases, suggestions } = seedMatchData();
   const files = withHistory(seedFiles());
   const audit = [
-    { id: uid("au"), ts: new Date(Date.now() - 2 * 86400000).toISOString(), user: "Arun", entityType: "bank_config", entityId: configs[0].id, entityLabel: `${configs[0].bankName} · ${configs[0].accountNumber.slice(-4)}`, action: "Rejected", from: "Pending Approval", to: "Rejected", comment: configs[0].rejection.comment },
-    { id: uid("au"), ts: new Date(Date.now() - 3 * 86400000).toISOString(), user: "Arun", entityType: "bank_config", entityId: configs[1].id, entityLabel: `${configs[1].bankName} · ${configs[1].accountNumber.slice(-4)}`, action: "Rejected", from: "Pending Approval", to: "Rejected", comment: configs[1].rejection.comment },
+    { id: uid("au"), ts: new Date(Date.now() - 2 * 86400000).toISOString(), user: "Anil", entityType: "bank_config", entityId: configs[0].id, entityLabel: `${configs[0].bankName} · ${configs[0].accountNumber.slice(-4)}`, action: "Rejected", from: "Pending Approval", to: "Rejected", comment: configs[0].rejection.comment },
+    { id: uid("au"), ts: new Date(Date.now() - 3 * 86400000).toISOString(), user: "Anil", entityType: "bank_config", entityId: configs[1].id, entityLabel: `${configs[1].bankName} · ${configs[1].accountNumber.slice(-4)}`, action: "Rejected", from: "Pending Approval", to: "Rejected", comment: configs[1].rejection.comment },
     { id: uid("au"), ts: new Date(Date.now() - 3 * 3600000).toISOString(), user: "Meera", entityType: "user", entityId: "usr_kiran", entityLabel: "Kiran Das (EMP-2042)", action: "Add User", from: null, to: "Invited", comment: "Invited as Operator" },
   ];
   return {
@@ -136,7 +136,9 @@ export function StoreProvider({ children }) {
   const choice = (state.amcChoice || {})[state.persona];
   const activeAmc = myAmcList.includes(choice) ? choice : null;
   const workingAmc = activeAmc || myAmcList[0];
-  const amcUser = React.useMemo(() => (myAmcList.length > 1 ? { ...personaUser, amcs: [workingAmc] } : personaUser), [personaUser, workingAmc, myAmcList.length]);
+  // The Central Setup Team (only Administration / Central Setup roles) works across all its AMCs, so it is never narrowed to one.
+  const crossAmc = (personaUser.roles || []).length > 0 && (personaUser.roles || []).every((rid) => ["admin", "central_setup"].includes(roles.find((r) => r.id === rid)?.module));
+  const amcUser = React.useMemo(() => (myAmcList.length > 1 && !crossAmc ? { ...personaUser, amcs: [workingAmc] } : personaUser), [personaUser, workingAmc, myAmcList.length, crossAmc]);
   const setAmc = useCallback((amc) => dispatch({ type: "SET_AMC", amc }), []);
   const vertical = state.vertical || "MF";
   const setVertical = useCallback((v) => dispatch({ type: "SET_VERTICAL", vertical: v }), []);

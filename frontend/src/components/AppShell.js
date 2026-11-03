@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Landmark, CreditCard, GitCompareArrows, History, Gauge, Inbox, Combine, Siren, ScanText,
   PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound, Lock,
   Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, Eye,
-  Home, ClipboardCheck, FileInput, Banknote, Search, Building2, Scale, Clock, Activity, Tags,
+  Home, ClipboardCheck, FileInput, Banknote, Search, Building2, Scale, Clock, Activity, Tags, FolderCog,
 } from "lucide-react";
 import CommandPalette from "@/components/CommandPalette";
 import { useApprovals } from "@/features/approvals/useApprovals";
@@ -17,7 +17,7 @@ import { toast } from "sonner";
 
 const ICONS = {
   balances: Banknote, scheduler: Activity, cutoffs: Clock, narration_tags: Tags, status_std: Scale,
-  today: Home, inbox: ClipboardCheck, release: Banknote, refunds: Undo2,
+  today: Home, inbox: ClipboardCheck, setup_approvals: ClipboardCheck, release: Banknote, refunds: Undo2,
   command: Gauge, ingestion: FileInput, match: Combine, exceptions: Siren, extraction: ScanText,
   bank_setup: Landmark, credit_mis: CreditCard, mapping: GitCompareArrows,
   approvals: LayoutDashboard, audit: History, users: Users, roles: KeyRound,
@@ -57,8 +57,9 @@ export default function AppShell() {
   }, [menuOpen, personaOpen, bellOpen]);
 
   const modules = navFor(perms, simple);
-  // Admin-only personas (Central Setup Team) manage users across AMCs, so they never pick a working AMC.
-  const worksOnAmc = modules.some((m) => m.key !== "admin");
+  const [openFolders, setOpenFolders] = React.useState({});
+  // The Central Setup Team works across AMCs (users, roles and setups), so it never picks a working AMC.
+  const worksOnAmc = modules.some((m) => !["admin", "central_setup"].includes(m.key));
   const screen = screenForPath(loc.pathname);
   const allowed = !screen || hasCap(perms, screen.key, "view");
 
@@ -75,6 +76,7 @@ export default function AppShell() {
   const badgeFor = (key) => ({
     today: hasCap(perms, "inbox", "approve") ? 0 : hasCap(perms, "match", "edit") ? myWorkCount : 0,
     inbox: approvals.length,
+    setup_approvals: approvals.filter((a) => !a.own).length,
     release: release && ((release.status === "not_started" && hasCap(perms, "release", "edit")) || (release.status === "pending" && hasCap(perms, "release", "approve"))) ? 1 : 0,
     refunds: hasCap(perms, "refunds", "edit") ? (collections.refunds || []).filter((r) => r.status === "draft").length : 0,
     approvals: 0,
@@ -85,7 +87,7 @@ export default function AppShell() {
     extraction: docsToReview,
   }[key] || 0);
 
-  const crumbs = screen ? (simple ? [screenLabel(screen, true)] : [screen.moduleLabel, screen.label]) : ["CAMS Operations"];
+  const crumbs = screen ? (simple ? [screenLabel(screen, true)] : [screen.moduleLabel, screen.crumb || screen.label]) : ["CAMS Operations"];
   EXTRA_CRUMBS.forEach(([re, label]) => { if (re.test(loc.pathname) && crumbs.length === 2) crumbs.push(label); });
   const toggleSimple = () => { setSimple(!simple); setMenuOpen(false); nav("/"); };
 
@@ -114,10 +116,18 @@ export default function AppShell() {
           {modules.map((m) => (
             <div key={m.key} className="nav-module" data-testid={"nav-module-" + m.key}>
               {modules.length > 1 && <div className="nav-module-title"><i style={{ background: m.color }} />{m.label}</div>}
-              {m.groups.map((g) => (
+              {m.groups.map((g) => {
+                // Folder modules (Central Setup) show each group as a dropdown: click "Recon" to open its setup screens.
+                const folder = m.folders && !state.sidebarCollapsed;
+                const open = !folder || (openFolders[m.key + g.name] ?? true);
+                return (
                 <React.Fragment key={g.name}>
-                  {g.name !== m.label && <div className="nav-section-title">{g.name}</div>}
-                  {g.screens.map((s) => {
+                  {folder ? (
+                    <button type="button" className={"nav-item nav-folder" + (open ? " open" : "")} onClick={() => setOpenFolders((o) => ({ ...o, [m.key + g.name]: !open }))} aria-expanded={open} data-testid={"nav-folder-" + g.name.toLowerCase()}>
+                      <FolderCog /><span className="nav-label">{g.name}</span><ChevronRight className="nav-chev" />
+                    </button>
+                  ) : g.name !== m.label && <div className="nav-section-title">{g.name}</div>}
+                  {open && <div className={folder ? "nav-folder-items" : undefined}>{g.screens.map((s) => {
                     const Icon = ICONS[s.key] || Layers;
                     const badge = badgeFor(s.key);
                     return (
@@ -126,9 +136,10 @@ export default function AppShell() {
                         {badge > 0 && <span className="nav-badge pop" key={badge}>{badge}</span>}
                       </NavLink>
                     );
-                  })}
+                  })}</div>}
                 </React.Fragment>
-              ))}
+                );
+              })}
             </div>
           ))}
         </nav>

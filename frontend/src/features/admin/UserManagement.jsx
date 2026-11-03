@@ -14,7 +14,7 @@ import { Modal } from "@/components/Modal";
 import { AMCS, userAmcs, inScope, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS, DORMANT_DAYS } from "@/lib/org";
 
 import {
-  UserPlus, Search, Download, Shield, Pencil, Send, Power, PowerOff,
+  UserPlus, Search, Download, Shield, Pencil, Power, PowerOff,
   Users, X, Building2, CalendarDays
 } from "lucide-react";
 import { toast } from "sonner";
@@ -41,7 +41,6 @@ export default function UserManagement() {
     updateUser,
     deactivateUser,
     requestReactivation,
-    resendInvite,
     activateOnboardedUser,
     roles,
     perms,
@@ -185,14 +184,6 @@ export default function UserManagement() {
     return <span className="um-text" data-testid={`roles-${u.id}`}>{mods.map((m) => <span key={m.key} className="um-role-line"><b>{m.short || m.label}:</b> {byMod[m.key].join(", ")}</span>)}</span>;
   };
 
-  const handleResendInvite = (user) => {
-    const res = resendInvite(user.id);
-    if (res.ok) {
-      toast.success(`Fresh invite and temporary password sent to ${user.name}`);
-    } else {
-      toast.error(res.error || "Failed to resend invite");
-    }
-  };
 
   const [reactivating, setReactivating] = useState(null);
   const pendingReactivation = useMemo(() => new Set((collections.access_requests || []).filter((r) => r.kind === "reactivate" && r.status === "pending").map((r) => r.userId)), [collections.access_requests]);
@@ -380,7 +371,6 @@ export default function UserManagement() {
               <tbody>
                 {pageRows.map((u) => {
                   const isSelf = u.id === actor.id;
-                  const canResend = u.status === "invited" || u.status === "invite_expired";
                   return (
                     <tr key={u.id} data-testid={`user-row-${u.id}`}>
                       {/* Name */}
@@ -455,18 +445,6 @@ export default function UserManagement() {
                             <Pencil size={15} />
                           </button>}
 
-                          {/* Resend invite */}
-                          {canResend && canEdit && (
-                            <button
-                              type="button"
-                              className="row-icon-btn"
-                              title="Resend invite (generates new temporary password)"
-                              onClick={() => handleResendInvite(u)}
-                              data-testid={`action-resend-${u.id}`}
-                            >
-                              <Send size={15} color="#b45309" />
-                            </button>
-                          )}
 
                           {/* Deactivate / Reactivate */}
                           {!canManageIds ? null : u.status === "deactivated" ? (

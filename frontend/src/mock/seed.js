@@ -6,6 +6,8 @@ import { MAPPING_FIELDS, NARRATION_FIELDS, isStandard, defaultSchedule } from ".
 const MODES = ["auto", "manual", "email", "api"];
 const now = Date.now();
 const day = 86400000;
+// Bank statement, Credit MIS and column mapping setups belong to the Central Setup Team: six peers who check each other's work.
+export const CST_TEAM = ["Meera", "Anil", "Sneha", "Rahul", "Fatima", "Joseph"];
 
 function pickStatus(i) {
   const r = i % 100;
@@ -79,7 +81,7 @@ export function seedBankConfigs() {
       schemeName: acc.schemeName,
       assetClass: acc.assetClass,
       status,
-      owner: "Priya",
+      owner: CST_TEAM[i % CST_TEAM.length],
       createdAt: new Date(now - (total - i) * day * 0.6).toISOString(),
       lastUpdated: new Date(now - i * day * 0.3).toISOString(),
       rejection: null,
@@ -90,17 +92,17 @@ export function seedBankConfigs() {
       formatName: "",
     });
   }
-  // Two rejected records owned by Priya with realistic comments (pin to HDFC/SIB)
+  // Two rejected records owned by Meera with realistic comments (pin to HDFC/SIB)
   list[0] = {
-    ...list[0], status: "rejected", downloadMode: "manual", bankName: "HDFC Bank", bankCode: "HDFC",
+    ...list[0], status: "rejected", owner: "Meera", downloadMode: "manual", bankName: "HDFC Bank", bankCode: "HDFC",
     accountNumber: ACCOUNTS["HDFC Bank"][0].accountNumber, schemeName: "Liquid Fund",
     fileConfig: { ...mkFileConfig("HDFC Bank"), fileType: "CSV", separator: ",", startRow: 1, startColumn: 1, sampleFileName: "hdfc_statement_sep.csv" },
-    rejection: { by: "Arun", date: new Date(now - 2 * day).toISOString(), comment: "File Start Row should be 12 — rows 1–11 are bank header text. Please re-detect from the sample and resubmit." },
+    rejection: { by: "Anil", date: new Date(now - 2 * day).toISOString(), comment: "File Start Row should be 12 — rows 1–11 are bank header text. Please re-detect from the sample and resubmit." },
   };
   list[1] = {
-    ...list[1], status: "rejected", downloadMode: "manual", bankName: "South Indian Bank", bankCode: "SIBL",
+    ...list[1], status: "rejected", owner: "Meera", downloadMode: "manual", bankName: "South Indian Bank", bankCode: "SIBL",
     accountNumber: ACCOUNTS["South Indian Bank"][0].accountNumber, schemeName: "Short Term Bond",
-    rejection: { by: "Arun", date: new Date(now - 3 * day).toISOString(), comment: "Wrong account selected for Liquid scheme. The Scheme Code does not match the chosen collection account." },
+    rejection: { by: "Anil", date: new Date(now - 3 * day).toISOString(), comment: "Wrong account selected for Liquid scheme. The Scheme Code does not match the chosen collection account." },
   };
   // The two pinned rejected records reuse accounts that also appear further down — keep one setup per account.
   const seen = new Set();
@@ -164,7 +166,7 @@ export function seedCreditConfigs() {
       assetClass: acc.assetClass,
       fileFormat: i % 2 === 0 ? "CSV" : "XLSX",
       status,
-      owner: "Priya",
+      owner: CST_TEAM[(i + 1) % CST_TEAM.length],
       createdAt: new Date(now - (60 - i) * day).toISOString(),
       lastUpdated: new Date(now - i * day * 0.5).toISOString(),
       rejection: null,
@@ -173,8 +175,8 @@ export function seedCreditConfigs() {
       processing: { dateTimeUpdate: true, reconciliationType: i % 4 === 3 ? "Liability" : "Subscription", liabilityCategory: i % 4 === 3 ? "Refund" : "", isActive: status !== "inactive" },
     });
   }
-  list[0] = { ...list[0], status: "rejected", rejection: { by: "Arun", date: new Date(now - 2 * day).toISOString(), comment: "Payment Aggregator code mismatch — Razorpay MIS mapped to a CAMSPay pool account. Please correct the aggregator selection." } };
-  list[3] = { ...list[3], status: "rejected", rejection: { by: "Arun", date: new Date(now - 4 * day).toISOString(), comment: "Header position should be row 8, column 2 for this feed. Re-detect from the sample file and resubmit." } };
+  list[0] = { ...list[0], status: "rejected", owner: "Meera", rejection: { by: "Anil", date: new Date(now - 2 * day).toISOString(), comment: "Payment Aggregator code mismatch — Razorpay MIS mapped to a CAMSPay pool account. Please correct the aggregator selection." } };
+  list[3] = { ...list[3], status: "rejected", rejection: { by: "Anil", date: new Date(now - 4 * day).toISOString(), comment: "Header position should be row 8, column 2 for this feed. Re-detect from the sample file and resubmit." } };
   return list;
 }
 
@@ -203,10 +205,10 @@ export function seedMappings(bankConfigs) {
     const st = isHdfc ? "active" : statusMix[i % statusMix.length];
     return {
       id: uid("bm"), kind: "bank_mapping", type: "bank", sno: i + 1, bankName: c.bankName, formatName: c.formatName || "", accountNumber: c.accountNumber,
-      fileType: c.fileConfig.fileType, status: st, owner: "Priya", configId: c.id, sampleFileName: isHdfc ? "hdfc_statement_sep.csv" : c.bankName === "South Indian Bank" ? "south_indian_bank.xlsx" : null,
+      fileType: c.fileConfig.fileType, status: st, owner: CST_TEAM[(i + 2) % CST_TEAM.length], configId: c.id, sampleFileName: isHdfc ? "hdfc_statement_sep.csv" : c.bankName === "South Indian Bank" ? "south_indian_bank.xlsx" : null,
       headerRow: isHdfc ? 12 : c.fileConfig.startRow, headerConfirmed: st !== "not_started", dateFormat: "DD/MM/YYYY",
       createdAt: new Date(now - (40 - i) * day).toISOString(), lastUpdated: new Date(now - i * day).toISOString(),
-      rejection: st === "rejected" ? { by: "Arun", date: new Date(now - day).toISOString(), comment: "INSTRM_AMOUNT mapped to a text column. Please re-map to a numeric amount column." } : null,
+      rejection: st === "rejected" ? { by: "Anil", date: new Date(now - day).toISOString(), comment: "INSTRM_AMOUNT mapped to a text column. Please re-map to a numeric amount column." } : null,
       fields: mkBankMappingFields(isHdfc), narrationSplit: false, overrides: 0, approved: st === "active",
     };
   });

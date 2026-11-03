@@ -115,7 +115,7 @@ export default function Approvals() {
               {list.map((a) => (
                 <button key={a.kind + a.id} className={"sl-row" + (cur && a.kind + a.id === cur.kind + cur.id ? " on" : "") + (a.urgent ? " urgent" : "")} onClick={() => setSelId(a.kind + a.id)} data-testid={"ap-" + a.id}>
                   <span className="sl-title">{a.urgent && <AlertTriangle size={12} />}{a.title}</span>
-                  <span className="sl-sub">{a.own ? "Your own — another checker approves" : `from ${a.owner || "—"}`}</span>
+                  <span className="sl-sub">{a.own ? "Your own — someone else approves" : `from ${a.owner || "—"}`}</span>
                 </button>
               ))}
             </div>
@@ -132,7 +132,7 @@ export default function Approvals() {
                 <div className="sd-facts">
                   <div><span>Submitted by</span><b>{cur.owner || "—"}</b></div>
                   <div><span>Why it matters</span><b>{WHY[cur.kind] || "Needs a second person before it takes effect."}</b></div>
-                  <div><span>Rule</span><b>{cur.own ? "You created this — another checker must approve it." : "Maker–checker: your approval is recorded in the audit trail."}</b></div>
+                  <div><span>Rule</span><b>{cur.own ? "You created this — someone else must approve it." : "Maker–checker: your approval is recorded in the audit trail."}</b></div>
                 </div>
                 {cur.record && <div className="sd-review"><ReviewBody x={cur.record} audit={audit} modeLabel={cur.record._kind === "credit_config" ? CREDIT_MODES[cur.record.feedMode]?.label : cur.record._kind === "bank_config" ? BANK_MODES[cur.record.downloadMode]?.label : cur.record.fileType} /></div>}
                 {!cur.own && cur.reject && <textarea id="ap-comment" className="textarea ap-comment" value={comment} onChange={(e) => setComment(e.target.value)}

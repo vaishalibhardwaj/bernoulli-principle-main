@@ -28,16 +28,18 @@ const SCHEMES = [
  * Asset class: Equity / Debt / Cash (liquid and overnight funds count as Cash; hybrid follows its equity tilt).
  */
 export const SCHEME_MASTER = {
-  "LIQ-DIR-G": { sebiCategory: "Liquid Fund", assetClass: "Cash", liquid: true, index: false },
-  "OVN-DIR-G": { sebiCategory: "Overnight Fund", assetClass: "Cash", liquid: true, index: false },
-  "BLU-REG-G": { sebiCategory: "Large Cap Fund", assetClass: "Equity", liquid: false, index: false },
-  "MID-DIR-G": { sebiCategory: "Mid Cap Fund", assetClass: "Equity", liquid: false, index: false },
-  "NIF-DIR-G": { sebiCategory: "Index Funds / ETFs", assetClass: "Equity", liquid: false, index: true },
-  "BAL-DIR-G": { sebiCategory: "Balanced Advantage", assetClass: "Equity", liquid: false, index: false },
-  "GLT-REG-G": { sebiCategory: "Gilt Fund", assetClass: "Debt", liquid: false, index: false },
-  "STB-REG-G": { sebiCategory: "Short Duration Fund", assetClass: "Debt", liquid: false, index: false },
+  "LIQ-DIR-G": { sebiCategory: "Liquid Fund", sebiClass: "Debt", assetClass: "Cash", liquid: true, index: false },
+  "OVN-DIR-G": { sebiCategory: "Overnight Fund", sebiClass: "Debt", assetClass: "Cash", liquid: true, index: false },
+  "BLU-REG-G": { sebiCategory: "Large Cap Fund", sebiClass: "Equity", assetClass: "Equity", liquid: false, index: false },
+  "MID-DIR-G": { sebiCategory: "Mid Cap Fund", sebiClass: "Equity", assetClass: "Equity", liquid: false, index: false },
+  "NIF-DIR-G": { sebiCategory: "Index Funds / ETFs", sebiClass: "Other", assetClass: "Equity", liquid: false, index: true },
+  "BAL-DIR-G": { sebiCategory: "Balanced Advantage", sebiClass: "Hybrid", assetClass: "Equity", liquid: false, index: false },
+  "GLT-REG-G": { sebiCategory: "Gilt Fund", sebiClass: "Debt", assetClass: "Debt", liquid: false, index: false },
+  "STB-REG-G": { sebiCategory: "Short Duration Fund", sebiClass: "Debt", assetClass: "Debt", liquid: false, index: false },
 };
-export const schemeAttrs = (code) => SCHEME_MASTER[code] || { sebiCategory: "—", assetClass: "Debt", liquid: false, index: false };
+export const schemeAttrs = (code) => SCHEME_MASTER[code] || { sebiCategory: "—", sebiClass: "Debt", assetClass: "Debt", liquid: false, index: false };
+/** SEBI scheme categorisation (Oct 2017 circular): the five asset classes every scheme falls under. */
+export const SEBI_ASSET_CLASSES = ["Equity", "Debt", "Hybrid", "Solution oriented", "Other"];
 
 // Build 3-6 accounts per bank
 export const ACCOUNTS = {};

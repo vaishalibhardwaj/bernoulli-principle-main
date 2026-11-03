@@ -33,7 +33,7 @@ import { homePath, hasCap } from "@/lib/access";
 /** "Setup approvals" was merged into Approvals: checkers go there; makers see their pending setups. */
 function SetupApprovalsRedirect() {
   const { perms } = useStore();
-  return <Navigate to={hasCap(perms, "inbox", "approve") ? "/approvals?kind=Bank%20setup" : "/bank-setup?status=pending"} replace />;
+  return <Navigate to={hasCap(perms, "setup_approvals", "approve") ? "/setup-approvals" : hasCap(perms, "inbox", "approve") ? "/approvals?kind=Bank%20setup" : "/bank-setup?status=pending"} replace />;
 }
 
 function HomeRedirect() {
@@ -54,6 +54,7 @@ export default function App() {
           <Route path="/today" element={<Today />} />
           <Route path="/my-work" element={<Navigate to="/today" replace />} />
           <Route path="/approvals" element={<Approvals />} />
+          <Route path="/setup-approvals" element={<Approvals />} />
           <Route path="/release" element={<FundRelease />} />
           <Route path="/refunds" element={<Refunds />} />
           <Route path="/reports" element={<HomeRedirect />} />

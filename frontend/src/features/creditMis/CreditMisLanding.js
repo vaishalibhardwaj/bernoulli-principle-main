@@ -32,7 +32,7 @@ function describe(c) {
  *  3. Rows show only what differs from the default; everything else is one click away in a side panel.
  */
 export default function CreditMisLanding() {
-  const { collections, perms, amcUser } = useStore();
+  const { collections, perms, amcUser, personaUser } = useStore();
   const nav = useNavigate();
   const canEdit = hasCap(perms, "credit_mis", "edit");
   const canApprove = hasCap(perms, "credit_mis", "approve");
@@ -97,7 +97,7 @@ export default function CreditMisLanding() {
       <div className="bs-queue" data-testid="work-queue">
         {[
           ["rejected", canEdit ? "Needs your fix" : "Sent back to makers", toFix.length, AlertTriangle, "bad"],
-          ["pending", canApprove ? "Waiting for your approval" : "Waiting for checker", pending.length, Hourglass, "warn"],
+          ["pending", canApprove ? "Waiting for your approval" : "Waiting for checker", canApprove ? pending.filter((c) => c.owner !== personaUser.name.split(" ")[0]).length : pending.length, Hourglass, "warn"],
           ["draft", "Drafts", drafts.length, FilePen, "info"],
         ].map(([k, l, n, Icon, tone]) => (
           <button key={k} className={"bs-q tone-" + tone + (tab === k ? " on" : "") + (n ? "" : " zero")} onClick={() => setTab(tab === k ? "all" : k)} data-testid={"queue-" + k}>

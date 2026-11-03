@@ -6,7 +6,7 @@ import { inScope } from "@/lib/org";
 import { maskAccount } from "@/lib/format";
 import { inr, inrShort } from "@/features/ops/ui";
 import { downloadCsv } from "@/features/reports/csv";
-import { schemeAttrs } from "@/mock/bankMaster";
+import { schemeAttrs, SEBI_ASSET_CLASSES } from "@/mock/bankMaster";
 import { TiltCard } from "@/features/viz/Viz";
 import { C, Donut, DayTimeline, HBar, Kpi, minsNow, hhmm } from "./dashViz";
 
@@ -18,7 +18,7 @@ const STMT = { txn: "#4ff0b4", no_txn: "#39d0ff", not_received: "rgba(140,160,20
 const SWP = { full: "#b48cff", partial: "#2f8cf0", pending: "rgba(180,140,255,.22)" };
 const STMT_TEXT = { txn: "Received", no_txn: "No transactions today", not_received: "Not received" };
 const ACCT_TYPE = { scheme: "Scheme account", common: "Common collection account" };
-const NO_FILTER = { bank: "all", account: "all", asset: "all", liquid: "all", index: "all", type: "all" };
+const NO_FILTER = { bank: "all", account: "all", sebi: "all", type: "all" };
 
 /**
  * Closing balance per bank account (counted per account, never per bank).
@@ -45,9 +45,12 @@ export default function ClosingBalances() {
     return { ...r, ...attrs, received, stmtNow, check, swept, delta: r.closing - r.prevClosing };
   });
   const banksAll = [...new Set(all.map((r) => r.bankName))].sort();
-  const rows = all.filter((r) => (f.bank === "all" || r.bankName === f.bank) && (f.account === "all" || r.accountNumber === f.account)
-    && (f.asset === "all" || r.assetClass === f.asset) && (f.liquid === "all" || String(r.liquid) === f.liquid)
-    && (f.index === "all" || String(r.index) === f.index) && (f.type === "all" || r.accountType === f.type));
+  // Filters cascade: pick a bank → its account numbers appear; account type and SEBI asset class then offer only the values those accounts have.
+  const inBank = all.filter((r) => f.bank === "all" || r.bankName === f.bank);
+  const inAccount = inBank.filter((r) => f.account === "all" || r.accountNumber === f.account);
+  const typeOpts = [["scheme", "Scheme"], ["common", "Common collection"]].filter(([k]) => inAccount.some((r) => r.accountType === k));
+  const sebiOpts = SEBI_ASSET_CLASSES.filter((k) => inAccount.some((r) => r.sebiClass === k)).map((k) => [k, k]);
+  const rows = inAccount.filter((r) => (f.sebi === "all" || r.sebiClass === f.sebi) && (f.type === "all" || r.accountType === f.type));
   const filtered = Object.values(f).some((v) => v !== "all");
 
   const n = (pred) => rows.filter(pred).length;
@@ -66,8 +69,8 @@ export default function ClosingBalances() {
   const pick = (k) => setOnly(only === k ? "all" : k);
 
   const exportCsv = () => downloadCsv(`closing_balances_${new Date().toISOString().slice(0, 10)}.csv`,
-    ["Bank", "Account", "Account type", "Scheme", "SEBI category", "Asset class", "Liquid", "Index", "Statement", "Downloaded", "Last txn before 3 PM", "Bank closing", "System closing", "Check", "Balance source", ...(isManager ? ["Sweep", "Swept at"] : [])],
-    shown.map((r) => [r.bankName, maskAccount(r.accountNumber), ACCT_TYPE[r.accountType], r.schemeName, r.sebiCategory, r.assetClass, r.liquid ? "Liquid" : "Non-liquid", r.index ? "Index" : "Non-index", STMT_TEXT[r.stmtNow], r.received ? hhmm(r.downloadedAt) : "", r.lastTxnAt != null && r.received ? hhmm(r.lastTxnAt) : "", r.received ? r.closing.toFixed(2) : "", r.systemClosing.toFixed(2), { match: "Match", mismatch: "Mismatch", none: "Not checked" }[r.check], r.source === "computed" ? "Computed from our data" : "Bank statement", ...(isManager ? [r.swept || "", r.swept === "full" ? hhmm(r.sweepAt) : ""] : [])]));
+    ["Bank", "Account", "Account type", "Scheme", "SEBI category", "SEBI asset class", "Statement", "Downloaded", "Last txn before 3 PM", "Bank closing", "System closing", "Check", "Balance source", ...(isManager ? ["Sweep", "Swept at"] : [])],
+    shown.map((r) => [r.bankName, maskAccount(r.accountNumber), ACCT_TYPE[r.accountType], r.schemeName, r.sebiCategory, r.sebiClass, STMT_TEXT[r.stmtNow], r.received ? hhmm(r.downloadedAt) : "", r.lastTxnAt != null && r.received ? hhmm(r.lastTxnAt) : "", r.received ? r.closing.toFixed(2) : "", r.systemClosing.toFixed(2), { match: "Match", mismatch: "Mismatch", none: "Not checked" }[r.check], r.source === "computed" ? "Computed from our data" : "Bank statement", ...(isManager ? [r.swept || "", r.swept === "full" ? hhmm(r.sweepAt) : ""] : [])]));
 
   return (
     <div className="dz" data-testid="closing-balances">
@@ -84,14 +87,14 @@ export default function ClosingBalances() {
 
       <div className="cb-filters" data-testid="cb-filters">
         <Filter size={14} />
-        <Sel label="Bank" v={f.bank} on={(v) => set("bank", v)} opts={banksAll.map((b) => [b, b])} all="All banks" t="cb-bank" />
-        <Sel label="Account" v={f.account} on={(v) => set("account", v)} opts={all.filter((r) => f.bank === "all" || r.bankName === f.bank).map((r) => [r.accountNumber, `${f.bank === "all" ? r.bankName + " " : ""}${maskAccount(r.accountNumber)}`])} all="All accounts" t="cb-account" />
-        <Sel label="Asset class" v={f.asset} on={(v) => set("asset", v)} opts={[["Equity", "Equity"], ["Debt", "Debt"], ["Cash", "Cash"]]} all="All" t="cb-asset" />
-        <Sel label="Liquid" v={f.liquid} on={(v) => set("liquid", v)} opts={[["true", "Liquid"], ["false", "Non-liquid"]]} all="All" t="cb-liquid" />
-        <Sel label="Index" v={f.index} on={(v) => set("index", v)} opts={[["true", "Index"], ["false", "Non-index"]]} all="All" t="cb-index" />
-        <Sel label="Account type" v={f.type} on={(v) => set("type", v)} opts={[["scheme", "Scheme"], ["common", "Common collection"]]} all="All" t="cb-type" />
+        <Sel label="Bank" v={f.bank} on={(v) => setF({ ...NO_FILTER, bank: v })} opts={banksAll.map((b) => [b, b])} all="All banks" t="cb-bank" />
+        {f.bank !== "all" && <>
+          <Sel label="Account number" v={f.account} on={(v) => setF({ ...f, account: v, type: "all", sebi: "all" })} opts={inBank.map((r) => [r.accountNumber, maskAccount(r.accountNumber)])} all="All accounts" t="cb-account" />
+          <Sel label="Account type" v={f.type} on={(v) => set("type", v)} opts={typeOpts.length > 1 ? typeOpts : []} all={typeOpts.length === 1 ? typeOpts[0][1] : "All"} t="cb-type" />
+          <Sel label="SEBI asset class" v={f.sebi} on={(v) => set("sebi", v)} opts={sebiOpts.length > 1 ? sebiOpts : []} all={sebiOpts.length === 1 ? sebiOpts[0][1] : "All"} t="cb-sebi" />
+        </>}
         {filtered && <button className="btn btn-ghost btn-sm" onClick={() => setF(NO_FILTER)} data-testid="cb-clear">Clear</button>}
-        <span className="cb-src" title="Asset class, liquid and index come from each scheme's SEBI category in the scheme master"><Info size={12} /> from scheme master (SEBI category)</span>
+        <span className="cb-src" title="SEBI asset class comes from each scheme's SEBI category in the scheme master"><Info size={12} /> {f.bank === "all" ? "pick a bank to filter by account" : "SEBI asset class from the scheme master"}</span>
       </div>
 
       {now < THREE_PM && (
@@ -167,7 +170,7 @@ export default function ClosingBalances() {
         {shown.slice(0, 200).map((r) => (
           <div key={r.id} className={"dz-acc-row cb-acc-row c-" + r.check} data-testid={"bal-" + r.id}>
             <span className={"dz-state cb-st s-" + r.stmtNow}>{r.stmtNow === "txn" ? <><CheckCircle2 size={12} /> Received</> : r.stmtNow === "no_txn" ? <><MinusCircle size={12} /> No transactions</> : <><FileX2 size={12} /> Not received</>}</span>
-            <div className="dz-acc-name"><b>{r.bankName}</b><span className="tnum">{maskAccount(r.accountNumber)} · {r.schemeName} · {r.assetClass}{r.liquid ? " · liquid" : ""}{r.index ? " · index" : ""} · {r.accountType === "common" ? "common collection" : "scheme a/c"}</span></div>
+            <div className="dz-acc-name"><b>{r.bankName}</b><span className="tnum">{maskAccount(r.accountNumber)} · {r.schemeName} · {r.sebiClass} ({r.sebiCategory}) · {r.accountType === "common" ? "common collection" : "scheme a/c"}</span></div>
             <div className="dz-acc-up">{r.received ? <><b className="tnum">{r.lastTxnAt != null ? `last txn ${hhmm(r.lastTxnAt)}` : "nothing moved"}</b><span>downloaded {hhmm(r.downloadedAt)}</span></> : <><b>—</b><span>{now < THREE_PM ? "downloads start after 3 PM" : "chase the bank"}</span></>}</div>
             <div className="dz-acc-bal"><b className="tnum">{r.received ? inr(r.closing) : "—"}</b><span>system {inr(r.systemClosing)}</span></div>
             <div className="dz-acc-src">{r.check === "match" ? <span className="cb-chk match"><CheckCircle2 size={11} /> Matches</span> : r.check === "mismatch" ? <span className="cb-chk mismatch"><AlertTriangle size={11} /> Off by {inrShort(Math.abs(r.closing - r.systemClosing))}</span> : <span className="muted">not checked</span>}{r.source === "computed" && <span className="dz-chip info" title="Standard Chartered statements carry no closing balance"><Cpu size={11} /> computed</span>}</div>

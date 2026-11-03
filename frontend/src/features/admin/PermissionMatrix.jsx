@@ -9,6 +9,10 @@ import { Check, Minus } from "lucide-react";
 export default function PermissionMatrix({ module, perms, onChange, readOnly, compact, highlight = [] }) {
   const mod = MODULE_BY_KEY[module];
   if (!mod) return null;
+  // Central Setup screens can be added to a role of any module, e.g. to bring operations staff into setup work.
+  const extra = module === "central_setup" ? null : MODULE_BY_KEY.central_setup;
+  const rowsFor = (list) => list.filter((s) => !compact || perms[s.key]);
+  const extraRows = extra ? rowsFor(extra.screens) : [];
   const has = (s, c) => (perms[s] || []).includes(c);
   const toggle = (screen, cap) => {
     if (readOnly) return;
@@ -33,7 +37,9 @@ export default function PermissionMatrix({ module, perms, onChange, readOnly, co
         </tr>
       </thead>
       <tbody>
-        {mod.screens.filter((s) => !compact || perms[s.key]).map((s) => (
+        {[...rowsFor(mod.screens), ...(extraRows.length ? [{ divider: true, key: "__extra" }] : []), ...extraRows].map((s) => s.divider ? (
+          <tr key={s.key} className="pm-divider"><td colSpan={CAPS.length + 1}>{extra.label} · any role can hold these</td></tr>
+        ) : (
           <tr key={s.key} className={highlight.includes(s.label) ? "conflict" : ""}>
             <td>{s.label}{s.phase && s.phase !== "P1" && <span className={"phase-tag " + s.phase.toLowerCase()}>{s.phase}</span>}</td>
             {CAPS.map((c) => {
