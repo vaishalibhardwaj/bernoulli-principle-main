@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { ClipboardList, Hand, ArrowRight, CheckCircle2, Landmark, CreditCard, GitCompareArrows, Plus } from "lucide-react";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { AMCS } from "@/lib/org";
+import { AMCS, inScope, userAmcs } from "@/lib/org";
 import { BANKS, ACCOUNTS } from "@/mock/bankMaster";
 import { uid, timeAgo, maskAccount } from "@/lib/format";
 import { Modal } from "@/components/Modal";
@@ -20,12 +20,12 @@ const TABS = [["open", "Open"], ["in_progress", "In progress"], ["done", "Done"]
  * Central Setup › Recon › Pending tasks. Ops raise a ticket ("got an HDFC statement for account X, please set it up");
  * the Central Setup Team picks it up, does the setup and closes the ticket. Oldest first, so nothing waits unseen.
  */
-export default function SetupTasks() {
-  const { collections, perms, act, personaUser } = useStore();
+export default function SetupTasks({ embedded = false }) {
+  const { collections, perms, act, personaUser, amcUser } = useStore();
   const nav = useNavigate();
   const canWork = hasCap(perms, "setup_tasks", "edit");
   const [tab, setTab] = React.useState("open");
-  const all = collections.setup_requests || [];
+  const all = (collections.setup_requests || []).filter((t) => inScope(amcUser, t.amc)); // the AMC picked for Recon setup
   const rows = all.filter((t) => t.status === tab).sort((a, b) => new Date(a.raisedAt) - new Date(b.raisedAt));
   const count = (st) => all.filter((t) => t.status === st).length;
 
@@ -40,12 +40,12 @@ export default function SetupTasks() {
 
   return (
     <div data-testid="setup-tasks">
-      <div className="page-head">
+      {!embedded && <div className="page-head">
         <div>
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><ClipboardList size={22} /> Pending tasks</h1>
-          <p>Setup requests raised by Ops. Pick one up, do the setup, then close it. Oldest first.</p>
+          <p>Setup requests raised by Ops for {userAmcs(amcUser).length === 1 ? userAmcs(amcUser)[0] : "your AMCs"}. Pick one up, do the setup, then close it. Oldest first.</p>
         </div>
-      </div>
+      </div>}
 
       <div className="segmented" style={{ marginBottom: 14 }}>
         {TABS.map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)} data-testid={"task-tab-" + k}>{l} <em>{count(k)}</em></button>)}
@@ -80,9 +80,9 @@ export default function SetupTasks() {
 
 /** Ops side: raise a setup request to the Central Setup Team. */
 export function RequestSetupButton({ className = "btn btn-outline", prefill = {} }) {
-  const { act, personaUser, perms } = useStore();
+  const { act, personaUser, perms, amcUser } = useStore();
   const [open, setOpen] = React.useState(false);
-  const [f, setF] = React.useState({ type: "bank", amc: AMCS[0], bankName: prefill.bankName || "", accountNumber: prefill.accountNumber || "", note: "" });
+  const [f, setF] = React.useState({ type: "bank", amc: userAmcs(amcUser)[0] || AMCS[0], bankName: prefill.bankName || "", accountNumber: prefill.accountNumber || "", note: "" });
   if (!hasCap(perms, "ingestion", "edit")) return null;
   const accounts = f.bankName ? (ACCOUNTS[f.bankName] || []) : [];
   const ok = f.bankName && (f.type !== "bank" || f.accountNumber) && f.note.trim().length >= 5;

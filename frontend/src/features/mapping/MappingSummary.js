@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/bits";
 import Pagination from "@/components/Pagination";
 import { formatDate } from "@/lib/format";
 import { hasCap } from "@/lib/access";
+import { inScope, userAmcs, amcOfAccount } from "@/lib/org";
 import { STATUS_FILTERS, statusBucket } from "@/lib/constants";
 import { paLabel } from "@/lib/setupSchema";
 import { Avatar, SegmentRing, HatchBar } from "@/components/au";
@@ -17,19 +18,23 @@ const STATUS_WORD = { active: "Active", pending: "Pending approval", draft: "Dra
  * Column mapping is per bank name (~15–18 banks), not per account. Each row says how many accounts it drives,
  * so people see the impact of a change before they make it.
  */
-export default function MappingSummary() {
-  const { collections, perms } = useStore();
+export default function MappingSummary({ embedded = false, type }) {
+  const { collections, perms, amcUser } = useStore();
   const nav = useNavigate();
   const [sp, setSp] = useSearchParams();
-  const tab = sp.get("tab") === "credit" ? "credit" : "bank";
+  const tab = type || (sp.get("tab") === "credit" ? "credit" : "bank");
   const [status, setStatus] = React.useState("all");
   const [q, setQ] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(15);
   const canEdit = hasCap(perms, "mapping", "edit");
 
-  const all = collections.bank_mapping.filter((m) => (tab === "credit" ? m.type === "credit" : m.type === "bank"));
-  const accountsFor = (m) => new Set((tab === "credit" ? collections.credit_config : collections.bank_config).filter((c) => c.bankName === m.bankName && (c.formatName || "") === (m.formatName || "")).map((c) => c.accountNumber)).size;
+  // Mappings are per bank and shared by every AMC that banks there; show the banks the picked AMC uses, and count its accounts only.
+  const configs = tab === "credit" ? collections.credit_config : collections.bank_config;
+  const accountsOf = (m, mine) => new Set(configs.filter((c) => c.bankName === m.bankName && (c.formatName || "") === (m.formatName || "") && (!mine || inScope(amcUser, amcOfAccount(c.accountNumber)))).map((c) => c.accountNumber)).size;
+  const accountsFor = (m) => accountsOf(m, true);
+  const oneAmc = userAmcs(amcUser).length === 1 ? userAmcs(amcUser)[0] : null;
+  const all = collections.bank_mapping.filter((m) => (tab === "credit" ? m.type === "credit" : m.type === "bank") && (!oneAmc || accountsOf(m, true) > 0 || accountsOf(m, false) === 0));
 
   React.useEffect(() => { setPage(1); }, [status, tab, q]);
 
@@ -43,13 +48,15 @@ export default function MappingSummary() {
 
   return (
     <div data-testid="mapping-summary">
+      {!embedded && (
       <div className="page-head">
-        <div><h1>Column Mapping</h1><p>One mapping per bank (and per layout, when a bank sends more than one). Every account at that bank uses it.</p></div>
+        <div><h1>Column Mapping</h1><p>One mapping per bank (and per layout, when a bank sends more than one). {oneAmc ? <>Showing the banks {oneAmc} uses. A mapping is shared by every AMC at that bank, so a change applies to all of them.</> : "Every account at that bank uses it."}</p></div>
         <div className="au-tabs" role="tablist" aria-label="Mapping type">
           <button role="tab" aria-selected={tab === "bank"} className={tab === "bank" ? "on" : ""} data-testid="tab-bank" onClick={() => setSp({ tab: "bank" })}>Bank statement</button>
           <button role="tab" aria-selected={tab === "credit"} className={tab === "credit" ? "on" : ""} data-testid="tab-credit" onClick={() => setSp({ tab: "credit" })}>Credit MIS</button>
         </div>
       </div>
+      )}
 
       {/* Where the mappings stand: ring + bars, click to filter the list */}
       {all.length > 0 && (
@@ -84,7 +91,7 @@ export default function MappingSummary() {
           return (
             <div key={m.id} className="au-row mp2-row" role="button" tabIndex={0} onClick={() => nav(`/mapping/${tab}/${m.id}`)} onKeyDown={(e) => e.key === "Enter" && nav(`/mapping/${tab}/${m.id}`)} data-testid={"mapping-row-" + m.id}>
               <span className="au-who"><Avatar name={m.bankName} /><span><b>{m.bankName}</b><em>{tab === "credit" ? `${paLabel(m.paCode || (m.paCodes || [])[0])} · ` : ""}{m.formatName || "Standard layout"} · {m.fileType}{m.standard ? " (standard)" : ""}</em></span></span>
-              <span className="au-meta" title="Accounts that use this mapping"><Landmark size={14} /> {n} account{n !== 1 ? "s" : ""}</span>
+              <span className="au-meta" title={oneAmc ? `${oneAmc} accounts that use this mapping` : "Accounts that use this mapping"}><Landmark size={14} /> {n} account{n !== 1 ? "s" : ""}</span>
               <span className={"au-st " + st} id={"map-status-" + m.id}>{m.status === "not_started" ? "Not started" : STATUS_WORD[st]}</span>
               <span className="au-when">Updated {formatDate(m.lastUpdated)}</span>
               <button type="button" className="au-round" title={view ? "View" : "Edit mapping"} aria-label={view ? `View ${m.bankName} mapping` : `Edit ${m.bankName} mapping`} data-testid={"map-edit-" + m.id} onClick={(e) => { e.stopPropagation(); nav(`/mapping/${tab}/${m.id}`); }}>

@@ -128,7 +128,11 @@ export function seedStatusMap() {
   const at = new Date(now - 90 * day).toISOString();
   return [["C", "CREDIT", "HDFC Bank"], ["CR", "CREDIT", "IDBI Bank"], ["SUCCESS", "CREDIT", "IndusInd Bank"], ["Positive Amount", "CREDIT", "South Indian Bank"],
     ["D", "DEBIT", "HDFC Bank"], ["DR", "DEBIT", "IDBI Bank"], ["FAILURE", "DEBIT", "IndusInd Bank"], ["Negative Amount", "DEBIT", "South Indian Bank"]]
-    .map(([source, system, seenAt], i) => ({ id: "sm_" + i, source, system, seenAt, table: "RECON_BANK_TXN", column: "INSTRM_STATUS", status: "active", owner: "Meera", createdAt: at }));
+    .map(([source, system, seenAt], i) => ({ id: "sm_" + i, kind: "bank", source, system, seenAt, table: "RECON_BANK_TXN", column: "INSTRM_STATUS", status: "active", owner: "Meera", createdAt: at }))
+    // Credit MIS: each aggregator's own payment status words, read from the MIS file's status column.
+    .concat([["captured", "CREDIT", "RAZORPAY"], ["refunded", "DEBIT", "RAZORPAY"], ["failed", "DEBIT", "RAZORPAY"], ["SUCCESS", "CREDIT", "CASHFREE"], ["REVERSED", "DEBIT", "CASHFREE"]]
+      .map(([source, system, seenAt], i) => ({ id: "smc_" + i, kind: "credit", source, system, seenAt, table: "RECON_CREDIT_MIS", column: "TXN_STATUS", status: "active", owner: "Meera", createdAt: at })))
+    .concat([{ id: "smc_p1", kind: "credit", source: "PARTIAL_REFUND", system: "DEBIT", seenAt: "CASHFREE", table: "RECON_CREDIT_MIS", column: "TXN_STATUS", status: "pending", owner: "Sneha", createdAt: new Date(now - 7200000).toISOString() }]);
 }
 
 /** Mapping record created when a bank setup is approved. */

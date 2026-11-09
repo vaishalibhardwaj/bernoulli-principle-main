@@ -1,6 +1,6 @@
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { inScope } from "@/lib/org";
+import { inScope, amcOfAccount } from "@/lib/org";
 import { PLAIN_EXCEPTION } from "@/lib/plain";
 import { inr, inrShort } from "@/features/ops/ui";
 import { maskAccount } from "@/lib/format";
@@ -16,7 +16,8 @@ export function useApprovals() {
   const { setStatus } = useMatchActions();
   const items = [];
   const mine = (owner) => owner && (owner === currentUser || owner.split(" ")[0] === currentUser);
-  // Checkers see only the AMCs they cover; items without an AMC (setups, access, day close) are shared.
+  // Checkers see only the AMC they work on; bank and Credit MIS setups belong to their account's AMC.
+  // Items without an AMC (column mappings, status mappings, access, day close) are shared by every AMC.
   // Each item goes to every other eligible member of the team, never to the person who created it (checked on login ID, then name).
   const own = (it) => (it.ownerId ? it.ownerId === personaUser.id : mine(it.owner));
   const add = (screen, it) => { if (hasCap(perms, screen, "approve") && inScope(amcUser, it.amc) && !own(it)) items.push({ screen, own: false, ...it }); };
@@ -65,14 +66,24 @@ export function useApprovals() {
   }));
   // Need a side-by-side review → open their own screen
   ["bank_config", "credit_config", "bank_mapping"].forEach((k) => (c[k] || []).filter((x) => x.status === "pending").forEach((x) => add(k === "bank_config" ? "bank_setup" : k === "credit_config" ? "credit_mis" : "mapping", {
-    id: x.id, kind: { bank_config: "Bank setup", credit_config: "Credit MIS setup", bank_mapping: "Column mapping" }[k], title: `${x.bankName || x.paCode || "Setup"} · ${maskAccount(x.accountNumber)}`, detail: `Submitted by ${x.owner || "—"}`, ownerId: x.ownerId, owner: x.owner, priority: 7, record: { ...x, _kind: k }, needsComment: true,
+    id: x.id, amc: k === "bank_mapping" ? undefined : amcOfAccount(x.accountNumber) || x.amc, kind: { bank_config: "Bank setup", credit_config: "Credit MIS setup", bank_mapping: "Column mapping" }[k], title: `${x.bankName || x.paCode || "Setup"} · ${maskAccount(x.accountNumber)}`, detail: `Submitted by ${x.owner || "—"}`, ownerId: x.ownerId, owner: x.owner, priority: 7, record: { ...x, _kind: k }, needsComment: true,
     config: { kind: k, approve: () => { try { approve(k, x.id, `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } } },
     reject: (comment) => { if (!comment || comment.trim().length < 10) return { ok: false, error: "A comment of at least 10 characters is required to send a setup back" }; try { reject(k, x.id, comment.trim(), `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } },
   })));
   (c.status_map || []).filter((r) => r.status === "pending").forEach((r) => add("status_std", {
-    id: r.id, kind: "Status mapping", title: `Treat “${r.source}” as ${r.system}`, detail: `${r.seenAt ? r.seenAt + " · " : ""}${r.table}.${r.column}${r.requestedBy ? ` · asked for by ${r.requestedBy}` : ""}`, owner: r.owner, priority: 8,
-    approve: () => act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: { status: "active", approvedBy: currentUser }, audit: { entityLabel: `Status “${r.source}” → ${r.system}`, action: "Approve status mapping", from: "Pending", to: "Active", comment: "Applies to files loaded from now on" } }),
-    reject: () => act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: { status: r.requestedBy ? "requested" : "rejected", owner: r.requestedBy || r.owner }, audit: { entityLabel: `Status “${r.source}”`, action: "Reject status mapping", from: "Pending", to: "Rejected" } }),
+    id: r.id, kind: "Transaction type", title: r.previous ? `Change “${r.previous.source}” → ${r.previous.system} to “${r.source}” → ${r.system}` : `Treat “${r.source}” as ${r.system}`, detail: `${r.kind === "credit" ? "Credit MIS · " : "Bank statement · "}${r.seenAt || (r.kind === "credit" ? "every aggregator" : "every bank")}${r.requestedBy ? ` · asked for by ${r.requestedBy}` : ""}`, owner: r.owner, priority: 8,
+    approve: () => act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: { status: "active", approvedBy: currentUser, previous: null }, audit: { entityLabel: `Transaction type “${r.source}” → ${r.system}`, action: "Approve transaction type mapping", from: r.previous ? `${r.previous.source} → ${r.previous.system}` : "Pending", to: "Active", comment: "Applies to files loaded from now on" } }),
+    reject: () => act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: r.previous ? { ...r.previous, status: "active", previous: null } : { status: r.requestedBy ? "requested" : "rejected", owner: r.requestedBy || r.owner }, audit: { entityLabel: `Transaction type “${r.source}”`, action: "Reject transaction type mapping", from: "Pending", to: r.previous ? "Kept as before" : "Rejected" } }),
+  }));
+  (c.narration_tags || []).filter((r) => r.status === "pending").forEach((r) => add("narration_tags", {
+    id: r.id, kind: "Narration tag", title: `${r.previous ? "Change tag: " : "Tag "}narrations that ${r.match === "starts" ? "start with" : r.match === "regex" ? "match" : "contain"} “${r.pattern}” as ${r.tag}`, detail: `${r.bank || "All banks"} · added by ${r.owner}`, owner: r.owner, priority: 8,
+    approve: () => act({ screen: "narration_tags", cap: "approve", kind: "narration_tags", id: r.id, target: r, patch: { status: "active", approvedBy: currentUser, previous: null }, audit: { entityLabel: `Narration tag “${r.pattern}”`, action: "Approve narration tag", from: "Pending for approval", to: "Active" } }),
+    reject: () => act({ screen: "narration_tags", cap: "approve", kind: "narration_tags", id: r.id, target: r, patch: r.previous ? { ...r.previous, status: "active", previous: null } : { status: "rejected", approvedBy: currentUser }, audit: { entityLabel: `Narration tag “${r.pattern}”`, action: "Reject narration tag", from: "Pending for approval", to: r.previous ? "Kept as before" : "Rejected" } }),
+  }));
+  (c.cutoffs || []).filter((r) => r.status === "pending").forEach((r) => add("cutoffs", {
+    id: r.id, kind: "Cutoff time", title: `Change ${r.label} cutoff to ${r.proposed}`, detail: `Now ${r.time} · proposed by ${r.owner}`, owner: r.owner, priority: 8,
+    approve: () => act({ screen: "cutoffs", cap: "approve", kind: "cutoffs", id: r.id, target: r, patch: { time: r.proposed, proposed: null, status: "active", approvedBy: currentUser, updatedAt: new Date().toISOString() }, audit: { entityLabel: `Cutoff · ${r.label}`, action: "Approve cutoff change", from: r.time, to: r.proposed } }),
+    reject: () => act({ screen: "cutoffs", cap: "approve", kind: "cutoffs", id: r.id, target: r, patch: { proposed: null, status: "active" }, audit: { entityLabel: `Cutoff · ${r.label}`, action: "Reject cutoff change", from: r.time, to: r.time } }),
   }));
   (c.access_requests || []).filter((r) => r.status === "pending").forEach((r) => add("roles", {
     id: r.id, kind: "Access", title: r.kind === "assign" ? "Grant a privileged role" : `Role change: ${r.draft?.name}`, detail: r.note || "", owner: r.requestedBy, ownerId: r.requestedById, priority: 8, review: "/admin/roles",

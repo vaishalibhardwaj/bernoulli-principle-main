@@ -11,7 +11,7 @@ import { genTempPassword } from "../lib/credentials";
 import { PERSONAS, seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
 import { earlierFailures, seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp, seedBalances, seedJobs, seedFileTrack, seedLiability } from "../mock/opsSeed";
 
-const KEY = "cams_recon_state_v27";
+const KEY = "cams_recon_state_v29";
 // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
 const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp", "cutoffs", "narration_tags", "balances", "jobs", "liab_debits"];
 
@@ -114,7 +114,7 @@ function reducer(state, action) {
     case "SET": return { ...state, ...action.payload };
     case "SET_SIMPLE": return { ...state, simpleOverride: { ...(state.simpleOverride || {}), [action.id]: action.on } };
     case "SET_VERTICAL": return { ...state, vertical: action.vertical };
-    case "SET_AMC": return { ...state, amcChoice: { ...(state.amcChoice || {}), [state.persona]: action.amc } };
+    case "SET_AMC": return { ...state, amcChoice: { ...(state.amcChoice || {}), [state.persona]: action.amc }, amcSession: { ...(state.amcSession || {}), [state.persona]: state.sessionId } };
     case "SWITCH_PERSONA": return { ...state, persona: action.id, bannerDismissed: false, sessionId: uid("ses") };
     case "TOGGLE_SIDEBAR": return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
     case "DISMISS_BANNER": return { ...state, bannerDismissed: true };
@@ -147,11 +147,13 @@ export function StoreProvider({ children }) {
   // One AMC at a time: a user with several AMCs works on the one they picked (there is no "all my AMCs" view).
   const myAmcList = userAmcs(personaUser);
   const choice = (state.amcChoice || {})[state.persona];
-  const activeAmc = myAmcList.includes(choice) ? choice : null;
-  const workingAmc = activeAmc || myAmcList[0];
-  // The Central Setup Team (only Administration / Central Setup roles) works across all its AMCs, so it is never narrowed to one.
+  // The Central Setup Team (only Administration / Central Setup roles) picks an AMC for Recon setup once per session:
+  // the first Recon setup page they open asks, and the choice holds on every Recon setup screen until they switch or sign in again.
   const crossAmc = (personaUser.roles || []).length > 0 && (personaUser.roles || []).every((rid) => ["admin", "central_setup"].includes(roles.find((r) => r.id === rid)?.module));
-  const amcUser = React.useMemo(() => (myAmcList.length > 1 && !crossAmc ? { ...personaUser, amcs: [workingAmc] } : personaUser), [personaUser, workingAmc, myAmcList.length, crossAmc]);
+  const pickedThisSession = !crossAmc || (state.amcSession || {})[state.persona] === state.sessionId;
+  const activeAmc = myAmcList.includes(choice) && pickedThisSession ? choice : null;
+  const workingAmc = activeAmc || myAmcList[0];
+  const amcUser = React.useMemo(() => (myAmcList.length > 1 && (!crossAmc || activeAmc) ? { ...personaUser, amcs: [workingAmc] } : personaUser), [personaUser, workingAmc, myAmcList.length, crossAmc, activeAmc]);
   const setAmc = useCallback((amc) => dispatch({ type: "SET_AMC", amc }), []);
   const vertical = state.vertical || "MF";
   const setVertical = useCallback((v) => dispatch({ type: "SET_VERTICAL", vertical: v }), []);
@@ -575,6 +577,7 @@ export function StoreProvider({ children }) {
     personaUser,
     amcUser,
     activeAmc,
+    crossAmc,
     setAmc,
     vertical,
     setVertical,

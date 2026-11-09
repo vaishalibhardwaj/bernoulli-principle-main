@@ -1,104 +1,74 @@
-// "Module footprint": how many modules CAMS has and who is in each.
-// Built on what reads accurately: length (ranked bars) and counting (one dot per person) — not bubble areas.
-//  • Top: four numbers and one proportion bar of the whole.
-//  • Left: every person as a dot, coloured by their home module; hollow = inactive but still holds access.
-//  • Right: modules ranked by people, each bar split active / inactive; hover links the two views.
-//  • Bottom: modules nobody uses yet, quietly, as one line.
+// Users page summaries:
+//  • StatusOverview: "N people hold a CAMS ID", one bar for the whole, four status tiles that filter the list.
+//  • ModuleAccess: side card, one row per module with people and roles, bar split active / inactive.
 import React from "react";
-import { ChevronRight, X } from "lucide-react";
+import { X, GitCompareArrows, ShieldCheck, Settings2, Coins, Send, Repeat, Contact, Headset, ShoppingCart, BarChart3 } from "lucide-react";
 import { CountUp } from "@/features/viz/Viz";
 
-export default function CamsConstellation({ modules, people, persons = [], active, onPick, onRoles }) {
+export function StatusOverview({ total, statuses, status, onStatus, scope }) {
   const [hover, setHover] = React.useState(null);
-  const focus = hover || active;
-  const live = modules.filter((m) => m.users > 0).sort((a, b) => b.users - a.users);
-  const idle = modules.filter((m) => !m.users);
-  const byKey = Object.fromEntries(modules.map((m) => [m.key, m]));
-  const withRole = persons.length;
-  const inactive = persons.filter((p) => p.inactive).length;
-  const multi = persons.filter((p) => p.mods.length > 1).length;
-  const max = Math.max(1, ...live.map((m) => m.users));
-  const rank = Object.fromEntries(live.map((m, i) => [m.key, i]));
-  // Dots grouped by home module (largest first), active before inactive, so each colour reads as one block.
-  const dots = [...persons].sort((a, b) => (rank[a.home] ?? 99) - (rank[b.home] ?? 99) || Number(a.inactive) - Number(b.inactive));
-  const top = live[0];
-
+  const bar = statuses.filter((s) => s.count > 0);
+  const focus = hover || (status !== "all" ? status : null);
   return (
-    <div className="card mf-card" data-testid="cams-constellation">
-      <div className="card-head">
-        <h3>Module footprint</h3>
-        <span className="muted">{withRole} people across {live.length} of {modules.length} CAMS modules · click a module to filter the list</span>
-        {active && <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => onPick(active)}><X size={13} /> Clear filter</button>}
+    <section className="uo-top" data-testid="cams-constellation" onPointerLeave={() => setHover(null)}>
+      <div className="uo-top-h">
+        <h2><b className="tnum"><CountUp value={total} /></b> people hold a CAMS ID.</h2>
+        <span className="uo-top-r"><span className="uo-hint">Click a status to filter</span>{scope}</span>
       </div>
-
-      <div className="mf-kpis">
-        <div><b><CountUp value={modules.length} /></b><span>modules in CAMS</span><em>{live.length} in use · {idle.length} not started</em></div>
-        <div><b><CountUp value={withRole} /></b><span>people with access</span><em>of {people} IDs in scope</em></div>
-        <div className="warn"><b><CountUp value={inactive} /></b><span>inactive, still hold access</span><em>{withRole ? Math.round((inactive / withRole) * 100) : 0}% of people with access</em></div>
-        <div><b><CountUp value={multi} /></b><span>work in 2+ modules</span><em>access spans teams</em></div>
+      <div className="uo-bar" role="img" aria-label={bar.map((s) => `${s.label} ${s.count}`).join(", ")}>
+        {bar.map((s, i) => (
+          <button key={s.key} type="button" className={"uo-bar-seg" + (focus && focus !== s.key ? " dim" : "")} style={{ flexGrow: s.count, "--c": s.color, animationDelay: `${i * 80}ms` }}
+            onPointerEnter={() => setHover(s.key)} onClick={() => onStatus(status === s.key ? "all" : s.key)} title={`${s.label}: ${s.count}`} aria-label={`${s.label} ${s.count}`} />
+        ))}
       </div>
-
-      {/* The whole in one line: share of people per module (a person in two modules counts in both). */}
-      <div className="mf-share" role="img" aria-label={`${top ? `${top.label} has ${top.users} of ${withRole} people` : ""}`}>
-        {live.map((m, i) => (
-          <button key={m.key} type="button" className={"mf-seg" + (focus && focus !== m.key ? " dim" : "")} style={{ flexGrow: m.users, "--c": m.color, animationDelay: `${i * 60}ms` }}
-            onPointerEnter={() => setHover(m.key)} onPointerLeave={() => setHover(null)} onClick={() => onPick(m.key)} title={`${m.label}: ${m.users}`}>
-            {m.users / (live.reduce((s, x) => s + x.users, 0) || 1) > 0.08 && <span>{m.label} {m.users}</span>}
+      <div className="uo-tiles">
+        {statuses.map((s, i) => (
+          <button key={s.key} type="button" className={"uo-tile" + (status === s.key ? " on" : "") + (focus && focus !== s.key ? " dim" : "")} style={{ "--c": s.color, animationDelay: `${100 + i * 60}ms` }}
+            onPointerEnter={() => setHover(s.key)} onClick={() => onStatus(status === s.key ? "all" : s.key)} data-testid={s.testid} aria-pressed={status === s.key}>
+            <span className="uo-tile-h"><span><i />{s.label}</span><em className="tnum">{Math.round((s.count / (total || 1)) * 100)}%</em></span>
+            <b className="tnum"><CountUp value={s.count} /></b>
+            <small>{s.hint}</small>
           </button>
         ))}
       </div>
+    </section>
+  );
+}
 
-      <div className="mf-body">
-        {/* One dot = one person */}
-        <div className="mf-people">
-          <div className="mf-sub"><b>Everyone with access</b><span><i className="full" /> active <i className="hollow" /> inactive</span></div>
-          <div className="mf-dots" onPointerLeave={() => setHover(null)}>
-            {dots.map((p, i) => {
-              const inFocus = !focus || p.mods.includes(focus);
-              const c = byKey[p.home]?.color || "#8b8f99";
-              return <i key={p.id} className={"mf-dot" + (p.inactive ? " off" : "") + (inFocus ? "" : " dim") + (p.mods.length > 1 ? " multi" : "")}
-                style={{ "--c": c, animationDelay: `${Math.min(i * 5, 700)}ms` }} title={`${p.name} · ${p.mods.map((k) => byKey[k]?.label).join(" + ")}${p.inactive ? " · inactive" : ""}`} onPointerEnter={() => setHover(p.home)} />;
-            })}
-          </div>
-          <p className="mf-note">{focus && byKey[focus]
-            ? <><b>{byKey[focus].label}</b>: {byKey[focus].users} people, {byKey[focus].inactive} of them inactive. Dots light up for everyone who can open it.</>
-            : <>Colour is each person's home module; a ring means they also work in another module. Hover a module to see who can open it.</>}</p>
-        </div>
+const MODULE_ICON = { recon: GitCompareArrows, admin: ShieldCheck, central_setup: Settings2, brokerage: Coins, posting: Send, sip: Repeat, crms: Contact, support: Headset, purchase: ShoppingCart, mis: BarChart3 };
 
-        {/* Ranked modules, each bar split active / inactive */}
-        <div className="mf-rank">
-          <div className="mf-sub"><b>People per module</b><span>active · inactive</span></div>
-          {live.map((m, i) => {
-            const act = m.users - m.inactive;
-            return (
-              <div key={m.key} className={"mf-row" + (active === m.key ? " on" : "") + (focus && focus !== m.key ? " dim" : "")} style={{ "--c": m.color, animationDelay: `${i * 60}ms` }}
-                onPointerEnter={() => setHover(m.key)} onPointerLeave={() => setHover(null)}>
-                <button type="button" className="mf-row-main" onClick={() => onPick(m.key)} data-testid={`module-card-${m.key}`}>
-                  <span className="mf-name"><i />{m.label}</span>
-                  <span className="mf-track" style={{ width: `${(m.users / max) * 100}%` }}>
-                    <em className="a" style={{ flexGrow: act }} />{m.inactive > 0 && <em className="o" style={{ flexGrow: m.inactive }} />}
-                  </span>
-                  <span className="mf-num"><b>{m.users}</b><small>{withRole ? Math.round((m.users / withRole) * 100) : 0}%</small></span>
-                </button>
-                <span className="mf-meta">{m.inactive > 0 ? <><b>{m.inactive}</b> inactive</> : "all active"}<span>·</span>
-                  <button type="button" className="mf-roles" onClick={() => onRoles(m.key)} data-testid={`view-roles-${m.key}`}>{m.roles} role{m.roles !== 1 ? "s" : ""} <ChevronRight size={12} /></button></span>
-              </div>
-            );
-          })}
-        </div>
+export function ModuleAccess({ modules, active, onPick, onRoles }) {
+  const live = modules.filter((m) => m.users > 0).sort((a, b) => b.users - a.users);
+  const idle = modules.filter((m) => !m.users);
+  const max = Math.max(1, ...live.map((m) => m.users));
+  const sum = live.reduce((a, m) => a + m.users, 0);
+  return (
+    <aside className="uo-mods">
+      <div className="uo-mods-h">
+        <div><h3>Access by module</h3><p>Active people in each module</p></div>
+        {active ? <button type="button" className="uo-mods-clear" onClick={() => onPick(active)}><X size={12} /> Clear</button> : <span className="uo-mods-total tnum">{sum}</span>}
       </div>
-
+      <ul className="uo-mods-list">
+        {live.map((m, i) => {
+          const Icon = MODULE_ICON[m.key] || ShieldCheck;
+          return (
+            <li key={m.key} className={"uo-mod" + (active === m.key ? " on" : "") + (active && active !== m.key ? " dim" : "")} style={{ "--c": m.color, "--w": `${(m.users / max) * 100}%`, animationDelay: `${i * 50}ms` }}>
+              <button type="button" className="uo-mod-main" onClick={() => onPick(m.key)} data-testid={`module-card-${m.key}`} aria-pressed={active === m.key} title={`Show ${m.label} people`}>
+                <span className="uo-mod-ic"><Icon size={16} /></span>
+                <span className="uo-mod-t"><b>{m.label}</b><span className="uo-mod-bar"><i /></span></span>
+                <span className="uo-mod-n tnum">{m.users}</span>
+              </button>
+              <button type="button" className="uo-mod-roles" onClick={() => onRoles(m.key)} data-testid={`view-roles-${m.key}`} title={`See ${m.label} roles`}>{m.roles} role{m.roles !== 1 ? "s" : ""}</button>
+            </li>
+          );
+        })}
+      </ul>
       {idle.length > 0 && (
-        <div className="mf-idle">
-          <span>Not started</span>
-          {idle.map((m) => (
-            <button key={m.key} type="button" className="mf-ghost" style={{ "--c": m.color }} onClick={() => onRoles(m.key)} data-testid={`view-roles-${m.key}`} title={`${m.label}: no one assigned yet`}>
-              <i />{m.label}<small>{m.roles ? `${m.roles} role${m.roles !== 1 ? "s" : ""} ready` : "no roles yet"}</small>
-            </button>
-          ))}
-          <span className="mf-idle-note">No one has access yet</span>
-        </div>
+        <p className="uo-idle">
+          <span>Not in use yet</span>
+          {idle.map((m, i) => <React.Fragment key={m.key}><button type="button" onClick={() => onRoles(m.key)} data-testid={`view-roles-${m.key}`}>{m.label}</button>{i < idle.length - 1 ? ", " : ""}</React.Fragment>)}
+        </p>
       )}
-    </div>
+    </aside>
   );
 }

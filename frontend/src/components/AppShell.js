@@ -5,19 +5,20 @@ import {
   PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound, Lock,
   Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, Eye,
   Home, ClipboardCheck, FileInput, Banknote, Search, Building2, Scale, Clock, Activity, Tags, FolderCog, ClipboardList,
+  ListTodo,
 } from "lucide-react";
 import CommandPalette from "@/components/CommandPalette";
 import { useApprovals } from "@/features/approvals/useApprovals";
 import { dailyCycle } from "@/lib/journey";
 import { useStore } from "@/state/store";
-import { userAmcs } from "@/lib/org";
+import { userAmcs, inScope, amcOfAccount } from "@/lib/org";
 import { ConfirmModal } from "@/components/Modal";
-import { navFor, homePath, screenForPath, hasCap, PERSONAS, VERTICALS, screenLabel } from "@/lib/access";
+import { navFor, homePath, screenForPath, hasCap, PERSONAS, VERTICALS, screenLabel, MODULES } from "@/lib/access";
 import { toast } from "sonner";
 
 const ICONS = {
   balances: Banknote, scheduler: Activity, cutoffs: Clock, narration_tags: Tags, status_std: Scale,
-  today: Home, inbox: ClipboardCheck, setup_approvals: ClipboardCheck, setup_tasks: ClipboardList, setup_scheduler: Activity, release: Banknote, refunds: Undo2,
+  today: Home, inbox: ClipboardCheck, setup_approvals: ClipboardCheck, setup_tasks: ClipboardList, setup_todo: ListTodo, setup_scheduler: Activity, release: Banknote, refunds: Undo2,
   command: Gauge, ingestion: FileInput, match: Combine, exceptions: Siren, extraction: ScanText,
   bank_setup: Landmark, credit_mis: CreditCard, mapping: GitCompareArrows,
   approvals: LayoutDashboard, audit: History, users: Users, roles: KeyRound,
@@ -26,12 +27,16 @@ const ICONS = {
 };
 
 const EXTRA_CRUMBS = [
+  [/^\/bank-setup\/bank\/([^/]+)/, (m) => decodeURIComponent(m[1])], [/^\/bank-setup\/rules/, "Rules for all banks"],
+  [/^\/credit-mis\/pa\/([^/]+)/, (m) => ({ RAZORPAY: "Razorpay", CASHFREE: "Cashfree" }[decodeURIComponent(m[1])] || decodeURIComponent(m[1]))],
   [/^\/bank-setup\/new/, "Add New"], [/^\/bank-setup\//, "Configuration"],
-  [/^\/credit-mis\/new/, "Add New"], [/^\/credit-mis\//, "Configuration"], [/^\/mapping\//, "Mapping Editor"],
+  [/^\/credit-mis\/new/, "Add New"], [/^\/credit-mis\//, "Configuration"], [/^\/mapping\//, "Columns"],
 ];
 
+const RECON_SETUP_PATHS = MODULES.find((m) => m.key === "central_setup").screens.filter((x) => x.group === "Recon").map((x) => x.path);
+
 export default function AppShell() {
-  const { state, role, currentUser, currentRole, persona, perms, switchPersona, toggleSidebar, resetDemo, collections, simple, setSimple, personaUser, activeAmc, setAmc, vertical, setVertical } = useStore();
+  const { state, role, currentUser, currentRole, persona, perms, switchPersona, toggleSidebar, resetDemo, collections, simple, setSimple, personaUser, amcUser, activeAmc, setAmc, crossAmc, vertical, setVertical } = useStore();
   const myAmcs = userAmcs(personaUser);
   const [amcOpen, setAmcOpen] = React.useState(false);
   const amcName = activeAmc || myAmcs[0];
@@ -59,7 +64,9 @@ export default function AppShell() {
   const modules = navFor(perms, simple);
   const [openFolders, setOpenFolders] = React.useState({});
   // The Central Setup Team works across AMCs (users, roles and setups), so it never picks a working AMC.
-  const worksOnAmc = modules.some((m) => !["admin", "central_setup"].includes(m.key));
+  // Recon setup pages (Central Setup › Recon): the Central Setup Team works on one AMC at a time here.
+  const onReconSetup = RECON_SETUP_PATHS.some((p) => loc.pathname === p || loc.pathname.startsWith(p + "/"));
+  const worksOnAmc = modules.some((m) => !["admin", "central_setup"].includes(m.key)) || (crossAmc && onReconSetup);
   const screen = screenForPath(loc.pathname);
   const allowed = !screen || hasCap(perms, screen.key, "view");
 
@@ -77,7 +84,11 @@ export default function AppShell() {
     today: hasCap(perms, "inbox", "approve") ? 0 : hasCap(perms, "match", "edit") ? myWorkCount : 0,
     inbox: approvals.length,
     setup_approvals: approvals.length,
-    setup_tasks: (state.collections.setup_requests || []).filter((t) => t.status === "open").length,
+    setup_tasks: (state.collections.setup_requests || []).filter((t) => t.status === "open" && inScope(amcUser, t.amc)).length,
+    // To do: approvals + open Ops requests + setups sent back, for the AMC picked at the top.
+    setup_todo: approvals.length + (state.collections.setup_requests || []).filter((t) => t.status === "open" && inScope(amcUser, t.amc)).length
+      + ["bank_config", "credit_config"].reduce((n, k) => n + (state.collections[k] || []).filter((c) => c.status === "rejected" && inScope(amcUser, amcOfAccount(c.accountNumber))).length, 0)
+      + (state.collections.bank_mapping || []).filter((m) => m.status === "rejected").length,
     release: release && ((release.status === "not_started" && hasCap(perms, "release", "edit")) || (release.status === "pending" && hasCap(perms, "release", "approve"))) ? 1 : 0,
     refunds: hasCap(perms, "refunds", "edit") ? (collections.refunds || []).filter((r) => r.status === "draft").length : 0,
     approvals: 0,
@@ -89,7 +100,7 @@ export default function AppShell() {
   }[key] || 0);
 
   const crumbs = screen ? (simple ? [screenLabel(screen, true)] : [screen.moduleLabel, screen.crumb || screen.label]) : ["CAMS Operations"];
-  EXTRA_CRUMBS.forEach(([re, label]) => { if (re.test(loc.pathname) && crumbs.length === 2) crumbs.push(label); });
+  EXTRA_CRUMBS.forEach(([re, label]) => { const m = loc.pathname.match(re); if (m && crumbs.length === 2) crumbs.push(typeof label === "function" ? label(m) : label); });
   const toggleSimple = () => { setSimple(!simple); setMenuOpen(false); nav("/"); };
 
   const late = dailyCycle(collections).filter((s) => s.late && s.state !== "done" && hasCap(perms, s.screen));
@@ -170,7 +181,7 @@ export default function AppShell() {
             </button>
             {amcOpen && (
               <div className="menu-pop" style={{ width: 280, left: 0, right: "auto" }} onClick={(e) => e.stopPropagation()} data-testid="amc-menu">
-                <div className="menu-head"><b>Work on which AMC?</b><span>One AMC at a time — every list shows only its records</span></div>
+                <div className="menu-head"><b>{crossAmc ? "Set up which AMC?" : "Work on which AMC?"}</b><span>{crossAmc ? "Applies to every Recon setup screen" : "One AMC at a time — every list shows only its records"}</span></div>
                 <div className="menu-sep" />
                 {myAmcs.map((a) => <button key={a} className={"menu-item" + (activeAmc === a ? " on" : "")} onClick={() => { setAmc(a); setAmcOpen(false); }} data-testid={"amc-opt-" + a.split(" ")[0]}><span className="dot" />{a}</button>)}
               </div>
@@ -239,9 +250,11 @@ export default function AppShell() {
         {worksOnAmc && myAmcs.length > 1 && !activeAmc && (
           <div className="overlay amc-pick" data-testid="amc-picker">
             <div className="modal" style={{ maxWidth: 460 }}>
-              <div className="modal-head"><h3>Hello {currentUser.split(" ")[0]} — which AMC are you working on?</h3></div>
+              <div className="modal-head"><h3>Hello {currentUser.split(" ")[0]} — which AMC are you {crossAmc ? "setting up" : "working on"}?</h3></div>
               <div className="modal-body">
-                <p className="muted" style={{ marginTop: 0 }}>You have access to {myAmcs.length} AMCs. You work on one AMC at a time — pick one; switch any time from the AMC name at the top.</p>
+                <p className="muted" style={{ marginTop: 0 }}>{crossAmc
+                  ? <>Every Recon setup screen will show only this AMC's setups, tasks and approvals. Switch any time from the AMC name at the top.</>
+                  : <>You have access to {myAmcs.length} AMCs. You work on one AMC at a time — pick one; switch any time from the AMC name at the top.</>}</p>
                 <div className="amc-grid">
                   {myAmcs.map((a) => <button key={a} className="amc-card" onClick={() => setAmc(a)} data-testid={"amc-pick-" + a.split(" ")[0]}><Building2 size={16} />{a}</button>)}
                 </div>

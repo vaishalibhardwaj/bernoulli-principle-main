@@ -2,7 +2,6 @@ import React from "react";
 import { Clock, Check, X, Lock } from "lucide-react";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { Note } from "@/components/bits";
 import { formatDate } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -67,11 +66,8 @@ export default function Cutoffs() {
   return (
     <div data-testid="cutoffs">
       <div className="page-head"><div>
-        <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Clock size={22} /> Cutoff times</h1>
-        <p>When money must be in for same-day NAV. Used by the closing-balance view and fund release. A scheme-level time wins over its asset class.</p>
+        <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Clock size={22} /> Cutoff times<span className="shared-amc" title="These settings are not per AMC: a change applies to every AMC.">Same for every AMC</span></h1>
       </div></div>
-      <Note kind="info">Where the scheme master already holds a cutoff, it is reused here read-only. Recon keeps its own times only for asset classes the scheme master doesn't cover. Changes need a checker.</Note>
-      <div style={{ height: 14 }} />
       {group("scheme", "Scheme-level cutoffs", "From the scheme master")}
       {group("asset", "Asset-class cutoffs", "Default for every scheme in the class")}
     </div>
