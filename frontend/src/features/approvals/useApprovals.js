@@ -17,13 +17,15 @@ export function useApprovals() {
   const items = [];
   const mine = (owner) => owner && (owner === currentUser || owner.split(" ")[0] === currentUser);
   // Checkers see only the AMCs they cover; items without an AMC (setups, access, day close) are shared.
-  const add = (screen, it) => { if (hasCap(perms, screen, "approve") && inScope(amcUser, it.amc)) items.push({ screen, own: mine(it.owner), ...it }); };
+  // Each item goes to every other eligible member of the team, never to the person who created it (checked on login ID, then name).
+  const own = (it) => (it.ownerId ? it.ownerId === personaUser.id : mine(it.owner));
+  const add = (screen, it) => { if (hasCap(perms, screen, "approve") && inScope(amcUser, it.amc) && !own(it)) items.push({ screen, own: false, ...it }); };
 
   // Fund release first (it gates unit allotment); day close last (it signs off everything else)
-  (c.dayclose || []).filter((d) => d.status === "pending").forEach((d) => add("release", {
+  (c.dayclose || []).filter((d) => d.status === "pending").forEach((d) => add("ingestion", {
     id: d.id, kind: "Day close", title: "Sign off today's reconciliation", detail: `${d.carried} item${d.carried !== 1 ? "s" : ""} carried forward · notes: ${d.note || "—"}`, owner: d.submittedBy, priority: 9,
-    approve: () => act({ screen: "release", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } }),
-    reject: () => act({ screen: "release", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "open" }, audit: { entityLabel: "Day close", action: "Return day close", from: "Pending", to: "Open" } }),
+    approve: () => act({ screen: "ingestion", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } }),
+    reject: () => act({ screen: "ingestion", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "open" }, audit: { entityLabel: "Day close", action: "Return day close", from: "Pending", to: "Open" } }),
   }));
   (c.releases || []).filter((r) => r.status === "pending").forEach((r) => add("release", {
     id: r.id, kind: "Fund release", title: `Release ${inrShort(r.amount)} to Transaction Posting`, detail: `${r.count.toLocaleString("en-IN")} realised payments · ${r.ref} · cut-off 3:00 PM`, owner: r.preparedBy, priority: 1, urgent: true,
@@ -63,7 +65,7 @@ export function useApprovals() {
   }));
   // Need a side-by-side review → open their own screen
   ["bank_config", "credit_config", "bank_mapping"].forEach((k) => (c[k] || []).filter((x) => x.status === "pending").forEach((x) => add(k === "bank_config" ? "bank_setup" : k === "credit_config" ? "credit_mis" : "mapping", {
-    id: x.id, kind: { bank_config: "Bank setup", credit_config: "Credit MIS setup", bank_mapping: "Column mapping" }[k], title: `${x.bankName || x.paCode || "Setup"} · ${maskAccount(x.accountNumber)}`, detail: `Submitted by ${x.owner || "—"}`, owner: x.owner, priority: 7, record: { ...x, _kind: k }, needsComment: true,
+    id: x.id, kind: { bank_config: "Bank setup", credit_config: "Credit MIS setup", bank_mapping: "Column mapping" }[k], title: `${x.bankName || x.paCode || "Setup"} · ${maskAccount(x.accountNumber)}`, detail: `Submitted by ${x.owner || "—"}`, ownerId: x.ownerId, owner: x.owner, priority: 7, record: { ...x, _kind: k }, needsComment: true,
     config: { kind: k, approve: () => { try { approve(k, x.id, `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } } },
     reject: (comment) => { if (!comment || comment.trim().length < 10) return { ok: false, error: "A comment of at least 10 characters is required to send a setup back" }; try { reject(k, x.id, comment.trim(), `${x.bankName} · ${maskAccount(x.accountNumber)}`); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } },
   })));
@@ -73,7 +75,7 @@ export function useApprovals() {
     reject: () => act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: { status: r.requestedBy ? "requested" : "rejected", owner: r.requestedBy || r.owner }, audit: { entityLabel: `Status “${r.source}”`, action: "Reject status mapping", from: "Pending", to: "Rejected" } }),
   }));
   (c.access_requests || []).filter((r) => r.status === "pending").forEach((r) => add("roles", {
-    id: r.id, kind: "Access", title: r.kind === "assign" ? "Grant a privileged role" : `Role change: ${r.draft?.name}`, detail: r.note || "", owner: r.requestedBy, priority: 8, review: "/admin/roles",
+    id: r.id, kind: "Access", title: r.kind === "assign" ? "Grant a privileged role" : `Role change: ${r.draft?.name}`, detail: r.note || "", owner: r.requestedBy, ownerId: r.requestedById, priority: 8, review: "/admin/roles",
   }));
 
   items.sort((a, b) => a.priority - b.priority);

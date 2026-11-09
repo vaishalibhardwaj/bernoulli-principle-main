@@ -17,13 +17,8 @@ const shortRole = (name) => name.replace(/^(Recon|Brokerage|Posting|SIP|CRMS|Sup
  * [roleA, roleB, why]
  */
 const RECON_CONFLICTS = [
-  ["role_recon_setup_maker", "role_recon_checker", "a maker can't approve the setups they create"],
-  ["role_recon_ops_maker", "role_recon_checker", "a maker can't approve their own daily work"],
-  ["role_functional_manager", "role_recon_setup_maker", "a functional manager approves work, so can't also be a maker"],
-  ["role_functional_manager", "role_recon_ops_maker", "a functional manager approves work, so can't also be a maker"],
-  ["role_recon_auditor", "role_recon_setup_maker", "an auditor reviews the work, so can't also do it"],
-  ["role_recon_auditor", "role_recon_ops_maker", "an auditor reviews the work, so can't also do it"],
-  ["role_recon_auditor", "role_recon_checker", "an auditor reviews approvals, so can't also approve"],
+  ["role_functional_manager", "role_recon_ops", "a functional manager approves work, so can't also be in the Ops team"],
+  ["role_recon_auditor", "role_recon_ops", "an auditor reviews the work, so can't also do it"],
 ];
 
 const EMPTY = { name: "", empNo: "", phone: "", email: "", designation: "", roles: [], amcs: ["ALL"], funcs: [] };

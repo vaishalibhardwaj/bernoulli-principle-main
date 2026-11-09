@@ -80,6 +80,9 @@ export function authorize(actor, action, target) {
 
   // Maker–checker: nobody approves their own work, on any screen.
   if (cap === "approve" && target) {
+    // Checked on the login ID first: the person who created or changed a record cannot authorise it. Anyone else in the team can.
+    const authorIds = [target.ownerId, target.editedById, target.requestedById, target.createdById, target.submittedById].filter(Boolean);
+    if (authorIds.includes(actor.id)) return deny("You created or changed this record, so someone else in your team must authorise it");
     const first = (actor.name || "").split(" ")[0];
     const authors = [target.owner, target.createdBy, target.editedBy, target.requestedBy].filter(Boolean);
     if (authors.includes(actor.name) || authors.includes(first)) {

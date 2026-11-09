@@ -33,9 +33,6 @@ export const MODULES = [
       { key: "exceptions", label: "Exceptions", plain: "Problem cases", path: "/exceptions", group: "Daily cycle", step: 3, phase: "P2", caps: ["view", "edit", "approve", "export"] },
       { key: "release", label: "Fund release", plain: "Release money", path: "/release", group: "Daily cycle", step: 4, phase: "P2", caps: ["view", "edit", "approve", "export"] },
       { key: "refunds", label: "Refunds", plain: "Refunds", path: "/refunds", group: "Daily cycle", step: 5, phase: "P2", caps: ["view", "edit", "approve", "export"] },
-      { key: "cutoffs", label: "Cutoff times", path: "/cutoffs", group: "Setup", caps: ["view", "edit", "approve"] },
-      { key: "status_std", label: "Status standardisation", path: "/status-standardisation", group: "Setup", caps: ["view", "edit", "approve"] },
-      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Setup", caps: ["view", "edit", "approve"] },
       { key: "approvals", label: "Setup approvals", path: "/dashboard", group: "Setup", caps: ["view", "approve"], hidden: true },
       { key: "audit", label: "Audit history", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
     ],
@@ -106,10 +103,15 @@ export const MODULES = [
     // Any role can be given these screens in Roles & Access, so operations staff can be added to setup work too.
     key: "central_setup", label: "Central Setup", color: "#7c5cff", folders: true,
     screens: [
+      { key: "setup_tasks", label: "Pending tasks", crumb: "Pending setup tasks", path: "/setup-tasks", group: "Recon", caps: ["view", "edit"] },
       { key: "bank_setup", label: "Bank statement", crumb: "Bank statement setup", path: "/bank-setup", group: "Recon", caps: ["view", "edit", "approve", "export"] },
       { key: "credit_mis", label: "Credit MIS", crumb: "Credit MIS setup", path: "/credit-mis", group: "Recon", caps: ["view", "edit", "approve", "export"] },
       { key: "mapping", label: "Column mapping", path: "/mapping", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "cutoffs", label: "Cutoff times", path: "/cutoffs", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "status_std", label: "Status standardisation", path: "/status-standardisation", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Recon", caps: ["view", "edit", "approve"] },
       { key: "setup_approvals", label: "Approvals", crumb: "Setup approvals", path: "/setup-approvals", group: "Recon", caps: ["view", "approve"] },
+      { key: "setup_scheduler", label: "Scheduler monitor", crumb: "Scheduler monitor", path: "/setup-scheduler", group: "Recon", caps: ["view", "export"] },
     ],
   },
 ];
@@ -128,24 +130,22 @@ export function seedRoles() {
   const at = new Date(Date.now() - 200 * 86400000).toISOString();
   const r = (id, name, module, description, perms, extra = {}) => ({ id, name, module, description, perms, status: "active", system: true, createdBy: "System", createdAt: at, ...extra });
   return [
-    // Central Setup Team: six peers. Any member submits; any other member approves. Nobody approves their own work (rbac.authorize).
-    r("role_platform_admin", "Central Setup Team", "admin", "Peer team of six. Sets up bank statements, Credit MIS and column mappings, and gives people their roles and AMC access. Any member submits; any other member approves. Does not run the daily cycle or manage IDs (ID management does).",
-      { users: ["view", "edit", "approve", "export"], roles: ["view", "edit", "approve"], bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], setup_approvals: ["view", "approve"] }, { peer: true }),
-    r("role_cst_recon_setup", "Central Setup · Recon setup", "central_setup", "Recon setup work for people outside the Central Setup Team, such as operations staff: bank statement, Credit MIS and column mapping. Any holder submits; any other holder approves.",
-      { bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], setup_approvals: ["view", "approve"] }, { peer: true }),
+    // Central Setup Team: one role, six peers. No separate maker and checker: whoever created a record cannot authorise it;
+    // anyone else in the team can (checked on the login ID in rbac.authorize).
+    r("role_platform_admin", "Central Setup Team", "admin", "One role for the six-person team. Creates roles across modules, gives screen and AMC access, and does every setup (bank statement, Credit MIS, column mapping, cutoff times, status standardisation, narration tags). Whoever creates a record cannot authorise it; anyone else in the team can. Does not run the daily cycle or manage IDs (ID management does).",
+      { users: ["view", "edit", "approve", "export"], roles: ["view", "edit", "approve"], setup_tasks: ["view", "edit"], bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], cutoffs: ["view", "edit", "approve"], status_std: ["view", "edit", "approve"], narration_tags: ["view", "edit", "approve"], setup_approvals: ["view", "approve"], setup_scheduler: ["view", "export"] }, { peer: true }),
+    r("role_cst_recon_setup", "Central Setup · Recon setup", "central_setup", "Recon setup work for people outside the Central Setup Team: pending tasks, bank statement, Credit MIS, column mapping, cutoff times, status standardisation and narration tags. Whoever creates a record cannot authorise it; any other holder can.",
+      { setup_tasks: ["view", "edit"], bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], cutoffs: ["view", "edit", "approve"], status_std: ["view", "edit", "approve"], narration_tags: ["view", "edit", "approve"], setup_approvals: ["view", "approve"], setup_scheduler: ["view"] }, { peer: true }),
     r("role_access_approver", "Access Approver", "admin", "Second-admin approval of role changes and privileged role grants.",
       { users: ["view", "approve"], roles: ["view", "approve"] }),
-    r("role_recon_setup_maker", "Recon · Setup Maker", "recon", "Maintains cutoff times, status values and narration tags, and uploads and reprocesses bank files. Bank, Credit MIS and mapping setups sit with the Central Setup Team.",
-      { today: ["view"], balances: ["view", "export"], cutoffs: ["view", "edit"], status_std: ["view", "edit"], narration_tags: ["view", "edit"], command: ["view"], file_upload: ["view", "edit"], ingestion: ["view", "edit"], approvals: ["view"], audit: ["view"] }),
-    r("role_recon_ops_maker", "Recon · Operations Maker", "recon", "Runs the daily cycle: uploads and reprocesses bank files, matching, problem cases, documents, fund release and refunds. No setup screens. Uses the simple view.",
-      { today: ["view"], balances: ["view", "export"], command: ["view"], file_upload: ["view", "edit"], ingestion: ["view", "edit"], manual_upload: ["view", "edit"], match: ["view", "edit"], exceptions: ["view", "edit", "export"], extraction: ["view", "edit"], release: ["view", "edit"], refunds: ["view", "edit", "export"], audit: ["view"] }, { simple: true }),
-    r("role_recon_checker", "Recon · Checker", "recon", "Approves everything recon makers submit: cutoffs, status values, narration tags, matches, case closures, fund release, refunds and day close.",
-      { today: ["view"], no_action_review: ["view"], balances: ["view", "export"], cutoffs: ["view", "approve"], status_std: ["view", "approve"], narration_tags: ["view", "approve"], inbox: ["view", "approve"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], command: ["view", "export"], file_upload: ["view"], ingestion: ["view", "approve"], match: ["view", "approve"], exceptions: ["view", "approve", "export"], extraction: ["view", "approve"], approvals: ["view", "approve"], audit: ["view", "export"] }),
-    r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", all("recon", ["view", "export"])),
-    r("role_functional_manager", "Recon · Functional Manager", "recon", "Sees every process across Reconciliation and Brokerage. Acts only through dashboards, approvals and authorisation screens — never as a maker.",
-      { today: ["view"], no_action_review: ["view", "approve", "export"], balances: ["view", "export"], command: ["view", "export"], inbox: ["view", "approve"], ingestion: ["view"], match: ["view"], extraction: ["view"], exceptions: ["view", "export"], release: ["view", "approve", "export"], refunds: ["view", "approve", "export"], bank_setup: ["view"], credit_mis: ["view"], mapping: ["view"], audit: ["view", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"], brk_master: ["view"] }),
-    r("role_it_support", "IT Support · Monitoring", "recon", "Watches file pickups and scheduler jobs across sources. Read-only; no business data changes.",
-      { scheduler: ["view", "export"], balances: ["view"] }),
+    // Recon Ops: one role for the back-office team. Every member is both maker and checker; whoever did the work cannot authorise it.
+    r("role_recon_ops", "Recon · Ops", "recon", "One role for the recon back-office (BO) team: uploads and reprocesses files, watches closing balances, and raises setup requests to the Central Setup Team. Every member is maker and checker: whoever did the work cannot authorise it; anyone else in the team can.",
+      { today: ["view"], inbox: ["view", "approve"], balances: ["view", "export"], command: ["view"], file_upload: ["view", "edit"], ingestion: ["view", "edit", "approve"], manual_upload: ["view", "edit"], audit: ["view", "export"] }, { peer: true }),
+    r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", Object.fromEntries(Object.entries(all("recon", ["view", "export"])).filter(([k]) => !SCREENS[k].phase))),
+    r("role_functional_manager", "Recon · Functional Manager", "recon", "Dashboards and approval screens only: the team dashboard, closing balances, approvals and the No-action review. Never a maker; no setup screens.",
+      { command: ["view", "export"], balances: ["view", "export"], inbox: ["view", "approve"], no_action_review: ["view", "approve", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"] }),
+    r("role_it_support", "IT Support · Monitoring", "recon", "Scheduler monitor only: checks that scheduler jobs ran. Read-only; no business data.",
+      { scheduler: ["view", "export"] }),
     r("role_sip_viewer", "SIP · Viewer", "sip", "Read-only view of SIP registrations, failures and mandates.", all("sip", ["view"])),
     r("role_brk_maker", "Brokerage · Maker", "brokerage", "Computes brokerage and prepares payout batches.", all("brokerage", ["view", "edit", "export"])),
     r("role_brk_checker", "Brokerage · Checker", "brokerage", "Approves brokerage computations and payouts.", all("brokerage", ["view", "approve", "export"])),
@@ -158,8 +158,8 @@ export function seedRoles() {
 export function rolesForLegacy(legacy, i = 0) {
   switch (legacy) {
     case "admin": return ["role_platform_admin"];
-    case "operator": return [i % 3 === 0 ? "role_recon_ops_maker" : "role_recon_setup_maker"];
-    case "authoriser": return ["role_recon_checker"];
+    case "operator": return ["role_recon_ops"];
+    case "authoriser": return ["role_recon_ops"];
     case "viewer":
       if (i % 7 === 0) return ["role_brk_maker"];
       if (i % 11 === 0) return ["role_pst_maker", "role_recon_auditor"];
@@ -248,8 +248,8 @@ export const VERTICALS = [
 export const PERSONAS = [
   { id: "usr_meera", label: "Meera · Central Setup Team" },
   { id: "usr_anil", label: "Anil · Central Setup Team" },
-  { id: "usr_priya", label: "Priya · Recon Setup Maker" },
-  { id: "usr_arun", label: "Arun · Recon Checker" },
+  { id: "usr_priya", label: "Priya · Recon Ops" },
+  { id: "usr_arun", label: "Arun · Recon Ops" },
   { id: "usr_kavita", label: "Kavita · Functional Manager" },
   { id: "usr_vikram", label: "Vikram · IT Support" },
 ];

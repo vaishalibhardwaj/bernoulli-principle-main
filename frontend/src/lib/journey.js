@@ -88,13 +88,13 @@ export function dailyCycle(c) {
 
 /** The one thing this user should do next: first unfinished step they can act on. */
 export function nextStepFor(steps, perms) {
-  const canDo = (s) => hasCap(perms, s.screen, "edit") || (s.waitingOn && hasCap(perms, s.screen, "approve")) || (s.key === "close" && (hasCap(perms, "match", "edit") || hasCap(perms, "release", "approve")));
+  const canDo = (s) => hasCap(perms, s.screen, "edit") || (s.waitingOn && hasCap(perms, s.screen, "approve")) || (s.key === "close" && (hasCap(perms, "ingestion", "edit") || hasCap(perms, "ingestion", "approve")));
   return steps.find((s) => s.state !== "done" && canDo(s)) || null;
 }
 
 /** Can this person act on a step at all (as maker or checker)? */
 export const canActOn = (s, perms) => hasCap(perms, s.screen, "edit") || hasCap(perms, s.screen, "approve")
-  || (s.key === "close" && (hasCap(perms, "match", "edit") || hasCap(perms, "release", "edit") || hasCap(perms, "release", "approve")));
+  || (s.key === "close" && (hasCap(perms, "ingestion", "edit") || hasCap(perms, "ingestion", "approve")));
 
 /**
  * The person's own stepper: only the steps their roles let them act on, narrowed to the steps an admin

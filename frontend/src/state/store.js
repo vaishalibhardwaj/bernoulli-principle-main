@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useReducer, useCallback } 
 import { seedBankConfigs, seedCreditConfigs, seedMappings, seedStatusMap, newMappingFor, seedCutoffs, seedNarrationTags } from "../mock/seed";
 import { diffSetup, isStandard } from "../lib/setupSchema";
 import { seedUsers } from "../mock/userSeed";
+import { ACCOUNTS } from "../mock/bankMaster";
 import { uid } from "../lib/format";
 import { userAmcs } from "../lib/org";
 import { seedNoAction } from "../lib/events";
@@ -10,7 +11,7 @@ import { genTempPassword } from "../lib/credentials";
 import { PERSONAS, seedRoles, permsFor, hasCap, isPrivileged, sodConflicts, SCREEN_FOR_KIND, isSimpleUser } from "../lib/access";
 import { earlierFailures, seedFiles, seedMatchData, seedRules, seedExceptions, seedDocuments, seedReleases, seedRefunds, withHistory, seedEmails, seedConnections, seedSftp, seedBalances, seedJobs, seedFileTrack, seedLiability } from "../mock/opsSeed";
 
-const KEY = "cams_recon_state_v25";
+const KEY = "cams_recon_state_v27";
 // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
 const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp", "cutoffs", "narration_tags", "balances", "jobs", "liab_debits"];
 
@@ -20,11 +21,25 @@ function baselineOf(prev, item) {
   return (prev && prev.baseline) || item.baseline || null;
 }
 
+/** Setup requests Ops have raised to the Central Setup Team (Pending tasks). */
+function seedSetupRequests() {
+  const ago = (h) => new Date(Date.now() - h * 3600000).toISOString();
+  return [
+    { id: "str_1", type: "bank", amc: "HDFC Mutual Fund", bankName: "HDFC Bank", accountNumber: (ACCOUNTS["HDFC Bank"] || [])[1]?.accountNumber || "", note: "Got an HDFC Bank statement for this account by email today. Please set it up so it loads by itself.", status: "open", raisedBy: "Priya Sharma", raisedById: "usr_priya", raisedAt: ago(26) },
+    { id: "str_2", type: "credit", amc: "ICICI Prudential MF", bankName: "ICICI Bank", accountNumber: "", note: "Cashfree has started sending a Credit MIS for ICICI Pru collections. Needs a Credit MIS setup.", status: "open", raisedBy: "Arun Mehta", raisedById: "usr_arun", raisedAt: ago(5) },
+    { id: "str_3", type: "mapping", amc: "DSP Mutual Fund", bankName: "Yes Bank", accountNumber: "", note: "Yes Bank added a Remarks column; the file fails the layout check. Please re-map.", status: "in_progress", raisedBy: "Priya Sharma", raisedById: "usr_priya", raisedAt: ago(50), assignee: "Anil Kulkarni", assigneeId: "usr_anil", pickedAt: ago(20) },
+    { id: "str_4", type: "bank", amc: "Kotak Mahindra MF", bankName: "Kotak Mahindra Bank", accountNumber: "", note: "New collection account opened for the Kotak liquid fund. Statement will come by SFTP.", status: "done", raisedBy: "Arun Mehta", raisedById: "usr_arun", raisedAt: ago(96), assignee: "Meera Iyer", assigneeId: "usr_meera", doneAt: ago(70), doneBy: "Meera Iyer" },
+  ];
+}
+
 function buildSeed() {
   const configs = seedBankConfigs();
   const creditConfigs = seedCreditConfigs();
   const mappings = seedMappings(configs);
   const users = seedUsers();
+  // Seed records name their owner by first name; give each one the owner's login ID, which is what the authorise check uses.
+  const idOf = Object.fromEntries(users.filter((u) => u.id.startsWith("usr_") && !/\d/.test(u.id)).map((u) => [u.name.split(" ")[0], u.id]));
+  [configs, creditConfigs, mappings].forEach((list) => list.forEach((x) => { if (x.owner && idOf[x.owner]) x.ownerId = idOf[x.owner]; }));
   const roles = seedRoles();
   const { credits, purchases, suggestions } = seedMatchData();
   const files = withHistory(seedFiles());
@@ -36,10 +51,8 @@ function buildSeed() {
   return {
     collections: {
       bank_config: configs, credit_config: creditConfigs, bank_mapping: mappings, users, roles,
-      access_requests: [
-        { id: "acr_seed1", kind: "assign", status: "pending", userId: "usr_sanjay", roleIds: ["role_recon_checker"], requestedBy: "Meera Iyer", requestedAt: new Date(Date.now() - 2 * 3600000).toISOString(), note: "Sanjay to cover Arun's approvals during leave (21–31 Oct)" },
-      ],
-      files: files.map((f) => ({ ...f, histV2: true })), emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], file_uploads: [], no_action: seedNoAction(), dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
+      access_requests: [],
+      files: files.map((f) => ({ ...f, histV2: true })), emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], file_uploads: [], setup_requests: seedSetupRequests(), no_action: seedNoAction(), dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
       exceptions: seedExceptions(), documents: seedDocuments(),
       releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(), cutoffs: seedCutoffs(), narration_tags: seedNarrationTags(),
     },
@@ -186,22 +199,22 @@ export function StoreProvider({ children }) {
   const saveDraft = useCallback((kind, item, label) => {
     const prev = get(kind, item.id);
     const from = prev ? prev.status : "new";
-    const saved = { ...item, baseline: baselineOf(prev, item), status: "draft", lastUpdated: new Date().toISOString(), owner: activePersona.name };
+    const saved = { ...item, baseline: baselineOf(prev, item), status: "draft", lastUpdated: new Date().toISOString(), owner: activePersona.name, ownerId: activePersona.id };
     dispatch({ type: "UPSERT", kind, item: saved });
     addAudit({ entityType: kind, entityId: saved.id, entityLabel: label, action: "Save as Draft", from: statusLabel(from), to: "Draft" });
     return saved;
-  }, [get, addAudit, activePersona.name]);
+  }, [get, addAudit, activePersona.name, activePersona.id]);
 
   const submit = useCallback((kind, item, label) => {
     const prev = get(kind, item.id);
     const from = prev ? prev.status : "new";
-    const saved = { ...item, baseline: baselineOf(prev, item), status: "pending", lastUpdated: new Date().toISOString(), owner: activePersona.name };
+    const saved = { ...item, baseline: baselineOf(prev, item), status: "pending", lastUpdated: new Date().toISOString(), owner: activePersona.name, ownerId: activePersona.id };
     dispatch({ type: "UPSERT", kind, item: saved });
     // R7 — log whether this is a new setup or an edit, and which fields changed.
     const diff = diffSetup(saved.baseline, { ...saved, kind });
     addAudit({ entityType: kind, entityId: saved.id, entityLabel: label, action: diff ? "Submit edit for Approval" : "Submit new setup for Approval", from: statusLabel(from), to: "Pending Approval", comment: diff ? (diff.length ? "Changed: " + diff.map((d) => d.field).join(", ") : "No field changes") : undefined });
     return saved;
-  }, [get, addAudit, activePersona.name]);
+  }, [get, addAudit, activePersona.name, activePersona.id]);
 
   const approve = useCallback((kind, id, label) => {
     const item = get(kind, id);
@@ -252,10 +265,10 @@ export function StoreProvider({ children }) {
   }, [roles]);
 
   const queueAccessRequest = useCallback((req) => {
-    const item = { id: uid("acr"), status: "pending", requestedBy: personaUser.name, requestedAt: new Date().toISOString(), ...req };
+    const item = { id: uid("acr"), status: "pending", requestedBy: personaUser.name, requestedById: personaUser.id, requestedAt: new Date().toISOString(), ...req };
     dispatch({ type: "UPSERT", kind: "access_requests", item });
     return item;
-  }, [personaUser.name]);
+  }, [personaUser.name, personaUser.id]);
 
   const addUser = useCallback((form) => {
     const authCheck = authorize(actor, ACTIONS.USER_CREATE);
@@ -402,7 +415,9 @@ export function StoreProvider({ children }) {
     }
     if (kind && patch) {
       const next = typeof patch === "function" ? patch(item) : { ...item, ...patch };
-      dispatch({ type: "UPSERT", kind, item: { ...next, lastUpdated: new Date().toISOString() } });
+      // Whoever makes or changes a record is stamped by login ID, so they can never be the one who authorises it.
+      const stamp = cap === "edit" ? { editedById: actor.id, ownerId: next.ownerId || actor.id } : {};
+      dispatch({ type: "UPSERT", kind, item: { ...next, ...stamp, lastUpdated: new Date().toISOString() } });
     }
     if (entry) addAudit({ entityType: kind, entityId: id, ...entry });
     return { ok: true };
