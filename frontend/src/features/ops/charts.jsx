@@ -28,7 +28,7 @@ export function LineChart({ data, height = 200, min, max, target, format = (v) =
   return (
     <div className="lc" ref={ref} onPointerMove={onMove} onPointerLeave={() => setHover(null)} data-testid={id} role="img" aria-label={label}>
       <svg width={w} height={height}>
-        <defs><linearGradient id="lcGlow" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#39d0ff" stopOpacity=".35" /><stop offset="100%" stopColor="#39d0ff" stopOpacity="0" /></linearGradient></defs>
+        <defs><linearGradient id="lcGlow" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#3b82f6" stopOpacity=".35" /><stop offset="100%" stopColor="#3b82f6" stopOpacity="0" /></linearGradient></defs>
         {tv.map((v) => <g key={v}><line x1={pad.l} x2={w - pad.r} y1={y(v)} y2={y(v)} className="lc-grid" /><text x={pad.l - 8} y={y(v) + 4} className="lc-axis" textAnchor="end">{format(v)}</text></g>)}
         {data.map((d, i) => (i % Math.ceil(data.length / 7) === 0 || i === data.length - 1) && <text key={i} x={x(i)} y={height - 8} className="lc-axis" textAnchor="middle">{d.label}</text>)}
         {target != null && <g><line x1={pad.l} x2={w - pad.r} y1={y(target)} y2={y(target)} className="lc-target" /><text x={w - pad.r} y={y(target) - 5} textAnchor="end" className="lc-target-label">Target {format(target)}</text></g>}

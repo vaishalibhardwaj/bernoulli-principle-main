@@ -14,9 +14,9 @@ import { C, Donut, DayTimeline, HBar, Kpi, minsNow, hhmm } from "./dashViz";
 const THREE_PM = 15 * 60;
 const FOUR_PM = 16 * 60;
 // Balance check (green / orange) and sweep (violet / blue) use different palettes on purpose.
-const BAL = { match: "#4ff0b4", mismatch: "#ff9f43", none: "rgba(140,160,200,.5)" };
-const STMT = { txn: "#4ff0b4", no_txn: "#39d0ff", not_received: "rgba(140,160,200,.5)" };
-const SWP = { full: "#b48cff", partial: "#2f8cf0", pending: "rgba(180,140,255,.22)" };
+const BAL = { match: "#16a34a", mismatch: "#ff9f43", none: "rgba(140,160,200,.5)" };
+const STMT = { txn: "#16a34a", no_txn: "#3b82f6", not_received: "rgba(140,160,200,.5)" };
+const SWP = { full: "#6366f1", partial: "#1d4ed8", pending: "rgba(99,102,241,.22)" };
 const STMT_TEXT = { txn: "Received", no_txn: "No transactions today", not_received: "Not received" };
 const ACCT_TYPE = { scheme: "Scheme account", common: "Common collection account" };
 const NO_FILTER = { bank: "all", account: "all", sebi: "all", type: "all" };
@@ -252,8 +252,8 @@ function SweepChart({ rows, now, pctAt }) {
         return (
           <g key={l} data-testid={"sweep-pin-" + l.replace(" ", "")}>
             <line x1={x(t)} x2={x(t)} y1={10} y2={H - B} stroke={SWP.partial} strokeDasharray="3 3" />
-            <rect x={lx} y={ly} width="66" height="18" rx="5" fill="rgba(14,26,54,.92)" stroke={SWP.partial} />
-            <text x={lx + 33} y={ly + 12.5} textAnchor="middle" fontSize="11" fontWeight="600" fill="#e6eeff">{`${l}: ${reached ? p + "%" : "—"}`}</text>
+            <rect x={lx} y={ly} width="66" height="18" rx="5" fill="#ffffff" stroke={SWP.partial} />
+            <text x={lx + 33} y={ly + 12.5} textAnchor="middle" fontSize="11" fontWeight="600" fill="#0f172a">{`${l}: ${reached ? p + "%" : "—"}`}</text>
             {reached && <circle cx={x(t)} cy={y(p)} r="4" fill={SWP.full} />}
           </g>
         );

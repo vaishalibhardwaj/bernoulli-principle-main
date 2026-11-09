@@ -6,7 +6,7 @@ import { hasCap } from "@/lib/access";
 import { inrShort, num, dur } from "@/features/ops/ui";
 import { LineChart, Spark, BarList } from "@/features/ops/charts";
 import { useCycle } from "@/features/today/Cycle";
-import { TiltCard, CoreOrb, FlowStreams, Towers3D, CountUp } from "@/features/viz/Viz";
+import { TiltCard, CoreOrb, FlowStreams, FocusBars, CountUp } from "@/features/viz/Viz";
 import { Gauge, ArrowUpRight, ArrowDownRight, Download } from "lucide-react";
 import { downloadCsv } from "@/features/reports/csv";
 import ManagerData from "./ManagerData";
@@ -69,12 +69,12 @@ export default function CommandCentre() {
     { label: "PDF / email MIS", v: TODAY.creditValue * 0.05 },
   ];
   const flowOut = [
-    { label: release.status === "released" ? "Released to Posting" : "Ready to release", v: TODAY.realisedForAllotment, color: "#4ff0b4" },
-    { label: "Held — not matched", v: Math.max(0, TODAY.heldForAllotment - exAmt - refundsOut), color: "#ffc56b" },
-    { label: "Problem cases", v: exAmt, color: "#ff6b86" },
-    { label: "Refunds", v: refundsOut, color: "#b48cff" },
+    { label: release.status === "released" ? "Released to Posting" : "Ready to release", v: TODAY.realisedForAllotment, color: "#16a34a" },
+    { label: "Held — not matched", v: Math.max(0, TODAY.heldForAllotment - exAmt - refundsOut), color: "#f59e0b" },
+    { label: "Problem cases", v: exAmt, color: "#f43f5e" },
+    { label: "Refunds", v: refundsOut, color: "#6366f1" },
   ];
-  const towers = TODAY.matchTrend.map((b) => { const s = b.series.slice(-range); const last = s[s.length - 1]; return { label: b.bank, code: b.code, v: last, bad: last < s[s.length - 2] - 4 }; });
+  const towers = TODAY.matchTrend.map((b) => { const s = b.series.slice(-range); const last = s[s.length - 1]; const prev = s[s.length - 2]; return { label: b.bank, code: b.code, v: last, prev, bad: last < prev - 4 }; });
 
   return (
     <div className="dash" data-testid="command-centre">
@@ -115,12 +115,13 @@ export default function CommandCentre() {
         ))}
       </div>
 
-      <div className="dash-2">
-        <div className="card">
-          <div className="card-head"><h3>Auto-match rate by bank</h3><span className="muted">Taller = better · red = dropped today · click to open bank files</span>
+      <div className="card fb-card">
+          <div className="card-head"><h3>Auto-match rate by bank</h3><span className="muted">Hover a bank for detail · marker = yesterday · click to open bank files</span>
             {canExport && <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => downloadCsv(`auto_match_by_bank_${today}.csv`, ["Bank", ...TODAY.matchTrend[0].series.map((_, i) => dayLabel(TODAY.matchTrend[0].series.length - 1 - i))], TODAY.matchTrend.map((b) => [b.bank, ...b.series.map((v) => v.toFixed(1))]))} data-testid="export-towers"><Download size={13} /> Export</button>}</div>
-          <div className="card-pad"><Towers3D items={towers} format={(v) => `${v.toFixed(1)}%`} onPick={() => go("ingestion", "/ingestion")?.()} /></div>
-        </div>
+          <div className="card-pad"><FocusBars items={towers} format={(v) => `${Math.round(v * 10) / 10}%`} onPick={() => go("ingestion", "/ingestion")?.()}
+            tip={(it) => <><b>{it.v.toFixed(1)}%</b> auto-matched <em>|</em> vs yesterday: <b className={it.v < it.prev ? "neg" : "pos"}>{it.v >= it.prev ? "+" : ""}{(it.v - it.prev).toFixed(1)} pts</b> <em>|</em> target: <b>90%</b></>} /></div>
+      </div>
+      <div className="dash-2 dash-1">
         <div className="card">
           <div className="card-head"><h3>Auto-match trend · all banks</h3><span className="muted">Hover for daily values</span></div>
           <div className="card-pad"><LineChart id="match-trend" data={trend} min={80} max={100} target={90} format={(v) => `${v.toFixed(0)}%`} label="Auto-match rate trend" height={250} /></div>

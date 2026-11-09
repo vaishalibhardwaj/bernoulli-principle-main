@@ -174,7 +174,7 @@ export default function MatchWorkbench() {
               const c0 = byId(credits, s.credits[0]); const p0 = byId(purchases, s.purchases[0]);
               return (
                 <button key={s.id} className="un-row" onClick={() => setSelSug(s.id)}>
-                  <i style={{ background: s.confidence >= 0.9 ? "#4ff0b4" : "#ffc56b", color: s.confidence >= 0.9 ? "#4ff0b4" : "#ffc56b" }} />
+                  <i style={{ background: s.confidence >= 0.9 ? "#16a34a" : "#f59e0b", color: s.confidence >= 0.9 ? "#16a34a" : "#f59e0b" }} />
                   <span className="un-title">{inr(s.credits.reduce((a, id) => a + (byId(credits, id)?.amount || 0), 0))}<small>{c0?.remitter} → {p0?.investor}</small></span><ArrowRight size={13} />
                 </button>
               );

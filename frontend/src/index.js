@@ -5,6 +5,7 @@ import "@/styles.css";
 import "@/ops.css";
 import "@/theme.css";
 import "@/future.css";
+import "@/aurora.css";
 import App from "@/App";
 import { StoreProvider } from "@/state/store";
 import { Toaster } from "sonner";
