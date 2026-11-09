@@ -25,6 +25,7 @@ import DocumentExtraction from "@/features/extraction/DocumentExtraction";
 import ModulePlaceholder from "@/features/modules/ModulePlaceholder";
 import Today from "@/features/today/Today";
 import Approvals from "@/features/approvals/Approvals";
+import SetupTasks from "@/features/setup/SetupTasks";
 import FundRelease from "@/features/release/FundRelease";
 import Refunds from "@/features/refunds/Refunds";
 import { useStore } from "@/state/store";
@@ -55,6 +56,8 @@ export default function App() {
           <Route path="/my-work" element={<Navigate to="/today" replace />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/setup-approvals" element={<Approvals />} />
+          <Route path="/setup-tasks" element={<SetupTasks />} />
+          <Route path="/setup-scheduler" element={<SchedulerMonitor />} />
           <Route path="/release" element={<FundRelease />} />
           <Route path="/refunds" element={<Refunds />} />
           <Route path="/reports" element={<HomeRedirect />} />

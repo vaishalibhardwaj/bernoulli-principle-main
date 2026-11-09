@@ -276,7 +276,7 @@ export function seedExceptions() {
     const status = i % 9 === 0 ? "pending_approval" : i % 13 === 0 ? "closed" : i % 4 === 0 ? "in_progress" : "open";
     list.push({
       id: `exc_${i + 1}`, amc: amcFor(i), ref: `EXC-${24100 + i}`, type, bankName: bank.name, amount, ageHours, interestHoursLeft,
-      investor: ["Format drift", "Missing statement"].includes(type) ? "—" : inv.name, owner: owners[i % owners.length],
+      investor: ["Format drift", "Missing statement"].includes(type) ? "—" : inv.name, owner: status === "pending_approval" ? ["Priya Sharma", "Arun Mehta"][(i / 9) % 2] : owners[i % owners.length],
       status, rootCause: status === "closed" || status === "pending_approval" ? ROOT_CAUSES[i % ROOT_CAUSES.length] : null,
       suggestion: suggestionFor(type, inv, amount),
       createdAt: new Date(now - ageHours * hour).toISOString(),
@@ -502,28 +502,33 @@ export function seedJobs() {
   // Times are stored as minutes relative to "now" so the monitor always reads live (never stale after a day).
   // source: where files land — SFTP (GCS bucket), API, or UI upload. Portal bots drop into the same SFTP/GCS landing area.
   // amcs: AMCs whose files the job carries (null = every AMC).
-  const j = (id, topic, channel, name, every, everyMin, lastAgo, recvAgo, status, remarks, extra = {}) => ({ id, topic, channel, source: channel === "api" ? "api" : channel === "ui" ? "ui" : "sftp", name, every, everyMin, lastAgo, recvAgo, status, remarks, amcs: null, ...extra });
+  // exec = what the scheduler itself did on its last slot (ran / failed / skipped). File problems are in remarks, not here.
+  // owner = who acts on a problem: scheduler didn't execute → IT Support; ran but no data, wrong format or bad data → Setup or Ops.
+  const j = (id, topic, channel, name, every, everyMin, lastAgo, recvAgo, status, remarks, extra = {}) => ({ id, topic, channel, source: channel === "api" ? "api" : channel === "ui" ? "ui" : "sftp", name, every, everyMin, lastAgo, recvAgo, status, remarks, exec: "ran", owner: null, amcs: null, ...extra });
   return [
-    j("job_1", "bank", "sftp", "SFTP pickup — priority accounts (14)", "every 15 min, all day", 15, 6, 6, "success", "14 accounts scanned · 9 files picked up"),
-    j("job_2", "bank", "sftp", "SFTP pickup — other accounts (186)", "every 30 min after priority run", 30, 14, 22, "success", "186 accounts scanned · 41 files picked up"),
-    j("job_3", "bank", "sftp", "SFTP pickup — HDFC Bank folder", "every 15 min", 15, 9, 9, "failure", "Format mismatch: 11 columns vs approved 10 — rows held", { amcs: ["HDFC Mutual Fund", "DSP Mutual Fund"] }),
-    j("job_4", "bank", "api", "HDFC Bank statement API", "every 30 min", 30, 12, 12, "success", "1,882 records", { amcs: ["HDFC Mutual Fund", "ICICI Prudential MF", "Nippon India MF"] }),
-    j("job_5", "bank", "api", "Kotak statement API", "every 30 min (run by IT)", 30, 18, 48, "failure", "3 of the last 6 pulls timed out", { amcs: ["Kotak Mahindra MF", "Aditya Birla Sun Life MF"] }),
-    j("job_6", "bank", "api", "Yes Bank statement API", "every 30 min", 30, 25, 185, "failure", "Login refused — access token expired", { amcs: ["ICICI Prudential MF", "Nippon India MF"] }),
-    j("job_7", "bank", "auto", "Portal bot — HDFC net banking", "every 60 min", 60, 31, 31, "success", "1,204 records", { amcs: ["HDFC Mutual Fund"] }),
-    j("job_8", "bank", "auto", "Portal bot — Axis corporate", "every 60 min", 60, 35, 155, "failure", "Website asked for a human check (CAPTCHA)", { amcs: ["Aditya Birla Sun Life MF", "Kotak Mahindra MF"] }),
-    j("job_9", "bank", "sftp", "Direct-match scheduler (12 UPI accounts)", "every 10 min", 10, 4, null, "success", "312 credits matched directly by UTR"),
-    j("job_10", "credit", "sftp", "Credit MIS SFTP — Razorpay CMS", "every 30 min", 30, 9, 9, "success", "2 files · 4,410 rows"),
-    j("job_11", "credit", "api", "Credit MIS API — Razorpay Online", "every 15 min", 15, 7, 7, "success", "1,120 rows"),
-    j("job_12", "credit", "auto", "Credit MIS portal bot — BillDesk", "daily 09:00", 1440, 160, 160, "success", "1 file · 640 rows", { amcs: ["HDFC Mutual Fund", "Aditya Birla Sun Life MF", "DSP Mutual Fund"] }),
-    j("job_13", "credit", "sftp", "Credit MIS SFTP — CAMSPay", "every 30 min", 30, 64, 64, "failure", "Scheduler missed its last slot (worker restarted)", { missed: true }),
-    j("job_17", "remitter", "sftp", "Remitter file pickup — SFTP", "every 30 min", 30, 17, 17, "success", "3 files · 212 remitters"),
-    j("job_18", "remitter", "ui", "GCS pickup — remitter files uploaded on screen", "every 5 min", 5, 2, 41, "success", "1 file · 48 remitters"),
-    j("job_19", "bank", "ui", "GCS pickup — statements uploaded on screen", "every 5 min", 5, 3, 26, "success", "2 files picked up"),
-    j("job_20", "credit", "ui", "GCS pickup — Credit MIS uploaded on screen", "every 5 min", 5, 1, 95, "success", "1 file picked up"),
-    j("job_14", "other", "sftp", "Reverse feed pickup — Fundnet", "every 20 min", 20, 11, 11, "success", "18 files"),
-    j("job_15", "other", "sftp", "Cheque scan pickup — branch scans", "every 60 min", 60, 40, 40, "success", "36 images"),
-    j("job_16", "other", "api", "NAV & scheme master sync", "daily 07:00", 1440, 280, 280, "success", "All schemes updated"),
+    j("job_1", "bank", "sftp", "SFTP pickup — priority accounts (14)", "every 15 min, all day", 15, 6, 6, "success", "Loaded · 14 accounts scanned, 9 files picked up"),
+    j("job_2", "bank", "sftp", "SFTP pickup — other accounts (186)", "every 30 min after priority run", 30, 14, 22, "success", "Loaded · 186 accounts scanned, 41 files picked up"),
+    j("job_3", "bank", "sftp", "SFTP pickup — HDFC Bank folder", "every 15 min", 15, 9, 9, "failure", "Ran · wrong format: 11 columns vs approved 10, rows held", { amcs: ["HDFC Mutual Fund", "DSP Mutual Fund"], owner: "Setup" }),
+    j("job_21", "bank", "sftp", "SFTP pickup — State Bank of India folder", "every 15 min", 15, 138, 150, "failure", "Scheduler has not run since its last slot — worker stopped", { exec: "skipped", owner: "IT Support" }),
+    j("job_22", "bank", "sftp", "SFTP pickup — Yes Bank folder", "every 30 min", 30, 11, null, "success", "Ran successfully, no data — no new file in the folder"),
+    j("job_4", "bank", "api", "HDFC Bank statement API", "every 30 min", 30, 12, 12, "success", "Loaded · 1,882 records", { amcs: ["HDFC Mutual Fund", "ICICI Prudential MF", "Nippon India MF"] }),
+    j("job_5", "bank", "api", "Kotak statement API", "every 30 min (run by IT)", 30, 18, 48, "failure", "Job errored — 3 of the last 6 pulls timed out before reaching the bank", { amcs: ["Kotak Mahindra MF", "Aditya Birla Sun Life MF"], exec: "failed", owner: "IT Support" }),
+    j("job_6", "bank", "api", "Yes Bank statement API", "every 30 min", 30, 25, 185, "failure", "Ran · bank refused the login, access token expired", { amcs: ["ICICI Prudential MF", "Nippon India MF"], owner: "Setup" }),
+    j("job_7", "bank", "auto", "Portal bot — HDFC net banking", "every 60 min", 60, 31, 31, "success", "Loaded · 1,204 records", { amcs: ["HDFC Mutual Fund"] }),
+    j("job_8", "bank", "auto", "Portal bot — Axis corporate", "every 60 min", 60, 35, 155, "failure", "Ran · website asked for a human check (CAPTCHA), no file", { amcs: ["Aditya Birla Sun Life MF", "Kotak Mahindra MF"], owner: "Ops" }),
+    j("job_23", "bank", "email", "Email intake — statements mailbox", "every 15 min", 15, 5, 5, "success", "Loaded · 3 emails, 3 statements"),
+    j("job_9", "bank", "sftp", "Direct-match scheduler (12 UPI accounts)", "every 10 min", 10, 4, null, "success", "Ran successfully · 312 credits matched by UTR"),
+    j("job_10", "credit", "sftp", "Credit MIS SFTP — Razorpay", "every 30 min", 30, 9, 9, "success", "Loaded · 2 files, 4,410 rows"),
+    j("job_11", "credit", "api", "Credit MIS API — Razorpay", "every 15 min", 15, 7, 7, "success", "Loaded · 1,120 rows"),
+    j("job_12", "credit", "api", "Credit MIS API — Cashfree", "every 30 min", 30, 16, 16, "success", "Loaded · 1 file, 640 rows", { amcs: ["HDFC Mutual Fund", "Aditya Birla Sun Life MF", "DSP Mutual Fund"] }),
+    j("job_13", "credit", "sftp", "Credit MIS SFTP — Cashfree", "every 30 min", 30, 64, 64, "failure", "Scheduler missed its last slot (worker restarted)", { missed: true, exec: "skipped", owner: "IT Support" }),
+    j("job_17", "remitter", "sftp", "Remitter file pickup — SFTP", "every 30 min", 30, 17, 17, "success", "Loaded · 3 files, 212 remitters"),
+    j("job_18", "remitter", "ui", "GCS pickup — remitter files uploaded on screen", "every 5 min", 5, 2, 41, "success", "Loaded · 1 file, 48 remitters"),
+    j("job_19", "bank", "ui", "GCS pickup — statements uploaded on screen", "every 5 min", 5, 3, 26, "success", "Loaded · 2 files picked up"),
+    j("job_20", "credit", "ui", "GCS pickup — Credit MIS uploaded on screen", "every 5 min", 5, 1, 95, "success", "Ran successfully, no data"),
+    j("job_14", "other", "sftp", "Reverse feed pickup — Fundnet", "every 20 min", 20, 11, 11, "success", "Loaded · 18 files"),
+    j("job_15", "other", "sftp", "Cheque scan pickup — branch scans", "every 60 min", 60, 40, 40, "success", "Loaded · 36 images"),
+    j("job_16", "other", "api", "NAV & scheme master sync", "daily 07:00", 1440, 280, 280, "success", "Loaded · all schemes updated"),
   ];
 }
 
@@ -542,12 +547,12 @@ export function seedFileTrack() {
     f("ft_8", "UTIB_9177.csv", "/inbound/axis/9177/", 215, 210, 208, "success", "2,104 new rows", "Aditya Birla Sun Life MF"),
     f("ft_9", "SCBL_2168.csv", "/inbound/scb/2168/", 95, 90, 89, "success", "612 new rows", "HDFC Mutual Fund"),
     f("ft_10", "CITI_6613.csv", "/inbound/citi/6613/", 60, 53, 52, "success", "388 new rows", "ICICI Prudential MF"),
-    f("ft_11", "RZP_CMS_HDFCMF_20261027.csv", "/inbound/creditmis/razorpay/", 120, 111, 110, "success", "2,210 rows", "HDFC Mutual Fund", { fileType: "credit" }),
-    f("ft_12", "CAMSPAY_ICICI_1027.xlsx", "/inbound/creditmis/camspay/", 66, null, null, "missed", "Scheduler missed its slot — still not picked up", "ICICI Prudential MF", { fileType: "credit" }),
+    f("ft_11", "RAZORPAY_HDFCMF_20261027.csv", "/inbound/creditmis/razorpay/", 120, 111, 110, "success", "2,210 rows", "HDFC Mutual Fund", { fileType: "credit" }),
+    f("ft_12", "CASHFREE_ICICI_1027.xlsx", "/inbound/creditmis/cashfree/", 66, null, null, "missed", "Scheduler missed its slot — still not picked up", "ICICI Prudential MF", { fileType: "credit" }),
     f("ft_13", "REMITTER_HDFCMF_1027_01.csv", "/inbound/remitter/", 80, 66, 65, "success", "124 remitters", "HDFC Mutual Fund", { fileType: "remitter" }),
     f("ft_14", "HDFC_0042_manual_1027.xlsx", "Uploaded on screen by Deepa Nair", 26, 23, 22, "success", "512 new rows", "HDFC Mutual Fund", { source: "ui", uploadedBy: "Deepa Nair" }),
     f("ft_15", "KKBK_0461_portal_1027.csv", "Uploaded on screen by Deepa Nair", 31, 28, 27, "success", "Covers the slot the scheduler missed", "Kotak Mahindra MF", { source: "ui", uploadedBy: "Deepa Nair" }),
-    f("ft_16", "BILLDESK_ABSL_1027.csv", "Uploaded on screen by Priya Sharma", 95, 91, 90, "success", "640 rows", "Aditya Birla Sun Life MF", { source: "ui", fileType: "credit", uploadedBy: "Priya Sharma" }),
+    f("ft_16", "CASHFREE_ABSL_1027.csv", "Uploaded on screen by Priya Sharma", 95, 91, 90, "success", "640 rows", "Aditya Birla Sun Life MF", { source: "ui", fileType: "credit", uploadedBy: "Priya Sharma" }),
     f("ft_17", "REMITTER_ICICI_1027.xlsx", "Uploaded on screen by Deepa Nair", 41, 38, null, "pending", "Reading — 48 remitters", "ICICI Prudential MF", { source: "ui", fileType: "remitter", uploadedBy: "Deepa Nair" }),
     f("ft_18", "NIPPON_ICICI_4410.csv", "/inbound/icici/4410/", 44, 40, 39, "success", "906 new rows", "Nippon India MF"),
     f("ft_19", "DSP_HDFC_7781.csv", "/inbound/hdfc/7781/", 101, 97, 96, "success", "310 new rows", "DSP Mutual Fund"),

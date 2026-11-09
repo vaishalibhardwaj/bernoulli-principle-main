@@ -100,7 +100,7 @@ export default function FileUpload() {
         <div><b>SFTP still works.</b> Files placed in SFTP and files uploaded here land in the same GCS bucket and go through the same pickup. File names must be unique across all file types, whichever way they arrive.</div>
       </div>
 
-      {!canUpload && <div className="fu-callout warn"><Info size={16} /><div>You can see uploads but not add files. Uploading needs the Recon setup maker or ops maker role.</div></div>}
+      {!canUpload && <div className="fu-callout warn"><Info size={16} /><div>You can see uploads but not add files. Uploading needs the Recon Ops role.</div></div>}
 
       <div className="card fu-card">
         <div className="fu-step"><span>1</span>What are you uploading?</div>

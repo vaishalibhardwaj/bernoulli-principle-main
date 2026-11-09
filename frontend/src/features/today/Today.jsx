@@ -98,11 +98,11 @@ export default function Today() {
   const doneToday = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === todayStr).length;
   const release = (collections.releases || [])[0] || { status: "not_started" };
   const close = (collections.dayclose || [])[0] || { status: "open" };
-  const canSubmitClose = hasCap(perms, "match", "edit") || hasCap(perms, "release", "edit");
-  const canSignClose = hasCap(perms, "release", "approve");
+  const canSubmitClose = hasCap(perms, "ingestion", "edit");
+  const canSignClose = hasCap(perms, "ingestion", "approve");
   const carried = (collections.exceptions || []).filter((e) => e.status !== "closed").length;
   const isSetup = hasCap(perms, "bank_setup", "edit") || hasCap(perms, "credit_mis", "edit");
-  const isOps = hasCap(perms, "match", "view") || hasCap(perms, "release", "view");
+  const isOps = hasCap(perms, "ingestion", "view");
   const waitingMine = [
     ...(collections.bank_config || []).filter((c) => /pending/.test(c.status || "") && c.owner === currentUser),
     ...(collections.credit_config || []).filter((c) => /pending/.test(c.status || "") && c.owner === currentUser),
@@ -163,11 +163,11 @@ export default function Today() {
   const clearedSince = since ? since.ids.filter((id) => !queue.some((q) => q.id === id)).length : 0;
 
   const submitClose = () => {
-    const res = act({ screen: "release", cap: "edit", kind: "dayclose", id: "day_today", patch: { status: "pending", submittedBy: currentUser, carried, note: note.trim(), submittedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Submit day close", from: "Open", to: "Pending", comment: `${carried} items carried forward` } });
+    const res = act({ screen: "ingestion", cap: "edit", kind: "dayclose", id: "day_today", patch: { status: "pending", submittedBy: currentUser, carried, note: note.trim(), submittedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Submit day close", from: "Open", to: "Pending", comment: `${carried} items carried forward` } });
     if (res.ok) { toast.success("Sent to your checker to sign off the day."); setCloseOpen(false); } else toast.error(res.error);
   };
   const signClose = () => {
-    const res = act({ screen: "release", cap: "approve", kind: "dayclose", id: "day_today", target: { owner: close.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } });
+    const res = act({ screen: "ingestion", cap: "approve", kind: "dayclose", id: "day_today", target: { owner: close.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } });
     if (res.ok) { toast.success("Day signed off. Summary sent to AMCs."); setCloseOpen(false); } else toast.error(res.error);
   };
   const daySummary = () => downloadCsv(`day_summary_${new Date().toISOString().slice(0, 10)}.csv`, ["Step", "Status", "Detail"], steps.map((s) => [s.title, s.state, s.summary]));

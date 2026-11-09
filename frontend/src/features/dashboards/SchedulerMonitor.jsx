@@ -1,5 +1,5 @@
 import React from "react";
-import { Activity, Server, Plug, Bot, Upload, Download, AlertTriangle, ArrowRight, FileX2, Clock, Sparkles } from "lucide-react";
+import { Activity, Server, Plug, Bot, Upload, Download, AlertTriangle, ArrowRight, FileX2, Clock, Sparkles, Mail } from "lucide-react";
 import { useStore } from "@/state/store";
 import { downloadCsv } from "@/features/reports/csv";
 import { userAmcs } from "@/lib/org";
@@ -7,7 +7,10 @@ import { TiltCard } from "@/features/viz/Viz";
 import { C, Donut, RunStrip, DayTimeline, HBar, Kpi, minsNow, hhmm, ago } from "./dashViz";
 
 const TOPICS = [["bank", "Bank statement"], ["credit", "Credit MIS"], ["remitter", "Remitter"], ["other", "Other pickups"]];
-const CHANNEL = { sftp: ["SFTP", Server], api: ["API", Plug], auto: ["Portal bot", Bot], ui: ["UI upload", Upload] };
+const CHANNEL = { sftp: ["SFTP", Server], email: ["Email", Mail], api: ["API", Plug], auto: ["Portal bot", Bot], ui: ["UI upload", Upload] };
+// Last run status is about the scheduler itself only. Whether a file came and loaded is in "File received" and the remarks.
+const EXEC = { ran: ["Ran", "ok"], failed: ["Failed to run", "bad"], skipped: ["Did not run", "warn"] };
+const OWNER_HINT = { "IT Support": "the scheduler did not execute", Setup: "ran, but the setup needs fixing (format, login, mapping)", Ops: "ran, but the data needs a person (no file, bad data)" };
 // Source = where the file lands. SFTP and UI uploads both land in the GCS bucket; portal bots drop into the SFTP area.
 const SOURCES = [["sftp", "SFTP (GCS bucket)"], ["api", "API"], ["ui", "UI upload"]];
 const SOURCE_SHORT = { sftp: "SFTP", api: "API", ui: "UI upload" };
@@ -18,10 +21,13 @@ const placedAgo = (f) => (f.placedAt ? Math.max(0, Math.round((Date.now() - new 
 /** Recent runs for a job, rebuilt from its interval: failing jobs failed their latest runs; missed jobs skipped a slot. */
 function runsFor(j) {
   const now = minsNow(); const last = now - j.lastAgo; const out = [];
-  const bad = j.status === "failure" && !j.missed ? (j.id.charCodeAt(j.id.length - 1) % 2) + 2 : 0;
+  const bad = j.status === "failure" && j.exec !== "skipped" ? (j.id.charCodeAt(j.id.length - 1) % 2) + 2 : 0;
   for (let t = last, k = 0; t >= 0 && k < 300; t -= j.everyMin, k++) out.unshift({ t, ok: k >= bad });
-  const next = last + j.everyMin;
-  return { runs: out, next: j.everyMin >= 1440 ? null : next, late: next < now };
+  // Slots that came and went without a run since the last one (e.g. last run 9:00, now 11:18, every 15 min → 8 skipped).
+  const skipped = j.everyMin >= 1440 ? 0 : Math.max(0, Math.floor(j.lastAgo / j.everyMin) - 1);
+  for (let k = 1; k <= skipped; k++) out.push({ t: last + k * j.everyMin, ok: false, skipped: true });
+  const next = last + (Math.floor(j.lastAgo / j.everyMin) + 1) * j.everyMin; // the next slot after now
+  return { runs: out, last, next: j.everyMin >= 1440 ? null : next, late: skipped > 0, skipped };
 }
 
 /**
@@ -53,11 +59,17 @@ export default function SchedulerMonitor() {
   const n = (pred) => track.filter(pred).length;
   const pipe = { placed: track.length, picked: n((f) => f.picked != null), processed: n((f) => f.processed != null), ok: n((f) => f.outcome === "success") };
   const lat = track.filter((f) => f.picked != null).map((f) => ({ f, m: f.placed - f.picked }));
-  const avgLat = lat.length ? Math.round(lat.reduce((s, x) => s + x.m, 0) / lat.length) : 0;
   const list = enriched.slice().sort((a, b) => (a.status === "failure" ? 0 : 1) - (b.status === "failure" ? 0 : 1));
+  // Scheduler success rate today: slots that ran without the job erroring, over all slots that were due (skipped slots count as failures).
+  const slots = enriched.reduce((t, j) => t + j.runs.length, 0);
+  const slotsOk = enriched.reduce((t, j) => t + j.runs.filter((r) => r.ok).length, 0);
+  const successRate = slots ? Math.round((slotsOk / slots) * 100) : 100;
+  // Bank statements received today, by how they came in.
+  const recvd = (collections.files || []).filter((f) => f.receivedAt && inAmc({ amc: f.amc }));
+  const byMode = [["SFTP", recvd.filter((f) => f.channel === "sftp" || f.channel === "manual").length], ["Email", recvd.filter((f) => f.channel === "email").length], ["API / portal", recvd.filter((f) => f.channel === "api" || f.channel === "auto").length]];
 
-  const exportCsv = () => downloadCsv(`scheduler_jobs_${amc.replace(/\s+/g, "_")}.csv`, ["File type", "Channel", "Job", "Schedule", "Last completed run", "Next expected", "Status", "Remarks"],
-    enriched.map((j) => [j.topic, CHANNEL[j.channel][0], j.name, j.every, hhmm(minsNow() - j.lastAgo), j.next != null ? hhmm(j.next) : "tomorrow", j.status, j.remarks]));
+  const exportCsv = () => downloadCsv(`scheduler_jobs_${amc.replace(/\s+/g, "_")}.csv`, ["File type", "Mode", "Job", "Interval (min)", "Last run", "Next scheduled run", "Last run status", "Slots skipped", "File received", "Status remarks", "Who acts"],
+    enriched.map((j) => [j.topic, (CHANNEL[j.channel] || CHANNEL.sftp)[0], j.name, j.everyMin, hhmm(j.last), j.next != null ? hhmm(j.next) : "tomorrow", j.skipped > 0 ? "Did not run" : (EXEC[j.exec] || EXEC.ran)[0], j.skipped, j.recvAgo == null ? "" : hhmm(minsNow() - j.recvAgo), j.remarks, j.owner || ""]));
 
   return (
     <div className="dz" data-testid="scheduler-monitor">
@@ -97,17 +109,23 @@ export default function SchedulerMonitor() {
         <span className="dz-filter-note">{enriched.length} job{enriched.length !== 1 ? "s" : ""} · {track.length} file{track.length !== 1 ? "s" : ""} today{myAmcs.length > 1 ? " · switching AMC here also switches it everywhere" : ""}</span>
       </div>
 
+      <div className="sm-modes" data-testid="files-by-mode">
+        <span className="sm-modes-l">Bank statements received today</span>
+        {byMode.map(([l, v]) => <span key={l} className="sm-mode"><b className="fx-num">{v}</b>{l}</span>)}
+        <span className="sm-mode total"><b className="fx-num">{recvd.length}</b>in all</span>
+      </div>
+
       {/* Row 1 — health · pipeline · key numbers */}
       <div className="dz-hero">
         <TiltCard className="card dz-card" max={4}>
           <div className="dz-card-h">Job health</div>
           <div className="dz-health">
             <Donut size={156} value={`${healthy}/${enriched.length}`} sub="jobs healthy"
-              segments={[{ v: healthy, color: C.ok }, { v: failing.filter((j) => !j.missed).length, color: C.bad }, { v: failing.filter((j) => j.missed).length, color: C.warn }]} />
+              segments={[{ v: healthy, color: C.ok }, { v: failing.filter((j) => j.exec !== "skipped").length, color: C.bad }, { v: failing.filter((j) => j.exec === "skipped").length, color: C.warn }]} />
             <ul className="dz-legend">
               <li><i style={{ background: C.ok }} />Running fine <b>{healthy}</b></li>
-              <li><i style={{ background: C.bad }} />Failing <b>{failing.filter((j) => !j.missed).length}</b></li>
-              <li><i style={{ background: C.warn }} />Missed a slot <b>{failing.filter((j) => j.missed).length}</b></li>
+              <li><i style={{ background: C.bad }} />Failing <b>{failing.filter((j) => j.exec !== "skipped").length}</b></li>
+              <li><i style={{ background: C.warn }} />Did not run <b>{failing.filter((j) => j.exec === "skipped").length}</b></li>
             </ul>
           </div>
         </TiltCard>
@@ -131,9 +149,9 @@ export default function SchedulerMonitor() {
         </TiltCard>
 
         <div className="dz-kpis">
+          <Kpi label="Scheduler success rate" value={`${successRate}%`} sub={`${slotsOk} of ${slots} slots ran today`} tone={successRate >= 95 ? "ok" : successRate >= 85 ? "warn" : "bad"} testid="kpi-success" />
           <Kpi label="Jobs failing" value={failing.length} sub={failing.length ? "see below" : "all clear"} tone={failing.length ? "bad" : "ok"} />
           <Kpi label="Runs overdue" value={overdue.length} sub={overdue[0] ? overdue[0].name.split(" — ")[1] || overdue[0].name : "none"} tone={overdue.length ? "warn" : "ok"} />
-          <Kpi label="Avg wait to pickup" value={`${avgLat}m`} sub="file landed → picked up" tone="info" />
           <Kpi label="Next run" value={soonest ? `${Math.max(1, Math.round(soonest.next - minsNow()))}m` : "—"} sub={soonest ? soonest.name.replace(/^SFTP pickup — /, "") : ""} />
         </div>
       </div>
@@ -143,11 +161,11 @@ export default function SchedulerMonitor() {
         <div className="card dz-attn" data-testid="needs-attention">
           <div className="dz-card-h"><AlertTriangle size={14} /> Needs attention <span className="muted">· {failing.length}</span></div>
           {failing.map((j) => {
-            const Icon = CHANNEL[j.channel][1];
+            const Icon = (CHANNEL[j.channel] || CHANNEL.sftp)[1];
             return (
-              <div key={j.id} className={"dz-attn-row" + (j.missed ? " warn" : "")}>
+              <div key={j.id} className={"dz-attn-row" + (j.exec === "skipped" ? " warn" : "")}>
                 <span className="dz-attn-ico"><Icon size={14} /></span>
-                <div><b>{j.name}</b><span>{j.remarks}</span></div>
+                <div><b>{j.name}</b><span>{j.remarks}{j.owner ? ` · ${j.owner} acts` : ""}</span></div>
                 <span className="muted">last file {ago(j.recvAgo)}</span>
                 <RunStrip runs={j.runs.slice(-8).map((r) => r.ok)} />
               </div>
@@ -156,20 +174,36 @@ export default function SchedulerMonitor() {
         </div>
       )}
 
-      {/* Row 3 — every job, as cards */}
-      <div className="dz-jobs">
-        {list.length === 0 && <p className="muted">No jobs match these filters for {amc}.</p>}
-        {list.map((j) => {
-          const [cl, Icon] = CHANNEL[j.channel];
-          return (
-            <div key={j.id} className={"dz-job" + (j.status === "failure" ? (j.missed ? " warn" : " bad") : "")} data-testid={"job-" + j.id}>
-              <div className="dz-job-top"><span className="dz-dot" /><span className="dz-ch"><Icon size={12} /> {cl}</span><span className="dz-ch">{TOPICS.find((t) => t[0] === j.topic)?.[1]}</span><RunStrip runs={j.runs.slice(-10).map((r) => r.ok)} /></div>
-              <b className="dz-job-name">{j.name}</b>
-              <div className="dz-job-meta"><span>ran {ago(j.lastAgo)}</span><span>{j.next == null ? "next: tomorrow" : j.late ? <em className="neg">overdue {Math.round(minsNow() - j.next)}m</em> : `next in ${Math.max(1, Math.round(j.next - minsNow()))}m`}</span></div>
-              <div className="dz-job-rem">{j.remarks}</div>
-            </div>
-          );
-        })}
+      {/* Row 3 — every job, one row each. Last run status = the scheduler only; file received and remarks = the file. */}
+      <div className="card dz-card sm-table-card" data-testid="job-table">
+        <div className="dz-card-h">Every scheduler job <span className="muted">· {list.length} · now {hhmm(minsNow())}</span></div>
+        {list.length === 0 ? <p className="muted">No jobs match these filters for {amc}.</p> : (
+          <div className="sm-scroll">
+            <table className="grid sm-table">
+              <thead><tr><th>Job</th><th>Mode</th><th>Interval</th><th>Last run</th><th>Next scheduled run</th><th>Last run status</th><th>File received</th><th>Status remarks</th><th>Who acts</th></tr></thead>
+              <tbody>
+                {list.map((j) => {
+                  const [cl, Icon] = CHANNEL[j.channel] || CHANNEL.sftp;
+                  const [ex, tone] = EXEC[j.exec] || EXEC.ran;
+                  return (
+                    <tr key={j.id} className={j.status === "failure" ? "bad" : ""} data-testid={"job-" + j.id}>
+                      <td><b>{j.name}</b><div className="muted sm-sub">{TOPICS.find((t) => t[0] === j.topic)?.[1]}</div></td>
+                      <td><span className="dz-ch"><Icon size={12} /> {cl}</span></td>
+                      <td className="tnum">{j.everyMin >= 1440 ? "daily" : `every ${j.everyMin} min`}</td>
+                      <td className="tnum">{hhmm(j.last)}<div className="muted sm-sub">{ago(j.lastAgo)}</div></td>
+                      <td className="tnum">{j.next == null ? "tomorrow" : hhmm(j.next)}{j.skipped > 0 && <div className="sm-skip">{j.skipped} slot{j.skipped > 1 ? "s" : ""} skipped since {hhmm(j.last)}</div>}</td>
+                      <td><span className={"sm-exec " + (j.skipped > 0 ? "warn" : tone)}>{j.skipped > 0 ? "Did not run" : ex}</span></td>
+                      <td className="tnum">{j.recvAgo == null ? <span className="muted">no file</span> : hhmm(minsNow() - j.recvAgo)}</td>
+                      <td className="sm-rem">{j.remarks}</td>
+                      <td>{j.owner ? <span className={"sm-owner o-" + j.owner.replace(/\s/g, "")} title={OWNER_HINT[j.owner]}>{j.owner}</span> : <span className="muted">—</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="muted sm-legend">Who acts: <b>IT Support</b> when the scheduler did not execute · <b>Setup</b> or <b>Ops</b> when it ran but there was no data, the wrong format or bad data.</p>
       </div>
 
       {mode === "advanced" && <Advanced enriched={enriched} topic={topic} track={track} lat={lat} />}

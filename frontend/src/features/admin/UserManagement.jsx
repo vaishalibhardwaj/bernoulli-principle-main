@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useStore } from "@/state/store";
-import { MODULES, MODULE_BY_KEY, hasCap } from "@/lib/access";
+import { MODULES, MODULE_BY_KEY, SCREENS, hasCap } from "@/lib/access";
 import { TiltCard, ModuleOrbit, CountUp } from "@/features/viz/Viz";
 import Pagination from "@/components/Pagination";
 import { SkeletonRows, EmptyState } from "@/components/bits";
@@ -110,16 +110,19 @@ export default function UserManagement() {
   }, [users, amcFilter, fromDate, toDate]);
   const scopeChanged = amcFilter !== "all" || fromDate !== today || toDate !== today;
 
+  // Modules a role reaches: its own, plus any module whose screens it grants (the Central Setup Team role is filed
+  // under Administration but works Central Setup screens, so it counts there too).
+  const modsOf = React.useCallback((r) => new Set([r.module, ...Object.keys(r.perms || {}).map((k) => SCREENS[k]?.module).filter(Boolean)]), []);
   // Live counts: users per module and per role (a user can count in several)
   const { moduleCounts, roleCounts } = useMemo(() => {
     const mc = {}; const rc = {};
     scoped.forEach((u) => {
       const mods = new Set();
-      (u.roles || []).forEach((rid) => { rc[rid] = (rc[rid] || 0) + 1; const r = roleById[rid]; if (r) mods.add(r.module); });
+      (u.roles || []).forEach((rid) => { rc[rid] = (rc[rid] || 0) + 1; const r = roleById[rid]; if (r) modsOf(r).forEach((m) => mods.add(m)); });
       mods.forEach((m) => { mc[m] = (mc[m] || 0) + 1; });
     });
     return { moduleCounts: mc, roleCounts: rc };
-  }, [scoped, roleById]);
+  }, [scoped, roleById, modsOf]);
 
   // Filtered users
   const filteredUsers = useMemo(() => {
@@ -127,7 +130,7 @@ export default function UserManagement() {
       if (amcFilter !== "all" && !inScope(u, amcFilter)) return false;
       // Role filter
       if (roleFilter !== "all" && !(u.roles || []).includes(roleFilter)) return false;
-      if (moduleFilter !== "all" && !(u.roles || []).some((rid) => roleById[rid]?.module === moduleFilter)) return false;
+      if (moduleFilter !== "all" && !(u.roles || []).some((rid) => roleById[rid] && modsOf(roleById[rid]).has(moduleFilter))) return false;
       // Status filter
       if (statusFilter === "inactive") { if (!isInactive(u)) return false; }
       else if (statusFilter === "invited") { if (!["invited", "invite_expired"].includes(u.status)) return false; }
@@ -142,7 +145,7 @@ export default function UserManagement() {
       }
       return true;
     });
-  }, [users, amcFilter, roleFilter, moduleFilter, statusFilter, debouncedSearch, roleById]);
+  }, [users, amcFilter, roleFilter, moduleFilter, statusFilter, debouncedSearch, roleById, modsOf]);
 
   const total = filteredUsers.length;
   const pageRows = useMemo(() => {
@@ -298,7 +301,7 @@ export default function UserManagement() {
           <div className="field" style={{ minWidth: 190 }}>
             <select className="select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} disabled={moduleFilter === "all"} title={moduleFilter === "all" ? "Pick a module first" : undefined} data-testid="filter-role-select" aria-label="Role">
               <option value="all">{moduleFilter === "all" ? "Role — pick a module first" : `All ${MODULE_BY_KEY[moduleFilter]?.label} roles`}</option>
-              {moduleFilter !== "all" && roles.filter((r) => r.module === moduleFilter && r.status === "active").map((r) => (
+              {moduleFilter !== "all" && roles.filter((r) => modsOf(r).has(moduleFilter) && r.status === "active").map((r) => (
                 <option key={r.id} value={r.id}>{r.name} ({roleCounts[r.id] || 0})</option>
               ))}
             </select>

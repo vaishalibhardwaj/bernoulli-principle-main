@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Landmark, CreditCard, GitCompareArrows, History, Gauge, Inbox, Combine, Siren, ScanText,
   PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound, Lock,
   Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, Eye,
-  Home, ClipboardCheck, FileInput, Banknote, Search, Building2, Scale, Clock, Activity, Tags, FolderCog,
+  Home, ClipboardCheck, FileInput, Banknote, Search, Building2, Scale, Clock, Activity, Tags, FolderCog, ClipboardList,
 } from "lucide-react";
 import CommandPalette from "@/components/CommandPalette";
 import { useApprovals } from "@/features/approvals/useApprovals";
@@ -17,7 +17,7 @@ import { toast } from "sonner";
 
 const ICONS = {
   balances: Banknote, scheduler: Activity, cutoffs: Clock, narration_tags: Tags, status_std: Scale,
-  today: Home, inbox: ClipboardCheck, setup_approvals: ClipboardCheck, release: Banknote, refunds: Undo2,
+  today: Home, inbox: ClipboardCheck, setup_approvals: ClipboardCheck, setup_tasks: ClipboardList, setup_scheduler: Activity, release: Banknote, refunds: Undo2,
   command: Gauge, ingestion: FileInput, match: Combine, exceptions: Siren, extraction: ScanText,
   bank_setup: Landmark, credit_mis: CreditCard, mapping: GitCompareArrows,
   approvals: LayoutDashboard, audit: History, users: Users, roles: KeyRound,
@@ -76,7 +76,8 @@ export default function AppShell() {
   const badgeFor = (key) => ({
     today: hasCap(perms, "inbox", "approve") ? 0 : hasCap(perms, "match", "edit") ? myWorkCount : 0,
     inbox: approvals.length,
-    setup_approvals: approvals.filter((a) => !a.own).length,
+    setup_approvals: approvals.length,
+    setup_tasks: (state.collections.setup_requests || []).filter((t) => t.status === "open").length,
     release: release && ((release.status === "not_started" && hasCap(perms, "release", "edit")) || (release.status === "pending" && hasCap(perms, "release", "approve"))) ? 1 : 0,
     refunds: hasCap(perms, "refunds", "edit") ? (collections.refunds || []).filter((r) => r.status === "draft").length : 0,
     approvals: 0,

@@ -158,7 +158,7 @@ export function seedCreditConfigs() {
       bankName: bank.name,
       bankCode: bank.code,
       accountNumber: acc.accountNumber,
-      paCode: ["RZP_ONLINE", "RZP_CMS", "BILLDESK", "SAP", "CAMSPAY", "PAYU", "CCAVENUE", "CASHFREE"][i % 8],
+      paCode: ["RAZORPAY", "CASHFREE"][i % 2],
       feedOption: i % 9 === 4 ? "NO_FEED" : i % 3 === 1 ? "CREDIT_REVERSAL_FEED" : "CREDIT_FEED",
       payMechanism: PAY_MECHANISMS[i % PAY_MECHANISMS.length],
       accountCategory: acc.category,

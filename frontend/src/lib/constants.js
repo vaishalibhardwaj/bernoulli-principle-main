@@ -34,7 +34,7 @@ export const CREDIT_MODES = {
 
 // PRD v1 / Credit MIS PRD: Subscription or Liability (Liability needs a category in Credit MIS).
 export const RECON_TYPES = ["Subscription", "Liability"];
-export const PA_CODES = ["Razorpay", "CAMSPay", "BillDesk", "PayU", "CCAvenue", "Cashfree"];
+export const PA_CODES = ["Razorpay", "Cashfree"];
 export const PAY_MECHANISMS = ["NetBanking", "UPI", "NEFT/RTGS", "Debit Card", "Credit Card", "Mandate"];
 
 export const KIND_LABELS = {

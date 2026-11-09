@@ -312,4 +312,4 @@ export default function CreditMisWizard() {
   );
 }
 
-const misNames = (form) => { const pa = (form.paCode || "RZP_ONLINE").toUpperCase(); const ext = (form.fileConfig.fileFormat || "CSV").toLowerCase(); return [`CreditMIS_${pa}_20261021.${ext}`, `SETTLE_${pa}_20261021_MIS.${ext}`, `PA_CREDIT_${pa}_20261021.${ext}`, `${pa}_refunds_20261021.${ext}`]; };
+const misNames = (form) => { const pa = (form.paCode || "RAZORPAY").toUpperCase(); const ext = (form.fileConfig.fileFormat || "CSV").toLowerCase(); return [`CreditMIS_${pa}_20261021.${ext}`, `SETTLE_${pa}_20261021_MIS.${ext}`, `PA_CREDIT_${pa}_20261021.${ext}`, `${pa}_refunds_20261021.${ext}`]; };

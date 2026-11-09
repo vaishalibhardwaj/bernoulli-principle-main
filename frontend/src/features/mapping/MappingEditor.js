@@ -329,8 +329,8 @@ export default function MappingEditor() {
 }
 
 /**
- * R8 + PRD v4 §5.3 — how this file says credit vs debit, checked against the status standardisation table (setup maker maintains, checker approves).
- * Values the table does not know are flagged; the maker asks for them to be added (setup maker adds, checker approves).
+ * R8 + PRD v4 §5.3 — how this file says credit vs debit, checked against the status standardisation table (Recon Ops maintains, a teammate approves).
+ * Values the table does not know are flagged; the maker asks for them to be added (Recon Ops adds, a teammate approves).
  */
 function StatusValues({ mapping, table, meta, collections, act, me, isView }) {
   const statusField = mapping.fields.find((f) => f.systemField === "INSTRM_STATUS");

@@ -168,15 +168,10 @@ export function matchHeader(systemField, header) {
 }
 
 // ── Credit MIS masters ─────────────────────────────────────────────────────────────────────────────
-// Payment aggregator codes, one per file, including sub-types. PLACEHOLDER identifiers — replace with the
-// exact values from the Credit MIS document; matching depends on them.
-export const PA_OPTIONS = [
-  { code: "RZP_ONLINE", label: "Razorpay — Online" }, { code: "RZP_CMS", label: "Razorpay — CMS" },
-  { code: "BILLDESK", label: "BillDesk" }, { code: "BILLDESK_SI", label: "BillDesk — Standing Instruction" },
-  { code: "SAP", label: "SAP" }, { code: "CAMSPAY", label: "CAMSPay" }, { code: "PAYU", label: "PayU" },
-  { code: "CCAVENUE", label: "CCAvenue" }, { code: "CASHFREE", label: "Cashfree" },
-];
-const LEGACY_PA = { Razorpay: "RZP_ONLINE", CAMSPay: "CAMSPAY", BillDesk: "BILLDESK", PayU: "PAYU", CCAvenue: "CCAVENUE", Cashfree: "CASHFREE" };
+// Payment aggregators that send a Credit MIS. Only Razorpay and Cashfree are confirmed so far; add others here
+// (with their exact codes from the Credit MIS document) as they are confirmed. Matching depends on these codes.
+export const PA_OPTIONS = [{ code: "RAZORPAY", label: "Razorpay" }, { code: "CASHFREE", label: "Cashfree" }];
+const LEGACY_PA = { Razorpay: "RAZORPAY", Cashfree: "CASHFREE", RZP_ONLINE: "RAZORPAY", RZP_CMS: "RAZORPAY" };
 export const paLabel = (code) => { const c = LEGACY_PA[code] || code; const o = PA_OPTIONS.find((x) => x.code === c); return o ? `${o.label} (${o.code})` : code || "—"; };
 export const normPa = (code) => LEGACY_PA[code] || code || "";
 

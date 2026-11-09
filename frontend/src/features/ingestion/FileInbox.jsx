@@ -1,3 +1,5 @@
+import { fileSchedule, clock } from "@/lib/schedule";
+import { RequestSetupButton } from "@/features/setup/SetupTasks";
 import React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/state/store";
@@ -105,7 +107,7 @@ function UploadModal({ file, corrected, onClose }) {
       <div className="up-expect">
         <div><span>Bank · account</span><b>{file.bankName} ·{acct}</b></div>
         <div><span>Statement date</span><b>{new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</b></div>
-        <div><span>Expected by</span><b>{formatDateTime(file.expectedBy).split(", ")[1]}</b></div>
+        <div><span>Scheduler</span><b>{fileSchedule(file) ? `every ${fileSchedule(file).every} min · last run ${clock(fileSchedule(file).last)}` : "by hand"}</b></div>
         <div><span>Where to get it</span><b>Bank's internet banking → download statement</b></div>
       </div>
       {!picked ? (
@@ -177,7 +179,7 @@ function ReprocessModal({ file, onClose, onUpload }) {
 }
 
 /** Technical failures in words an operator can act on. */
-const plainError = (c) => c.authIssue ? "The bank refused our login — the access token has expired. The setup maker renews it." : c.captcha ? "The bank's website now asks for a human check (CAPTCHA). We never bypass it — download the statement yourself and upload it." : c.status === "degraded" ? "The bank's service is slow, so some pulls time out. Pulls retry on their own." : c.error;
+const plainError = (c) => c.authIssue ? "The bank refused our login — the access token has expired. The Central Setup Team renews it." : c.captcha ? "The bank's website now asks for a human check (CAPTCHA). We never bypass it — download the statement yourself and upload it." : c.status === "degraded" ? "The bank's service is slow, so some pulls time out. Pulls retry on their own." : c.error;
 
 export default function FileInbox() {
   const { collections: rawCollections, perms, act, currentUser, simple, personaUser, amcUser } = useStore();
@@ -297,6 +299,7 @@ export default function FileInbox() {
           <p>{simple ? "Every bank statement we expect today, how it reaches us, and what to do when it doesn't." : "Today's statements, arriving through each bank's approved setup: manual upload, email, API or portal bot. Check them, fix them, reprocess them."}
             {hasCap(perms, "bank_setup") && <> To change <i>how</i> a bank is connected or read, use <button className="link" onClick={() => nav("/bank-setup")}>Bank statement setup</button>.</>}</p>
         </div>
+        <div className="actions" style={{ marginRight: 8 }}><RequestSetupButton /></div>
         {canManual && <div className="actions" style={{ marginRight: 8 }}><button className="btn btn-outline" onClick={() => setManualOpen(true)} data-testid="btn-manual-upload"><UploadCloud size={15} /> Manual upload (exception)</button></div>}
         {canEdit && canManual && manualWaiting.length > 0 && <div className="actions"><button className="btn btn-primary" onClick={() => (manualWaiting.length === 1 ? setUploadFor({ id: manualWaiting[0].id }) : setPickUpload(true))} data-testid="upload-statement-btn"><UploadCloud size={15} /> Upload a statement ({manualWaiting.length} waiting)</button></div>}
       </div>
@@ -316,7 +319,7 @@ export default function FileInbox() {
         </div>
         <div className="card">
           <table className="grid" data-testid="file-table">
-            <thead><tr><th>Bank · account</th><th>How it arrives</th><th>Expected by</th><th>Received</th><th>Status</th><th>Status remarks</th><th className="r">Credits</th><th>Next step</th></tr></thead>
+            <thead><tr><th>Bank · account</th><th>How it arrives</th><th>Scheduler</th><th>Last run</th><th>Next run</th><th>File received</th><th>Status</th><th>Status remarks</th><th className="r">Credits</th><th>Next step</th></tr></thead>
             <tbody>
               {rows.map((f) => {
                 const Icon = CHANNEL_ICON[f.channel] || FileText;
@@ -327,7 +330,7 @@ export default function FileInbox() {
                   <tr key={f.id} onClick={() => setOpenId(f.id)} style={{ cursor: "pointer" }} data-testid={"file-row-" + f.id}>
                     <td><b>{f.bankName}</b> <span className="tnum muted">·{f.accountNumber.slice(-4)}</span></td>
                     <td><span className="chan"><Icon size={13} /> {CHANNEL_LABEL[f.channel]}</span></td>
-                    <td className="tnum">{formatDateTime(f.expectedBy).split(", ")[1]}</td>
+                    {(() => { const sc = fileSchedule(f); return sc ? <><td className="tnum">every {sc.every} min</td><td className="tnum">{clock(sc.last)}</td><td className="tnum">{clock(sc.next)}</td></> : <><td className="muted">by hand</td><td className="muted">—</td><td className="muted">—</td></>; })()}
                     <td className="tnum">{f.receivedAt ? formatDateTime(f.receivedAt).split(", ")[1] : <span className="muted">—</span>}</td>
                     <td>{(() => { const u = uiStatus(f, c); return <span className={"pill " + u.cls} data-testid={"ui-status-" + f.id}><span className="dot" />{u.label}</span>; })()}</td>
                     <td className="remark-cell">{uiStatus(f, c).remark}</td>
@@ -336,7 +339,7 @@ export default function FileInbox() {
                   </tr>
                 );
               })}
-              {rows.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 30 }}>All of today's files are clean.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={10} className="muted" style={{ textAlign: "center", padding: 30 }}>All of today's files are clean.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -406,7 +409,7 @@ export default function FileInbox() {
       )}
 
       {open && (
-        <Drawer id="file-drawer" title={`${label(open)} — ${open.fileName}`} subtitle={`${CHANNEL_LABEL[open.channel]} · expected by ${formatDateTime(open.expectedBy)}`} onClose={() => setOpenId(null)}>
+        <Drawer id="file-drawer" title={`${label(open)} — ${open.fileName}`} subtitle={`${CHANNEL_LABEL[open.channel]} · ${fileSchedule(open) ? `scheduler every ${fileSchedule(open).every} min, last run ${clock(fileSchedule(open).last)}` : "arrives by hand"}`} onClose={() => setOpenId(null)}>
           {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
           {(() => { const u = uiStatus(open, connFor(open)); return <div className="kv-line"><span>Status</span><span><span className={"pill " + u.cls}><span className="dot" />{u.label}</span> <span className="muted">{u.remark}</span></span></div>; })()}
           {!simple && <div className="fd-section">
@@ -421,7 +424,7 @@ export default function FileInbox() {
                 {c.info ? <Clock size={14} /> : c.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                 <div><div>{c.label}</div>{c.detail && <div className="muted">{c.detail}</div>}</div>
               </div>
-            )) : <div className="muted">Not received yet (expected by {formatDateTime(open.expectedBy).split(", ")[1]}). This isn't counted as a failure: the bank may not have published it, or there may have been no transactions. A reminder went out 15 minutes after the expected time.</div>}
+            )) : <div className="muted">Not received yet{fileSchedule(open) ? ` (scheduler last ran ${clock(fileSchedule(open).last)}, next run ${clock(fileSchedule(open).next)})` : ""}. This isn't counted as a failure: the bank may not have published it, or there may have been no transactions. A reminder went out 15 minutes after the expected time.</div>}
           </div>
           {(() => { const setups = (rawCollections.bank_config || []).filter((c) => c.bankName === open.bankName && c.status === "active" && c.formatName); if (setups.length < 2 || !open.receivedAt) return null;
             const hit = open.status === "drift" ? null : setups[open.id.charCodeAt(open.id.length - 1) % setups.length];
@@ -523,7 +526,7 @@ export default function FileInbox() {
 
       {pickUpload && (
         <Modal id="pick-upload" title="Which statement are you uploading?" onClose={() => setPickUpload(false)}>
-          {manualWaiting.map((f) => <button key={f.id} className="un-row" onClick={() => { setPickUpload(false); setUploadFor({ id: f.id }); }}><UploadCloud size={14} /><span className="un-title">{label(f)}<small>{STATUS[f.status].label} · expected by {formatDateTime(f.expectedBy).split(", ")[1]}</small></span><ArrowRight size={13} /></button>)}
+          {manualWaiting.map((f) => <button key={f.id} className="un-row" onClick={() => { setPickUpload(false); setUploadFor({ id: f.id }); }}><UploadCloud size={14} /><span className="un-title">{label(f)}<small>{STATUS[f.status].label}{fileSchedule(f) ? ` · scheduler last ran ${clock(fileSchedule(f).last)}` : ""}</small></span><ArrowRight size={13} /></button>)}
         </Modal>
       )}
       {manualOpen && canManual && <ManualUploadModal files={files} folders={sftp} onClose={() => setManualOpen(false)} />}

@@ -121,7 +121,7 @@ export const PRIMARY_USERS = [
     name: "Priya Sharma",
     email: "priya.sharma@camsonline.com",
     phone: "+91 98203 34567",
-    designation: "Senior Recon Executive (Maker)",
+    designation: "Senior Recon Executive (BO)",
     role: "operator",
     status: "active",
     lastLogin: new Date(now - 45 * 60 * 1000).toISOString(),
@@ -134,7 +134,7 @@ export const PRIMARY_USERS = [
     name: "Arun Mehta",
     email: "arun.mehta@camsonline.com",
     phone: "+91 98204 45678",
-    designation: "Reconciliation Operations Manager (Authoriser)",
+    designation: "Reconciliation Operations Executive (BO)",
     role: "authoriser",
     status: "active",
     lastLogin: new Date(now - 2 * hour).toISOString(),
@@ -194,7 +194,7 @@ export const PRIMARY_USERS = [
     phone: "+91 98208 11223",
     designation: "Recon Operations Executive",
     role: "operator",
-    roles: ["role_recon_ops_maker"],
+    roles: ["role_recon_ops"],
     status: "active",
     lastLogin: new Date(now - 20 * 60 * 1000).toISOString(),
     createdAt: new Date(now - 150 * day).toISOString(),
@@ -308,7 +308,7 @@ export function seedUsers() {
   });
 
   // Platform access model: every user holds one or more module roles.
-  const explicit = { usr_meera: ["role_platform_admin"], usr_rohit: ["role_access_approver"], usr_priya: ["role_recon_setup_maker"], usr_arun: ["role_recon_checker"], usr_sanjay: ["role_recon_auditor"] };
+  const explicit = { usr_meera: ["role_platform_admin"], usr_rohit: ["role_access_approver"], usr_priya: ["role_recon_ops"], usr_arun: ["role_recon_ops"], usr_sanjay: ["role_recon_auditor"] };
   users.forEach((u, i) => { if (!u.roles) u.roles = explicit[u.id] || rolesForLegacy(u.role, i); });
 
   // AMC scope, daily-cycle assignment and biometric punch-in (for the 10-day auto-deactivation policy).
