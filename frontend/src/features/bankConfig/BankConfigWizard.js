@@ -12,7 +12,7 @@ import { ConfirmModal, Modal } from "@/components/Modal";
 import { Toggle, PasswordInput, Note, VaultNote } from "@/components/bits";
 import { detectFor, buildPreview, detectAccountInSample } from "@/mock/sampleFiles";
 import { LIABILITY_CATEGORIES, MAPPING_FIELDS, HEADER_SYNONYMS } from "@/lib/setupSchema";
-import { AMCS } from "@/lib/org";
+import { AMCS, userAmcs } from "@/lib/org";
 import { FILE_TYPES, STANDARD_FORMATS, isStandard, isDelimited, SEPARATORS, sepLabel, attachmentTypesFor, CAMS_DOMAIN, exampleFileNames, exampleSubjects, extFor, defaultSchedule, scheduleText } from "@/lib/setupSchema";
 import { PatternTester, ScheduleField, TestConnection, ChangesCard } from "@/features/setup/SetupBits";
 import { maskAccount, formatDate, uid } from "@/lib/format";
@@ -65,7 +65,7 @@ function defaults() {
 export default function BankConfigWizard() {
   const { mode, id } = useParams();
   const nav = useNavigate();
-  const { get, saveDraft, submit, collections, perms, act, personaUser } = useStore();
+  const { get, saveDraft, submit, collections, perms, act, personaUser, amcUser } = useStore();
   const highCount = (collections.bank_config || []).filter((c) => c.priority === "high" && c.status === "active").length;
   const isView = mode === "view";
 
@@ -88,7 +88,8 @@ export default function BankConfigWizard() {
       const b = BANKS.find((x) => x.name === task.bankName); const a = task.accountNumber ? accountMeta(task.bankName, task.accountNumber) : null;
       return { ...base, amc: task.amc, taskId: task.id, bankName: task.bankName, bankCode: b?.code || "", accountNumber: task.accountNumber || "", schemeCode: a?.schemeCode || "", schemeName: a?.schemeName || "", assetClass: a?.assetClass || "" };
     }
-    return base;
+    // A new setup starts on the AMC picked for Recon setup this session.
+    return { ...base, amc: userAmcs(amcUser).length === 1 ? userAmcs(amcUser)[0] : "" };
   }, [id, mode, get]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [form, setForm] = React.useState(initial);

@@ -103,15 +103,18 @@ export const MODULES = [
     // Any role can be given these screens in Roles & Access, so operations staff can be added to setup work too.
     key: "central_setup", label: "Central Setup", color: "#7c5cff", folders: true,
     screens: [
-      { key: "setup_tasks", label: "Pending tasks", crumb: "Pending setup tasks", path: "/setup-tasks", group: "Recon", caps: ["view", "edit"] },
-      { key: "bank_setup", label: "Bank statement", crumb: "Bank statement setup", path: "/bank-setup", group: "Recon", caps: ["view", "edit", "approve", "export"] },
-      { key: "credit_mis", label: "Credit MIS", crumb: "Credit MIS setup", path: "/credit-mis", group: "Recon", caps: ["view", "edit", "approve", "export"] },
-      { key: "mapping", label: "Column mapping", path: "/mapping", group: "Recon", caps: ["view", "edit", "approve"] },
+      // Organised by file source, not by type of setting: a bank (or aggregator) page holds its accounts, columns,
+      // status codes and narration tags. Screens marked nav:false keep their permissions but live as tabs, not menus.
+      { key: "setup_todo", label: "To do", crumb: "To do", path: "/setup-todo", group: "Recon", caps: ["view"] },
+      { key: "bank_setup", label: "Bank statements", crumb: "Bank statements", path: "/bank-setup", group: "Recon", caps: ["view", "edit", "approve", "export"] },
+      { key: "credit_mis", label: "Credit MIS", crumb: "Credit MIS", path: "/credit-mis", group: "Recon", caps: ["view", "edit", "approve", "export"] },
       { key: "cutoffs", label: "Cutoff times", path: "/cutoffs", group: "Recon", caps: ["view", "edit", "approve"] },
-      { key: "status_std", label: "Status standardisation", path: "/status-standardisation", group: "Recon", caps: ["view", "edit", "approve"] },
-      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Recon", caps: ["view", "edit", "approve"] },
-      { key: "setup_approvals", label: "Approvals", crumb: "Setup approvals", path: "/setup-approvals", group: "Recon", caps: ["view", "approve"] },
-      { key: "setup_scheduler", label: "Scheduler monitor", crumb: "Scheduler monitor", path: "/setup-scheduler", group: "Recon", caps: ["view", "export"] },
+      { key: "setup_scheduler", label: "File pickups", crumb: "File pickups", path: "/setup-scheduler", group: "Recon", caps: ["view", "export"] },
+      { key: "setup_tasks", label: "Requests from Ops", crumb: "Setup to do", path: "/setup-tasks", group: "Recon", caps: ["view", "edit"], nav: false },
+      { key: "mapping", label: "Columns", crumb: "Columns", path: "/mapping", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
+      { key: "status_std", label: "Transaction type mapping", crumb: "Transaction type mapping", path: "/status-standardisation", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
+      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
+      { key: "setup_approvals", label: "Approvals", crumb: "Setup to do", path: "/setup-approvals", group: "Recon", caps: ["view", "approve"], nav: false },
     ],
   },
 ];
@@ -133,14 +136,14 @@ export function seedRoles() {
     // Central Setup Team: one role, six peers. No separate maker and checker: whoever created a record cannot authorise it;
     // anyone else in the team can (checked on the login ID in rbac.authorize).
     r("role_platform_admin", "Central Setup Team", "admin", "One role for the six-person team. Creates roles across modules, gives screen and AMC access, and does every setup (bank statement, Credit MIS, column mapping, cutoff times, status standardisation, narration tags). Whoever creates a record cannot authorise it; anyone else in the team can. Does not run the daily cycle or manage IDs (ID management does).",
-      { users: ["view", "edit", "approve", "export"], roles: ["view", "edit", "approve"], setup_tasks: ["view", "edit"], bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], cutoffs: ["view", "edit", "approve"], status_std: ["view", "edit", "approve"], narration_tags: ["view", "edit", "approve"], setup_approvals: ["view", "approve"], setup_scheduler: ["view", "export"] }, { peer: true }),
+      { users: ["view", "edit", "approve", "export"], roles: ["view", "edit", "approve"], setup_todo: ["view"], setup_tasks: ["view", "edit"], bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], cutoffs: ["view", "edit", "approve"], status_std: ["view", "edit", "approve"], narration_tags: ["view", "edit", "approve"], setup_approvals: ["view", "approve"], setup_scheduler: ["view", "export"] }, { peer: true }),
     r("role_cst_recon_setup", "Central Setup · Recon setup", "central_setup", "Recon setup work for people outside the Central Setup Team: pending tasks, bank statement, Credit MIS, column mapping, cutoff times, status standardisation and narration tags. Whoever creates a record cannot authorise it; any other holder can.",
-      { setup_tasks: ["view", "edit"], bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], cutoffs: ["view", "edit", "approve"], status_std: ["view", "edit", "approve"], narration_tags: ["view", "edit", "approve"], setup_approvals: ["view", "approve"], setup_scheduler: ["view"] }, { peer: true }),
+      { setup_todo: ["view"], setup_tasks: ["view", "edit"], bank_setup: ["view", "edit", "approve", "export"], credit_mis: ["view", "edit", "approve", "export"], mapping: ["view", "edit", "approve"], cutoffs: ["view", "edit", "approve"], status_std: ["view", "edit", "approve"], narration_tags: ["view", "edit", "approve"], setup_approvals: ["view", "approve"], setup_scheduler: ["view"] }, { peer: true }),
     r("role_access_approver", "Access Approver", "admin", "Second-admin approval of role changes and privileged role grants.",
       { users: ["view", "approve"], roles: ["view", "approve"] }),
     // Recon Ops: one role for the back-office team. Every member is both maker and checker; whoever did the work cannot authorise it.
     r("role_recon_ops", "Recon · Ops", "recon", "One role for the recon back-office (BO) team: uploads and reprocesses files, watches closing balances, and raises setup requests to the Central Setup Team. Every member is maker and checker: whoever did the work cannot authorise it; anyone else in the team can.",
-      { today: ["view"], inbox: ["view", "approve"], balances: ["view", "export"], command: ["view"], file_upload: ["view", "edit"], ingestion: ["view", "edit", "approve"], manual_upload: ["view", "edit"], audit: ["view", "export"] }, { peer: true }),
+      { today: ["view"], inbox: ["view", "approve"], balances: ["view", "export"], file_upload: ["view", "edit"], ingestion: ["view", "edit", "approve"], manual_upload: ["view", "edit"], audit: ["view", "export"] }, { peer: true }),
     r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", Object.fromEntries(Object.entries(all("recon", ["view", "export"])).filter(([k]) => !SCREENS[k].phase))),
     r("role_functional_manager", "Recon · Functional Manager", "recon", "Dashboards and approval screens only: the team dashboard, closing balances, approvals and the No-action review. Never a maker; no setup screens.",
       { command: ["view", "export"], balances: ["view", "export"], inbox: ["view", "approve"], no_action_review: ["view", "approve", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"] }),
@@ -208,7 +211,7 @@ export const screenLabel = (s, simple) => (simple && s.plain) || s.label;
 /** Screens visible to a user, grouped by module → group, for the side nav. */
 export function navFor(perms, simple = false) {
   return MODULES.map((m) => {
-    const screens = m.screens.filter((s) => hasCap(perms, s.key, "view") && !s.hidden && (simple ? !s.analytics : true));
+    const screens = m.screens.filter((s) => hasCap(perms, s.key, "view") && !s.hidden && s.nav !== false && (simple ? !s.analytics : true));
     const groups = [];
     screens.forEach((s) => {
       let g = groups.find((x) => x.name === s.group);

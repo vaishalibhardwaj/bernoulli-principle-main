@@ -2,10 +2,10 @@ import React from "react";
 import { ROLE_DEFAULTS, defaultPerms } from "@/lib/access";
 import { useStore } from "@/state/store";
 import { Drawer } from "@/components/Drawer";
-import { MODULES, MODULE_BY_KEY, SCREENS, CAP_LABELS, hasCap, isPrivileged } from "@/lib/access";
+import { MODULES, MODULE_BY_KEY, SCREENS, CAP_LABELS, hasCap } from "@/lib/access";
 import { timeAgo } from "@/lib/format";
 import PermissionMatrix from "./PermissionMatrix";
-import { KeyRound, Plus, Pencil, ShieldCheck, Check, X, Users, LayoutGrid, Clock, GitCompareArrows, Settings2, Coins, Send, Repeat, Contact, Headset, ShoppingCart, BarChart3 } from "lucide-react";
+import { KeyRound, Plus, Pencil, ShieldCheck, Check, X, Users, Clock, GitCompareArrows, Settings2, Coins, Send, Repeat, Contact, Headset, ShoppingCart, BarChart3, ChevronDown } from "lucide-react";
 import { AvatarStack } from "@/components/au";
 
 const MODULE_ICON = { recon: GitCompareArrows, admin: ShieldCheck, central_setup: Settings2, brokerage: Coins, posting: Send, sip: Repeat, crms: Contact, support: Headset, purchase: ShoppingCart, mis: BarChart3 };
@@ -18,7 +18,6 @@ import "./userManagement.css";
 const TABS = [
   { key: "roles", label: "Roles", icon: KeyRound },
   { key: "approvals", label: "Access approvals", icon: ShieldCheck },
-  { key: "catalogue", label: "Screen catalogue", icon: LayoutGrid },
 ];
 
 function diffPerms(before = {}, after = {}) {
@@ -103,13 +102,15 @@ export default function RolesAccess() {
       {tab === "roles" && (
         <>
           <div className="au-bar">
-            <div className="au-tabs" role="tablist" aria-label="Module">
-              {[{ key: "all", label: "All modules" }, ...MODULES.filter((m) => roles.some((r) => r.module === m.key))].map((m) => (
-                <button key={m.key} role="tab" aria-selected={moduleFilter === m.key} className={moduleFilter === m.key ? "on" : ""} onClick={() => setModuleFilter(m.key)}>
-                  {m.label} <em>{m.key === "all" ? roles.length : roles.filter((r) => r.module === m.key).length}</em>
-                </button>
-              ))}
-            </div>
+            <label className="rc2-mod" style={{ "--c": MODULE_BY_KEY[moduleFilter]?.color || "#0b0b10" }}>
+              <i />
+              <select value={moduleFilter} onChange={(e) => setModuleFilter(e.target.value)} aria-label="Module" data-testid="roles-module-filter">
+                {[{ key: "all", label: "All modules" }, ...MODULES.filter((m) => roles.some((r) => r.module === m.key))].map((m) => (
+                  <option key={m.key} value={m.key}>{m.label} ({m.key === "all" ? roles.length : roles.filter((r) => r.module === m.key).length})</option>
+                ))}
+              </select>
+              <ChevronDown size={15} />
+            </label>
             <span className="rc2-legend"><i className="c-approve" /> approves <i className="c-edit" /> does the work <i className="c-export" /> exports <i className="c-view" /> views</span>
           </div>
           <div className="role-grid rc2-grid">
@@ -149,28 +150,6 @@ export default function RolesAccess() {
               </div>
             );
           })}
-        </div>
-      )}
-
-      {tab === "catalogue" && (
-        <div className="catalogue">
-          {MODULES.map((m) => (
-            <div key={m.key} className="card" style={{ "--mc": m.color }}>
-              <div className="card-head"><h3><i className="mod-dot" />{m.label}</h3><span className="muted">{m.screens.length} screens · new modules register their screens here; no user-management code changes</span></div>
-              <table className="grid">
-                <thead><tr><th>Screen</th><th>Capabilities offered</th><th>Granted by roles</th></tr></thead>
-                <tbody>
-                  {m.screens.map((s) => (
-                    <tr key={s.key}>
-                      <td><b>{s.label}</b>{s.phase && <span className={"phase-tag " + s.phase.toLowerCase()}>{s.phase}</span>}</td>
-                      <td>{s.caps.map((c) => CAP_LABELS[c]).join(" · ")}</td>
-                      <td>{roles.filter((r) => r.status === "active" && r.perms[s.key]).map((r) => r.name).join(", ") || <span className="muted">—</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
         </div>
       )}
 
@@ -225,7 +204,7 @@ function RoleCard({ r, holders, canEdit, onEdit }) {
     <div className="card role-tile rc2" style={{ "--b": mod?.color, "--mc": mod?.color }} data-testid={"role-" + r.id}>
       <div className="rc2-top">
         <span className="au-badge"><Icon size={18} /></span>
-        <span className="rc2-name"><b>{r.name}</b><em>{mod?.label}{isPrivileged(r) && <span className="rc2-priv">Privileged</span>}{r.simple && <span className="rc2-priv soft">Simple view</span>}</em></span>
+        <span className="rc2-name"><b>{r.name}</b><em>{mod?.label}{r.simple && <span className="rc2-priv soft">Simple view</span>}</em></span>
         {canEdit && r.status === "active" && <button type="button" className="au-arrow" onClick={onEdit} title="Edit role" aria-label={`Edit ${r.name}`} data-testid={"edit-role-" + r.id}><Pencil size={16} /></button>}
       </div>
       {r.status !== "active" && <span className={"au-st " + (r.status === "pending" ? "pending" : "rejected")}>{r.status === "pending" ? "Pending approval" : "Rejected"}</span>}
@@ -233,7 +212,6 @@ function RoleCard({ r, holders, canEdit, onEdit }) {
         <b>{holders.length}</b><span>{holders.length === 1 ? "person" : "people"}</span>
         <AvatarStack names={holders} />
       </div>
-      <p className="rc2-desc" title={r.description}>{r.description}</p>
       <div className="rc2-sum">
         <span><b>{screens.length}</b> screens</span>
         {n("edit") > 0 && <span><i className="c-edit" /><b>{n("edit")}</b> does the work</span>}

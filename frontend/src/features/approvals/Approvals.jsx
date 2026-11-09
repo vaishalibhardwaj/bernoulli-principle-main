@@ -8,7 +8,7 @@ import { useApprovals } from "./useApprovals";
 import { Inbox, Check, X, ArrowRight, AlertTriangle, CheckCircle2, Keyboard, CheckCheck } from "lucide-react";
 import { toast } from "sonner";
 
-const KIND_ORDER = ["Fund release", "Bank file layout", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Status mapping", "Access", "Day close"];
+const KIND_ORDER = ["Fund release", "Bank file layout", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Transaction type", "Narration tag", "Cutoff time", "Access", "Day close"];
 const WHY = {
   "Fund release": "Units can't be allotted until this money is released to Transaction Posting. Cut-off 3:00 PM.",
   "Bank file layout": "Rows from this bank are held until the new layout is accepted.",
@@ -21,14 +21,16 @@ const WHY = {
   "Bank setup": "Controls how this account's statement is fetched and read. Once approved, it's live from the next file.",
   "Credit MIS setup": "Controls how this payment aggregator's MIS is fetched and read. Live from the next file once approved.",
   "Column mapping": "Decides which column in the bank file becomes which field. A wrong mapping mis-reads every row.",
-  "Status mapping": "Decides whether rows carrying this value are read as credits or debits, for every bank file loaded from now on.",
+  "Transaction type": "Decides whether rows carrying this value are read as credits or debits, for every file from this source loaded from now on.",
+  "Narration tag": "Rows whose narration fits this rule are tagged and kept out of payment matching, for every file loaded from now on.",
+  "Cutoff time": "Changes when money must be in for same-day NAV. Used by closing balances and fund release.",
 };
 
 /**
  * Checker inbox as a split view (like an email client): a contained list on the left,
  * one item in detail on the right, keyboard-driven, auto-advancing after each decision.
  */
-export default function Approvals() {
+export default function Approvals({ embedded = false }) {
   const nav = useNavigate();
   const { currentUser, audit, collections, upsert, addAudit } = useStore();
   const all = useApprovals();
@@ -83,14 +85,14 @@ export default function Approvals() {
   const groups = KIND_ORDER.map((k) => [k, items.filter((a) => a.kind === k)]).filter(([, l]) => l.length);
 
   return (
-    <div className="inbox-page" data-testid="approvals-inbox">
-      <div className="page-head">
+    <div className={"inbox-page" + (embedded ? " embedded" : "")} data-testid="approvals-inbox">
+      {!embedded && <div className="page-head">
         <div>
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={22} /> Approvals</h1>
           <p>One item at a time. Approve with <kbd>A</kbd>, send back with <kbd>S</kbd>, move with <kbd>J</kbd>/<kbd>K</kbd>. The next item opens automatically.</p>
         </div>
         <div className="actions"><span className="inbox-done"><CheckCheck size={15} /> {done} done this session · {all.length} left</span></div>
-      </div>
+      </div>}
 
       <div className="ap-metrics">
         {[["Total submissions", all.length + audit.filter((x) => /^(Approve|Reject|Sign off|Release funds)/.test(x.action) && !x.denied).length],

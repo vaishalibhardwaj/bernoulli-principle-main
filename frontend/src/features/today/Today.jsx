@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { inrShort, Light } from "@/features/ops/ui";
+import { Light } from "@/features/ops/ui";
 import { useApprovals } from "@/features/approvals/useApprovals";
 import { RELEASE_CUTOFF } from "@/mock/opsSeed";
 import { Drawer } from "@/components/Drawer";
@@ -248,7 +248,6 @@ export default function Today() {
             <div><Inbox size={14} /><span>{isChecker ? "Waiting for you" : "In range"}</span><b className="fx-num"><CountUp value={ranged.length} /></b></div>
             {!isChecker && <div><Hourglass size={14} /><span>Checker approval</span><b className="fx-num"><CountUp value={waitingMine} /></b></div>}
             <div><CheckCircle2 size={14} /><span>Done by you today</span><b className="fx-num"><CountUp value={doneToday} /></b></div>
-            {isOps && !isSetup && <div><Sparkles size={14} /><span>Realised today</span><b className="fx-num">{inrShort(release.amount || 19874410000)}</b></div>}
           </div>
         </div>
       </div>
