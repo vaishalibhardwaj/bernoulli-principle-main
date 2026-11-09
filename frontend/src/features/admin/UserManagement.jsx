@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useStore } from "@/state/store";
 import { MODULES, MODULE_BY_KEY, SCREENS, hasCap } from "@/lib/access";
-import { TiltCard, ModuleOrbit, CountUp } from "@/features/viz/Viz";
+import { CountUp } from "@/features/viz/Viz";
+import { InsightCard, CountStrip } from "@/components/au";
 import Pagination from "@/components/Pagination";
 import { SkeletonRows, EmptyState } from "@/components/bits";
 import { formatDate, timeAgo, highlight } from "@/lib/format";
@@ -9,24 +10,18 @@ import RolePermissionsDrawer from "./RolePermissionsDrawer";
 import AddEditUserDrawer from "./AddEditUserDrawer";
 import DeactivateUserModal from "./DeactivateUserModal";
 import OnboardingModal from "./OnboardingModal";
+import CamsConstellation from "./CamsConstellation";
 import "./userManagement.css";
 import { Modal } from "@/components/Modal";
 import { AMCS, userAmcs, inScope, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS, DORMANT_DAYS } from "@/lib/org";
 
 import {
   UserPlus, Search, Download, Shield, Pencil, Power, PowerOff,
-  Users, X, Building2, CalendarDays
+  Users, X, Building2, CalendarDays, ArrowRight
 } from "lucide-react";
 import { toast } from "sonner";
 
 // Three ID statuses plus one common "Inactive" flag for active IDs that have gone quiet.
-const STATUS_FILTERS = [
-  { key: "all", label: "All statuses" },
-  { key: "active", label: "Active" },
-  { key: "inactive", label: "Inactive" },
-  { key: "invited", label: "Invited" },
-  { key: "deactivated", label: "Deactivated" },
-];
 /** Common inactivity status: no login for 10+ days, or no biometric punch-in for 7+ days. */
 const isInactive = (u) => u.status === "active" && (isDormant(u) || (u.lastBiometric && daysSince(u.lastBiometric) >= 7));
 
@@ -199,8 +194,9 @@ export default function UserManagement() {
       <div className="page-head">
         <div>
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Users size={24} style={{ color: "#0f766e" }} /> User Management
+            <Users size={24} /> User Management
           </h1>
+          <p>Find a person, check what they can do, fix their access.</p>
         </div>
         <div className="actions">
           {/* Kept visible but off until the ID management integration is agreed */}
@@ -210,7 +206,6 @@ export default function UserManagement() {
           {canEdit && <button
             type="button"
             className="btn btn-primary"
-            style={{ background: "#0f766e", borderColor: "#0f766e" }}
             onClick={() => {
               setEditingUser(null);
               setAddEditOpen(true);
@@ -240,42 +235,60 @@ export default function UserManagement() {
         </div>
       </div>
 
-      <div className="admin-hero">
-        <TiltCard className="card orbit-card" max={5}>
-          <div className="card-head"><h3>Access by module</h3></div>
-          <div className="orbit-wrap">
-            <ModuleOrbit total={scoped.filter((u) => (u.roles || []).length).length} modules={MODULES.map((m) => ({ key: m.key, label: m.label, color: m.color, users: moduleCounts[m.key] || 0 }))} active={moduleFilter === "all" ? null : moduleFilter}
-              onPick={(k) => { setModuleFilter(moduleFilter === k ? "all" : k); setRoleFilter("all"); }} />
-            <div className="orbit-side">
-              {MODULES.map((m) => (
-                <button key={m.key} className={"om-row" + (moduleFilter === m.key ? " on" : "")} style={{ "--mc": m.color }} onClick={() => { setModuleFilter(moduleFilter === m.key ? "all" : m.key); setRoleFilter("all"); }} data-testid={`module-card-${m.key}`}>
-                  <i /><span>{m.label}</span><b className="fx-num">{moduleCounts[m.key] || 0}</b>
-                  <em onClick={(e) => { e.stopPropagation(); setSelectedRolePerms(m.key); }} data-testid={`view-roles-${m.key}`}>roles</em>
-                </button>
-              ))}
-            </div>
-          </div>
-        </TiltCard>
-        <div className="access-health">
-          {(() => {
-            const active = scoped.filter((u) => u.status === "active");
-            const deact = scoped.filter((u) => u.status === "deactivated");
-            return [
-              ["All users", scoped.length, "blue", "all", "total"],
-              ["Active", active.length, "green", "active", "active"],
-              ["Inactive", active.filter(isInactive).length, "amber", "inactive", "inactive", `No login for ${DORMANT_DAYS}+ days or no biometric punch-in for 7+ days`],
-              ["Deactivated", deact.length, "red", "deactivated", "deactivated"],
-            ].map(([l, v, t, f, id, tip]) => (
-              <div key={l} className={"ah-tile clickable tone-" + t + (statusFilter === f ? " on" : "")} onClick={() => setStatusFilter(f)} role="button" title={tip} data-testid={`tile-${id}`}>
-                <span>{l}</span><b className="fx-num"><CountUp value={v} /></b>
-              </div>
-            ));
-          })()}
-        </div>
-      </div>
+      {/* The one thing an auditor asks: who is inactive but can still touch Reconciliation */}
+      {(() => {
+        const inactive = scoped.filter(isInactive);
+        const reconHolders = inactive.filter((u) => (u.roles || []).some((rid) => roleById[rid] && modsOf(roleById[rid]).has("recon")));
+        const canApprove = reconHolders.filter((u) => (u.roles || []).some((rid) => Object.entries(roleById[rid]?.perms || {}).some(([k, caps]) => SCREENS[k]?.module === "recon" && caps.includes("approve"))));
+        const review = () => { setStatusFilter("inactive"); setModuleFilter("recon"); setRoleFilter("all"); setSearch(""); setTimeout(() => document.getElementById("um-list")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
+        const exportAudit = () => {
+          const rows = reconHolders.map((u) => [u.name, u.empNo, u.email, (u.roles || []).map((r) => roleById[r]?.name || r).join(" + "), u.lastLogin ? formatDate(u.lastLogin) : "Never", u.lastBiometric ? formatDate(u.lastBiometric) : "None"]);
+          const csv = "data:text/csv;charset=utf-8," + [["Name", "Employee No", "Email", "Roles", "Last login", "Last punch-in"].join(","), ...rows.map((r) => r.map((v) => `"${v}"`).join(","))].join("\n");
+          const a = document.createElement("a"); a.href = encodeURI(csv); a.download = `inactive_with_recon_access_${today}.csv`; document.body.appendChild(a); a.click(); a.remove();
+          toast.success(`Exported ${reconHolders.length} people for the audit file`);
+        };
+        if (!reconHolders.length) return (
+          <InsightCard tone="good" eyebrow="Access risk" value={0} title="No inactive user can open Reconciliation." detail={`Everyone with no login for ${DORMANT_DAYS}+ days or no punch-in for 7+ days has had recon access removed.`} testid="um-insight" />
+        );
+        return (
+          <InsightCard tone="risk" eyebrow="Access risk · auditors ask for this" value={<CountUp value={reconHolders.length} />} of={inactive.length} unit="inactive users"
+            title={`${reconHolders.length} inactive users can still open Reconciliation${canApprove.length ? `, and ${canApprove.length} of them can approve` : ""}.`}
+            detail={`Inactive means no login for ${DORMANT_DAYS}+ days or no biometric punch-in for 7+ days${amcFilter !== "all" ? ` · ${amcFilter}` : ""}. Remove their recon roles or deactivate the ID; reactivating needs a second admin.`}
+            actions={[{ label: `Review these ${reconHolders.length}`, onClick: review, icon: ArrowRight, testid: "insight-review" }, { label: "Export for audit", onClick: exportAudit, icon: Download, testid: "insight-export" }]}
+            meter={{ value: reconHolders.length, total: inactive.length, label: `${Math.round((reconHolders.length / (inactive.length || 1)) * 100)}% of inactive users hold recon access` }} testid="um-insight" />
+        );
+      })()}
+
+      {/* Module footprint: how many modules CAMS has, who is in each, and who is inactive but still holds access */}
+      {(() => {
+        const persons = scoped.filter((u) => (u.roles || []).length).map((u) => {
+          const mods = []; let home = null;
+          (u.roles || []).forEach((rid) => { const r = roleById[rid]; if (!r) return; if (!home) home = r.module; modsOf(r).forEach((m) => { if (!mods.includes(m)) mods.push(m); }); });
+          return { id: u.id, name: u.name, mods, home: home || mods[0], inactive: isInactive(u) };
+        }).filter((p) => p.mods.length);
+        const inactiveIn = (k) => persons.filter((p) => p.inactive && p.mods.includes(k)).length;
+        const pick = (k) => { setModuleFilter(moduleFilter === k ? "all" : k); setRoleFilter("all"); setTimeout(() => document.getElementById("um-list")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
+        return (
+          <CamsConstellation
+            modules={MODULES.map((m) => ({ key: m.key, label: m.label, color: m.color, users: moduleCounts[m.key] || 0, inactive: inactiveIn(m.key), roles: roles.filter((r) => modsOf(r).has(m.key)).length }))}
+            people={scoped.length} persons={persons}
+            active={moduleFilter === "all" ? null : moduleFilter} onPick={pick} onRoles={setSelectedRolePerms} />
+        );
+      })()}
 
       {/* Main Table Card */}
-      <div className="card">
+      <div className="card um-list" id="um-list">
+        {/* Status as a slim strip that is also the filter */}
+        <div className="um-strip">
+          <CountStrip label="Status" value={statusFilter} onChange={setStatusFilter} items={[
+            { key: "all", label: "Everyone", count: scoped.length, testid: "tile-total" },
+            { key: "active", label: "Active", count: scoped.filter((u) => u.status === "active").length, tone: "green", testid: "tile-active" },
+            { key: "inactive", label: "Inactive", count: scoped.filter(isInactive).length, tone: "amber", testid: "tile-inactive", hint: `No login ${DORMANT_DAYS}+ days or no punch-in 7+ days` },
+            { key: "invited", label: "Invited", count: scoped.filter((u) => ["invited", "invite_expired"].includes(u.status)).length, tone: "blue" },
+            { key: "deactivated", label: "Deactivated", count: scoped.filter((u) => u.status === "deactivated").length, tone: "red", testid: "tile-deactivated" },
+          ]} />
+          <span className="muted">{total} {total === 1 ? "person" : "people"} shown</span>
+        </div>
         {/* Toolbar */}
         <div className="toolbar" data-testid="user-toolbar">
           {/* Search */}
@@ -303,22 +316,6 @@ export default function UserManagement() {
               <option value="all">{moduleFilter === "all" ? "Role — pick a module first" : `All ${MODULE_BY_KEY[moduleFilter]?.label} roles`}</option>
               {moduleFilter !== "all" && roles.filter((r) => modsOf(r).has(moduleFilter) && r.status === "active").map((r) => (
                 <option key={r.id} value={r.id}>{r.name} ({roleCounts[r.id] || 0})</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Status Filter */}
-          <div className="field" style={{ minWidth: 160 }}>
-            <select
-              className="select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              data-testid="filter-status-select"
-            >
-              {STATUS_FILTERS.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
               ))}
             </select>
           </div>
@@ -506,7 +503,6 @@ export default function UserManagement() {
           />
         )}
       </div>
-
       {/* Role Permissions Drawer */}
       <RolePermissionsDrawer
         moduleKey={selectedRolePerms}

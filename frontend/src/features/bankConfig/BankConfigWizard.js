@@ -567,7 +567,7 @@ function ReviewSummary({ form, onEdit, isManual, val }) {
         )}
 
         <ChangesCard base={form.baseline} cur={form} />
-        {(form.remarks || []).length > 0 && <div className="rev-issues" style={{ borderColor: "rgba(57,208,255,.35)" }}><div className="ri-title">Authoriser remarks</div><ul>{form.remarks.map((r, i) => <li key={i}><b>{r.by}</b>: {r.text}</li>)}</ul></div>}
+        {(form.remarks || []).length > 0 && <div className="rev-issues" style={{ borderColor: "rgba(59,130,246,.35)" }}><div className="ri-title">Authoriser remarks</div><ul>{form.remarks.map((r, i) => <li key={i}><b>{r.by}</b>: {r.text}</li>)}</ul></div>}
 
         <Section title="Processing mode & connection" editStep={isManual ? I.mode : I.conn} onEdit={onEdit} invalid={!!val.es[I.conn]} warnMsgs={msgsFor(I.conn)}>
           <KV k="Mode" v={BANK_MODES[form.downloadMode].label} />

@@ -5,7 +5,13 @@ import { Drawer } from "@/components/Drawer";
 import { MODULES, MODULE_BY_KEY, SCREENS, CAP_LABELS, hasCap, isPrivileged } from "@/lib/access";
 import { timeAgo } from "@/lib/format";
 import PermissionMatrix from "./PermissionMatrix";
-import { KeyRound, Plus, Pencil, ShieldCheck, Check, X, Users, LayoutGrid, Clock } from "lucide-react";
+import { KeyRound, Plus, Pencil, ShieldCheck, Check, X, Users, LayoutGrid, Clock, GitCompareArrows, Settings2, Coins, Send, Repeat, Contact, Headset, ShoppingCart, BarChart3 } from "lucide-react";
+import { AvatarStack } from "@/components/au";
+
+const MODULE_ICON = { recon: GitCompareArrows, admin: ShieldCheck, central_setup: Settings2, brokerage: Coins, posting: Send, sip: Repeat, crms: Contact, support: Headset, purchase: ShoppingCart, mis: BarChart3 };
+// Strongest capability decides a screen chip's colour.
+const TOP_CAP = (caps) => (caps.includes("approve") ? "approve" : caps.includes("edit") ? "edit" : caps.includes("export") ? "export" : "view");
+const CAP_WORD = { approve: "approves", edit: "does the work", export: "exports", view: "views" };
 import { toast } from "sonner";
 import "./userManagement.css";
 
@@ -78,11 +84,11 @@ export default function RolesAccess() {
     <div data-testid="roles-access">
       <div className="page-head">
         <div>
-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><KeyRound size={24} style={{ color: "#0f766e" }} /> Roles & Access</h1>
+          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><KeyRound size={24} /> Roles & Access</h1>
           <p>Build roles from screen-level permissions for any module. Every role change and every privileged grant needs a second admin.</p>
         </div>
         <div className="actions">
-          {canEdit && <button className="btn btn-primary" style={{ background: "#0f766e", borderColor: "#0f766e" }} onClick={openNew} data-testid="btn-new-role"><Plus size={16} /> New role</button>}
+          {canEdit && <button className="btn btn-primary" onClick={openNew} data-testid="btn-new-role"><Plus size={16} /> New role</button>}
         </div>
       </div>
 
@@ -96,35 +102,19 @@ export default function RolesAccess() {
 
       {tab === "roles" && (
         <>
-          <div className="chip-row" style={{ marginBottom: 14 }}>
-            {[{ key: "all", label: "All modules" }, ...MODULES].map((m) => (
-              <button key={m.key} className={"filter-chip" + (moduleFilter === m.key ? " on" : "")} onClick={() => setModuleFilter(m.key)}>{m.label}</button>
-            ))}
+          <div className="au-bar">
+            <div className="au-tabs" role="tablist" aria-label="Module">
+              {[{ key: "all", label: "All modules" }, ...MODULES.filter((m) => roles.some((r) => r.module === m.key))].map((m) => (
+                <button key={m.key} role="tab" aria-selected={moduleFilter === m.key} className={moduleFilter === m.key ? "on" : ""} onClick={() => setModuleFilter(m.key)}>
+                  {m.label} <em>{m.key === "all" ? roles.length : roles.filter((r) => r.module === m.key).length}</em>
+                </button>
+              ))}
+            </div>
+            <span className="rc2-legend"><i className="c-approve" /> approves <i className="c-edit" /> does the work <i className="c-export" /> exports <i className="c-view" /> views</span>
           </div>
-          <div className="role-grid">
-            {roles.filter((r) => moduleFilter === "all" || r.module === moduleFilter).map((r) => (
-              <div key={r.id} className="card role-tile" style={{ "--mc": MODULE_BY_KEY[r.module]?.color }} data-testid={"role-" + r.id}>
-                <div className="rt-head">
-                  <span className="rt-module">{MODULE_BY_KEY[r.module]?.label}</span>
-                  {r.status !== "active" && <span className={"pill " + (r.status === "pending" ? "pill-pending" : "pill-rejected")}><span className="dot" />{r.status === "pending" ? "Pending approval" : "Rejected"}</span>}
-                  {isPrivileged(r) && <span className="priv-tag">privileged</span>}
-                  {r.simple && <span className="simple-tag">simple view</span>}
-                </div>
-                <h3>{r.name}</h3>
-                <p className="muted">{r.description}</p>
-                <div className="rt-caps">
-                  {Object.entries(r.perms).map(([s, caps]) => (
-                    <span key={s} className="rt-cap" title={caps.map((c) => CAP_LABELS[c]).join(", ")}>{SCREENS[s]?.label}<em>{caps.filter((c) => c !== "view").map((c) => CAP_LABELS[c][0]).join("") || "V"}</em></span>
-                  ))}
-                </div>
-                <div className="rt-foot">
-                  <span className="muted"><Users size={12} /> {userCount(r.id)} users</span>
-                  {canEdit && r.status === "active" && <button className="btn btn-outline btn-sm" onClick={() => setEditing({ ...r, perms: { ...r.perms }, changeNote: "" })} data-testid={"edit-role-" + r.id}><Pencil size={13} /> Edit</button>}
-                </div>
-              </div>
-            ))}
+          <div className="role-grid rc2-grid">
+            {roles.filter((r) => moduleFilter === "all" || r.module === moduleFilter).map((r) => <RoleCard key={r.id} r={r} holders={users.filter((u) => (u.roles || []).includes(r.id)).map((u) => u.name)} canEdit={canEdit} onEdit={() => setEditing({ ...r, perms: { ...r.perms }, changeNote: "" })} />)}
           </div>
-          <div className="muted" style={{ marginTop: 10 }}>Capability letters: M = Maker, C = Checker, E = Export, V = View only.</div>
         </>
       )}
 
@@ -219,6 +209,44 @@ export default function RolesAccess() {
           </div>
         </Drawer>
       )}
+    </div>
+  );
+}
+
+/** One role as a card: who it is for, how many people hold it, and what it can do in plain words. */
+function RoleCard({ r, holders, canEdit, onEdit }) {
+  const [all, setAll] = React.useState(false);
+  const mod = MODULE_BY_KEY[r.module];
+  const Icon = MODULE_ICON[r.module] || KeyRound;
+  const screens = Object.entries(r.perms).filter(([s, caps]) => SCREENS[s] && caps.length).sort((a, b) => ["approve", "edit", "export", "view"].indexOf(TOP_CAP(a[1])) - ["approve", "edit", "export", "view"].indexOf(TOP_CAP(b[1])));
+  const n = (cap) => screens.filter(([, caps]) => caps.includes(cap)).length;
+  const shown = all ? screens : screens.slice(0, 8);
+  return (
+    <div className="card role-tile rc2" style={{ "--b": mod?.color, "--mc": mod?.color }} data-testid={"role-" + r.id}>
+      <div className="rc2-top">
+        <span className="au-badge"><Icon size={18} /></span>
+        <span className="rc2-name"><b>{r.name}</b><em>{mod?.label}{isPrivileged(r) && <span className="rc2-priv">Privileged</span>}{r.simple && <span className="rc2-priv soft">Simple view</span>}</em></span>
+        {canEdit && r.status === "active" && <button type="button" className="au-arrow" onClick={onEdit} title="Edit role" aria-label={`Edit ${r.name}`} data-testid={"edit-role-" + r.id}><Pencil size={16} /></button>}
+      </div>
+      {r.status !== "active" && <span className={"au-st " + (r.status === "pending" ? "pending" : "rejected")}>{r.status === "pending" ? "Pending approval" : "Rejected"}</span>}
+      <div className="rc2-users">
+        <b>{holders.length}</b><span>{holders.length === 1 ? "person" : "people"}</span>
+        <AvatarStack names={holders} />
+      </div>
+      <p className="rc2-desc" title={r.description}>{r.description}</p>
+      <div className="rc2-sum">
+        <span><b>{screens.length}</b> screens</span>
+        {n("edit") > 0 && <span><i className="c-edit" /><b>{n("edit")}</b> does the work</span>}
+        {n("approve") > 0 && <span><i className="c-approve" /><b>{n("approve")}</b> approves</span>}
+      </div>
+      <div className="rc2-caps">
+        {shown.map(([s, caps]) => (
+          <span key={s} className={"rc2-cap c-" + TOP_CAP(caps)} title={`${SCREENS[s].label}: ${CAP_WORD[TOP_CAP(caps)]}${caps.includes("export") && TOP_CAP(caps) !== "export" ? ", exports" : ""}`}>
+            <i />{SCREENS[s].label}
+          </span>
+        ))}
+        {screens.length > 8 && <button type="button" className="rc2-more" onClick={() => setAll((a) => !a)}>{all ? "Show less" : `+${screens.length - 8} more`}</button>}
+      </div>
     </div>
   );
 }

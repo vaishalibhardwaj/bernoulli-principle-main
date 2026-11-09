@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, ChevronRight, AlertTriangle, Hourglass, FilePen, CheckCircle2, Eye, Pencil, Copy, History, HelpCircle, ArrowRight } from "lucide-react";
+import { Plus, Search, ChevronRight, AlertTriangle, Hourglass, FilePen, Eye, Pencil, Copy, History, HelpCircle, ArrowRight } from "lucide-react";
 import VersionsDrawer from "./VersionsDrawer";
 import { useStore } from "@/state/store";
 import { BANK_MODES } from "@/lib/constants";
@@ -10,6 +10,7 @@ import { StatusPill } from "@/components/bits";
 import { Drawer } from "@/components/Drawer";
 import { maskAccount, timeAgo, formatDate } from "@/lib/format";
 import { summarizeSetup } from "@/lib/setupSchema";
+import { StatCard, Avatar } from "@/components/au";
 
 const SHORT_MODE = { auto: "Portal bot", manual: "SFTP / manual", email: "Email", api: "API" };
 const TABS = [["all", "All"], ["active", "Active"], ["rejected", "Needs fix"], ["pending", "Pending"], ["draft", "Drafts"], ["inactive", "Inactive"]];
@@ -78,76 +79,75 @@ export default function BankConfigLanding() {
         {canEdit && <button className="btn btn-primary" onClick={() => nav("/bank-setup/new")} data-testid="btn-add-new"><Plus size={16} /> Add account <kbd>N</kbd></button>}
       </div>
 
-      {/* 1 — What needs me */}
-      <div className="bs-queue" data-testid="work-queue">
+      {/* 1 — What needs me: three cards, click one to filter */}
+      <div className="au-stats bs-stats" data-testid="work-queue">
         {[
-          ["rejected", canEdit ? "Needs your fix" : "Sent back to makers", mineToFix.length, AlertTriangle, "bad"],
-          ["pending", canApprove ? "Waiting for your approval" : "Waiting for checker", canApprove ? pending.filter((c) => c.owner !== personaUser.name.split(" ")[0]).length : pending.length, Hourglass, "warn"],
-          ["draft", "Drafts", drafts.length, FilePen, "info"],
-        ].map(([k, l, n, Icon, tone]) => (
-          <button key={k} className={"bs-q tone-" + tone + (tab === k ? " on" : "") + (n ? "" : " zero")} onClick={() => setTab(tab === k ? "all" : k)} data-testid={"queue-" + k}>
-            <Icon size={16} /><span>{l}</span><b className="fx-num">{n}</b>
-          </button>
+          ["rejected", canEdit ? "Needs your fix" : "Sent back to makers", mineToFix.length, AlertTriangle, "red", mineToFix.length ? `Oldest sent back ${timeAgo(mineToFix.map((c) => c.rejection?.date || c.lastUpdated).sort()[0])}` : "Nothing sent back"],
+          ["pending", canApprove ? "Waiting for your approval" : "Waiting for checker", canApprove ? pending.filter((c) => c.owner !== personaUser.name.split(" ")[0]).length : pending.length, Hourglass, "amber", "A teammate made these, you can approve"],
+          ["draft", "Drafts", drafts.length, FilePen, "blue", "Started, not sent for approval"],
+        ].map(([k, l, n, Icon, tone, foot]) => (
+          <StatCard key={k} icon={Icon} tone={tone} label={l} value={n} foot={foot} footAction={tab === k ? "Showing" : "Show"} onClick={() => setTab(tab === k ? "all" : k)} active={tab === k} testid={"queue-" + k} />
         ))}
-        {mineToFix.length + pending.length + drafts.length === 0 && <span className="bs-calm"><CheckCircle2 size={15} /> Nothing needs you here</span>}
       </div>
 
       {canEdit && mineToFix.length > 0 && tab !== "pending" && tab !== "draft" && (
-        <div className="bs-fix" data-testid="fix-list">
+        <div className="au-list bs-fixlist" data-testid="fix-list">
+          <div className="au-list-h"><h3>Sent back to you</h3><span className="au-list-sub">{mineToFix.length} setup{mineToFix.length !== 1 ? "s" : ""} · fix and resubmit</span></div>
           {mineToFix.slice(0, 3).map((c) => (
-            <div key={c.id} className="bs-fix-row">
-              <AlertTriangle size={15} />
-              <div><b>{c.bankName} ·{c.accountNumber.slice(-4)}</b><span>“{c.rejection?.comment}” — {c.rejection?.by}, {timeAgo(c.rejection?.date)}</span></div>
-              <button className="btn btn-primary btn-sm" onClick={() => nav(`/bank-setup/edit/${c.id}`)} data-testid={"fix-" + c.id}>Fix <ArrowRight size={13} /></button>
+            <div key={c.id} className="au-row bs-fixrow" role="button" tabIndex={0} onClick={() => nav(`/bank-setup/edit/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && nav(`/bank-setup/edit/${c.id}`)}>
+              <span className="au-who"><Avatar name={c.bankName} badge="bad" /><span><b>{c.bankName} · {c.accountNumber.slice(-4)}</b><em>“{c.rejection?.comment}”</em></span></span>
+              <span className="au-when">{c.rejection?.by}<br />{timeAgo(c.rejection?.date)}</span>
+              <button className="btn btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); nav(`/bank-setup/edit/${c.id}`); }} data-testid={"fix-" + c.id}>Fix <ArrowRight size={13} /></button>
             </div>
           ))}
         </div>
       )}
 
       {/* 2 — Find */}
-      <div className="bs-bar">
-        <div className="search bs-search"><Search /><input ref={searchRef} className="input" placeholder="Search bank, account or last 4 digits" value={q} onChange={(e) => setQ(e.target.value)} data-testid="search-input" /><kbd>/</kbd></div>
-        <div className="bs-tabs" role="tablist">
+      <div className="au-bar">
+        <label className="au-search"><Search size={17} /><input ref={searchRef} placeholder="Search bank, account or last 4 digits" value={q} onChange={(e) => setQ(e.target.value)} data-testid="search-input" /><kbd>/</kbd></label>
+        <div className="au-tabs" role="tablist">
           {TABS.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)} data-testid={"tab-" + k}>{l} <em>{count(k)}</em></button>)}
         </div>
       </div>
       <div className="bs-scope">Showing <b>{scopeLabel}</b> · {new Set(rows.map((c) => c.accountNumber)).size} accounts at {banks.length} bank{banks.length !== 1 ? "s" : ""}</div>
 
-      {/* 3 — Banks, each one line */}
+      {/* 3 — Banks, each one card; problems open by themselves */}
       <div className="bs-banks" data-testid="bank-groups">
-        {banks.length === 0 && <div className="card bs-empty">{needle ? `No account matches “${q}”.` : tab === "rejected" ? "Nothing sent back — nice work." : "Nothing here yet."}{canEdit && !needle && <button className="link" onClick={() => nav("/bank-setup/new")}>Add an account</button>}</div>}
+        {banks.length === 0 && <div className="au-list bs-empty">{needle ? `No account matches “${q}”.` : tab === "rejected" ? "Nothing sent back — nice work." : "Nothing here yet."}{canEdit && !needle && <button className="link" onClick={() => nav("/bank-setup/new")}>Add an account</button>}</div>}
         {banks.map((b) => {
           const o = isOpen(b);
           const modes = [...new Set(b.list.map((c) => SHORT_MODE[c.downloadMode]))];
           const st = (s) => b.list.filter((c) => c.status === s).length;
           return (
-            <div key={b.bank} className={"card bs-bank" + (o ? " open" : "")} data-testid={"bank-" + b.bank}>
-              <button className="bs-bank-h" onClick={() => setOpen({ ...open, [b.bank]: !o })} aria-expanded={o}>
-                <ChevronRight size={16} className="bs-chev" />
-                <b>{b.bank}</b>
-                <span className="muted">{b.accounts} account{b.accounts !== 1 ? "s" : ""} · {modes.join(", ")}</span>
-                <span className="bs-badges">
-                  {st("rejected") > 0 && <span className="bs-badge bad">{st("rejected")} needs fix</span>}
-                  {st("pending") > 0 && <span className="bs-badge warn">{st("pending")} pending</span>}
-                  {st("draft") > 0 && <span className="bs-badge info">{st("draft")} draft</span>}
-                  {!b.issues && <span className="bs-ok"><CheckCircle2 size={13} /> {st("inactive") ? `${st("active")} active · ${st("inactive")} inactive` : "all active"}</span>}
+            <div key={b.bank} className={"au-list bs-bank2" + (o ? " open" : "")} data-testid={"bank-" + b.bank}>
+              <button className="bs-bank2-h" onClick={() => setOpen({ ...open, [b.bank]: !o })} aria-expanded={o}>
+                <Avatar name={b.bank} size={44} badge={st("rejected") ? "bad" : st("pending") ? "warn" : st("draft") ? "info" : undefined} />
+                <span className="bs-bank2-name"><b>{b.bank}</b><em>{b.accounts} account{b.accounts !== 1 ? "s" : ""} · {modes.join(", ")}</em></span>
+                <span className="au-pills bs-bank2-st">
+                  {st("rejected") > 0 && <span className="au-st rejected">{st("rejected")} needs fix</span>}
+                  {st("pending") > 0 && <span className="au-st pending">{st("pending")} pending</span>}
+                  {st("draft") > 0 && <span className="au-st draft">{st("draft")} draft</span>}
+                  {!b.issues && <span className="au-st active">{st("inactive") ? `${st("active")} active · ${st("inactive")} inactive` : "All active"}</span>}
                 </span>
+                <span className="au-round bs-chev2"><ChevronRight size={16} /></span>
               </button>
               {o && (
-                <div className="bs-rows">
+                <div className="bs-rows2">
+                  <div className="au-group"><span>Account</span><span>{b.list.length} setup{b.list.length !== 1 ? "s" : ""}</span></div>
                   {b.list.sort((x, y) => ["rejected", "pending", "draft", "active", "inactive"].indexOf(x.status) - ["rejected", "pending", "draft", "active", "inactive"].indexOf(y.status)).map((c) => {
                     const Mode = BANK_MODES[c.downloadMode];
                     return (
-                      <button key={c.id} className="bs-row" onClick={() => setSel(c)} data-testid={"row-" + c.id}>
-                        <span className="bs-acct tnum"><b>{maskAccount(c.accountNumber)}</b><em>{c.schemeName || c.assetClass || ""}</em></span>
-                        <span className="bs-mode"><Mode.icon size={14} /> {SHORT_MODE[c.downloadMode]}</span>
-                        <span className="bs-tags">
-                          {c.priority === "high" && <span className="bs-tag hi">High priority</span>}
-                          {c.formatName && <span className="bs-tag">{c.formatName}</span>}
-                          {c.processing?.reconciliationType === "Liability" && <span className="bs-tag">Liability · {c.processing.liabilityCategory}</span>}
+                      <button key={c.id} className="au-row bs-row2" onClick={() => setSel(c)} data-testid={"row-" + c.id}>
+                        <span className="au-who"><Avatar name={c.bankName} icon={Mode.icon} size={38} color="#5b606b" /><span><b className="tnum">{maskAccount(c.accountNumber)}</b><em>{c.schemeName || c.assetClass || ""}</em></span></span>
+                        <span className="au-meta">{SHORT_MODE[c.downloadMode]}</span>
+                        <span className="au-pills">
+                          {c.priority === "high" && <span className="au-tag hi">High priority</span>}
+                          {c.formatName && <span className="au-tag">{c.formatName}</span>}
+                          {c.processing?.reconciliationType === "Liability" && <span className="au-tag">Liability · {c.processing.liabilityCategory}</span>}
                         </span>
-                        <StatusPill status={c.status} />
-                        <span className="bs-when">{timeAgo(c.lastUpdated)}</span>
+                        <span className={"au-st " + c.status}>{{ active: "Active", pending: "Pending approval", rejected: "Sent back", draft: "Draft", inactive: "Inactive" }[c.status] || c.status}</span>
+                        <span className="au-when">{timeAgo(c.lastUpdated)}</span>
                       </button>
                     );
                   })}

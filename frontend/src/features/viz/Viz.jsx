@@ -34,18 +34,18 @@ export function CoreOrb({ value, target = 90, label, sub, size = 240 }) {
     <div className="core-orb" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <defs>
-          <linearGradient id="orbArc" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#39d0ff" /><stop offset="100%" stopColor="#2f8cf0" /></linearGradient>
-          <radialGradient id="orbCore"><stop offset="0%" stopColor="rgba(57,208,255,.35)" /><stop offset="70%" stopColor="rgba(11,80,157,.15)" /><stop offset="100%" stopColor="rgba(11,80,157,0)" /></radialGradient>
+          <linearGradient id="orbArc" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#3b82f6" /><stop offset="100%" stopColor="#1d4ed8" /></linearGradient>
+          <radialGradient id="orbCore"><stop offset="0%" stopColor="rgba(59,130,246,.35)" /><stop offset="70%" stopColor="rgba(29,78,216,.15)" /><stop offset="100%" stopColor="rgba(29,78,216,0)" /></radialGradient>
           <filter id="orbGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
         </defs>
         <circle cx={size / 2} cy={size / 2} r={r - 18} fill="url(#orbCore)" />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(120,165,255,.12)" strokeWidth="12" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(15,23,42,.12)" strokeWidth="12" />
         <motion.circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="url(#orbArc)" strokeWidth="12" strokeLinecap="round" filter="url(#orbGlow)"
           transform={`rotate(-90 ${size / 2} ${size / 2})`} strokeDasharray={c} initial={{ strokeDashoffset: c }} animate={{ strokeDashoffset: c * (1 - pct / 100) }} transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }} />
         <line x1={size / 2 + (r - 10) * Math.cos((t * Math.PI) / 180)} y1={size / 2 + (r - 10) * Math.sin((t * Math.PI) / 180)} x2={size / 2 + (r + 10) * Math.cos((t * Math.PI) / 180)} y2={size / 2 + (r + 10) * Math.sin((t * Math.PI) / 180)} stroke="#fff" strokeWidth="2" opacity=".8" />
-        <g className="orb-spin"><circle cx={size / 2} cy={size / 2} r={r - 26} fill="none" stroke="rgba(57,208,255,.35)" strokeDasharray="2 10" /></g>
-        <g className="orb-spin rev"><circle cx={size / 2} cy={size / 2} r={r + 12} fill="none" stroke="rgba(120,165,255,.18)" strokeDasharray="1 6" /></g>
-        <g className="orb-orbit"><circle cx={size / 2} cy={size / 2 - r} r="4" fill="#39d0ff" filter="url(#orbGlow)" /></g>
+        <g className="orb-spin"><circle cx={size / 2} cy={size / 2} r={r - 26} fill="none" stroke="rgba(59,130,246,.35)" strokeDasharray="2 10" /></g>
+        <g className="orb-spin rev"><circle cx={size / 2} cy={size / 2} r={r + 12} fill="none" stroke="rgba(15,23,42,.18)" strokeDasharray="1 6" /></g>
+        <g className="orb-orbit"><circle cx={size / 2} cy={size / 2 - r} r="4" fill="#3b82f6" filter="url(#orbGlow)" /></g>
       </svg>
       <div className="orb-center">
         <b className="fx-num"><CountUp value={pct} format={(v) => v.toFixed(1)} />%</b>
@@ -62,10 +62,10 @@ export function RingProgress({ value, max, size = 120, label }) {
   return (
     <div className="ring-prog" style={{ width: size, height: size }}>
       <svg width={size} height={size}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(120,165,255,.14)" strokeWidth="8" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(15,23,42,.14)" strokeWidth="8" />
         <motion.circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="url(#orbArc2)" strokeWidth="8" strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          strokeDasharray={c} initial={{ strokeDashoffset: c }} animate={{ strokeDashoffset: c * (1 - p) }} transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }} style={{ filter: "drop-shadow(0 0 6px rgba(57,208,255,.8))" }} />
-        <defs><linearGradient id="orbArc2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#39d0ff" /><stop offset="100%" stopColor="#2f8cf0" /></linearGradient></defs>
+          strokeDasharray={c} initial={{ strokeDashoffset: c }} animate={{ strokeDashoffset: c * (1 - p) }} transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }} style={{ filter: "drop-shadow(0 0 6px rgba(59,130,246,.8))" }} />
+        <defs><linearGradient id="orbArc2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#3b82f6" /><stop offset="100%" stopColor="#1d4ed8" /></linearGradient></defs>
       </svg>
       <div className="ring-center"><b className="fx-num">{value}<em>/{max}</em></b><span>{label}</span></div>
     </div>
@@ -90,7 +90,7 @@ export function FlowStreams({ sources, outcomes, centerLabel = "Matching engine"
     <div className="flow" ref={ref}>
       <svg width={w} height={height}>
         <defs>
-          <linearGradient id="flowIn" x1="0" x2="1"><stop offset="0%" stopColor="#2f8cf0" stopOpacity=".15" /><stop offset="100%" stopColor="#39d0ff" stopOpacity=".55" /></linearGradient>
+          <linearGradient id="flowIn" x1="0" x2="1"><stop offset="0%" stopColor="#1d4ed8" stopOpacity=".15" /><stop offset="100%" stopColor="#3b82f6" stopOpacity=".55" /></linearGradient>
           <filter id="flowGlow"><feGaussianBlur stdDeviation="3" /></filter>
         </defs>
         {L.map((n) => {
@@ -99,7 +99,7 @@ export function FlowStreams({ sources, outcomes, centerLabel = "Matching engine"
           return (
             <g key={"s" + n.label} onPointerEnter={() => setHover(n.label)} onPointerLeave={() => setHover(null)} style={{ opacity: dim ? 0.18 : 1, transition: "opacity .2s" }}>
               <path d={d} stroke="url(#flowIn)" strokeWidth={sw} fill="none" />
-              <path d={d} stroke="#39d0ff" strokeWidth="2.5" fill="none" strokeDasharray="2 22" className="flow-dash" style={{ animationDuration: `${2.6 - (n.v / total)}s` }} />
+              <path d={d} stroke="#3b82f6" strokeWidth="2.5" fill="none" strokeDasharray="2 22" className="flow-dash" style={{ animationDuration: `${2.6 - (n.v / total)}s` }} />
               <circle cx={n.x} cy={n.y} r="6" className="flow-node" />
               <text x={n.x - 14} y={n.y - 2} textAnchor="end" className="flow-lbl">{n.label}</text>
               <text x={n.x - 14} y={n.y + 13} textAnchor="end" className="flow-val">{format(n.v)}</text>
@@ -168,8 +168,8 @@ export function ModuleOrbit({ modules, onPick, active, total }) {
   return (
     <div className="mod-orbit" style={{ width: size, height: size }}>
       <svg width={size} height={size}>
-        <circle cx={c} cy={c} r={r} fill="none" stroke="rgba(120,165,255,.18)" strokeDasharray="2 6" />
-        <circle cx={c} cy={c} r={r - 44} fill="none" stroke="rgba(120,165,255,.1)" />
+        <circle cx={c} cy={c} r={r} fill="none" stroke="rgba(15,23,42,.18)" strokeDasharray="2 6" />
+        <circle cx={c} cy={c} r={r - 44} fill="none" stroke="rgba(15,23,42,.1)" />
         {modules.map((m, i) => {
           const a = (i / modules.length) * Math.PI * 2 - Math.PI / 2; const x = c + r * Math.cos(a); const y = c + r * Math.sin(a);
           return <line key={"l" + m.key} x1={c} y1={c} x2={x} y2={y} stroke={m.color} strokeOpacity={active && active !== m.key ? 0.12 : 0.45} strokeWidth="1.5" className="orbit-link" />;
@@ -187,6 +187,41 @@ export function ModuleOrbit({ modules, onPick, active, total }) {
           </motion.button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Column chart in the "Payments funnel" style: each column carries its label and value on top,
+ * bars are hatched, the column in focus turns solid with a white pill tooltip, a small marker shows
+ * the previous value, and a soft slope joins each bar to the next.
+ */
+export function FocusBars({ items, min = 70, max = 100, ticks = [100, 90, 80, 70], format = (v) => v, tip, onPick, height = 300 }) {
+  const firstBad = items.findIndex((it) => it.bad);
+  const lowest = items.reduce((b, it, i) => (it.v < items[b].v ? i : b), 0);
+  const [focus, setFocus] = React.useState(firstBad >= 0 ? firstBad : lowest);
+  const pct = (v) => Math.max(2, Math.min(100, ((Math.max(min, v) - min) / (max - min)) * 100));
+  return (
+    <div className="fb" style={{ "--fb-h": `${height}px` }} onPointerLeave={() => setFocus(firstBad >= 0 ? firstBad : lowest)}>
+      <div className="fb-axis" aria-hidden="true">{ticks.map((t) => <span key={t} style={{ bottom: `${pct(t)}%` }}>{format(t)}</span>)}</div>
+      <div className="fb-cols" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+        {items.map((it, i) => {
+          const h = pct(it.v); const next = items[i + 1]; const hn = next ? pct(next.v) : h;
+          const on = focus === i;
+          return (
+            <button key={it.label} type="button" className={"fb-col" + (on ? " on" : "") + (it.bad ? " bad" : "")} style={{ "--h": `${h}%`, "--hn": `${hn}%`, "--i": i }}
+              onPointerEnter={() => setFocus(i)} onFocus={() => setFocus(i)} onClick={() => onPick && onPick(it)} aria-label={`${it.label} ${format(it.v)}`}>
+              <span className="fb-head"><span>{it.label}</span><b>{format(it.v)}</b></span>
+              <span className="fb-plot">
+                {it.prev != null && <i className="fb-mark" style={{ bottom: `calc(${pct(it.prev)}% + 8px)` }} />}
+                <span className="fb-bar" />
+                {next && <span className="fb-slope" />}
+                {on && tip && <span className="fb-tip">{tip(it)}</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
