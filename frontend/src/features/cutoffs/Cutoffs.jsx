@@ -1,5 +1,6 @@
 import React from "react";
-import { Clock, Check, X, Lock } from "lucide-react";
+import { HeroArt } from "@/components/Art";
+import { Check, X, Lock } from "lucide-react";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
 import { formatDate } from "@/lib/format";
@@ -66,8 +67,8 @@ export default function Cutoffs() {
   return (
     <div data-testid="cutoffs">
       <div className="page-head"><div>
-        <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Clock size={22} /> Cutoff times<span className="shared-amc" title="These settings are not per AMC: a change applies to every AMC.">Same for every AMC</span></h1>
-      </div></div>
+        <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}>Cutoff times<span className="shared-amc" title="These settings are not per AMC: a change applies to every AMC.">Same for every AMC</span></h1>
+      </div><HeroArt name="clock" /></div>
       {group("scheme", "Scheme-level cutoffs", "From the scheme master")}
       {group("asset", "Asset-class cutoffs", "Default for every scheme in the class")}
     </div>

@@ -1,4 +1,5 @@
 import React from "react";
+import { HeroArt } from "@/components/Art";
 import { ROLE_DEFAULTS, defaultPerms } from "@/lib/access";
 import { useStore } from "@/state/store";
 import { Drawer } from "@/components/Drawer";
@@ -87,6 +88,7 @@ export default function RolesAccess() {
           <p>Build roles from screen-level permissions for any module. Every role change and every privileged grant needs a second admin.</p>
         </div>
         <div className="actions">
+          <HeroArt name="gears" />
           {canEdit && <button className="btn btn-primary" onClick={openNew} data-testid="btn-new-role"><Plus size={16} /> New role</button>}
         </div>
       </div>

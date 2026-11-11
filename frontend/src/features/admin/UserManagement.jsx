@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
+import { HeroArt } from "@/components/Art";
 import { useStore } from "@/state/store";
 import { MODULES, MODULE_BY_KEY, SCREENS, hasCap } from "@/lib/access";
 import { Avatar } from "@/components/au";
@@ -198,7 +199,7 @@ export default function UserManagement() {
   const STATUSES = [
     { key: "active", label: "Active", count: statusCount("active"), color: "#22a06b", hint: "Signed in and punched in recently", testid: "tile-active" },
     { key: "inactive", label: "Inactive", count: statusCount("inactive"), color: "#e8a23a", hint: `No sign-in ${DORMANT_DAYS}+ days or no punch-in 7+ days`, testid: "tile-inactive" },
-    { key: "invited", label: "Invited", count: statusCount("invited"), color: "#2557ff", hint: "Has roles, hasn't signed in yet", testid: "tile-invited" },
+    { key: "invited", label: "Invited", count: statusCount("invited"), color: "#7b61e8", hint: "Has roles, hasn't signed in yet", testid: "tile-invited" },
     { key: "deactivated", label: "Deactivated", count: statusCount("deactivated"), color: "#e5484d", hint: "ID switched off, cannot sign in", testid: "tile-deactivated" },
   ];
   const toList = () => setTimeout(() => document.getElementById("um-list")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -221,6 +222,7 @@ export default function UserManagement() {
           <p>Find a person, check what they can do, fix their access.</p>
         </div>
         <div className="actions">
+          <HeroArt name="badges" />
           <span title={`Disabled until the ID management integration is confirmed. It will disable IDs with no biometric punch-in for ${BIOMETRIC_LIMIT_DAYS} consecutive days.`}>
             <button type="button" className="btn btn-outline" disabled data-testid="btn-biometric-check"><Shield size={15} /> Run biometric check</button>
           </span>
