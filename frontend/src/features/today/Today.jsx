@@ -1,4 +1,5 @@
 import React from "react";
+import { Art } from "@/components/Art";
 import { useNavigate, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "@/state/store";
@@ -203,6 +204,7 @@ export default function Today() {
       <div className="deck-hero">
         {/* 1 — The one thing to do now */}
         <TiltCard className={"focus-card tone-" + (focus?.tone || "green")} max={4} data-testid="next-action">
+          <Art name="coins" className="fc-art" />
           <div className="fc-top">
             <span className="fc-eyebrow"><Sparkles size={13} /> {isChecker ? "Your focus for today: approvals" : "Your focus for today"}</span>
             {focus && <span className="fc-count">{i + 1} <em>of {ranged.length}</em></span>}

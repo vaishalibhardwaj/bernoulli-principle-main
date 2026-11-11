@@ -1,6 +1,7 @@
 import { fileSchedule, clock } from "@/lib/schedule";
 import { RequestSetupButton } from "@/features/setup/SetupTasks";
 import React from "react";
+import { HeroArt } from "@/components/Art";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { Drawer } from "@/components/Drawer";
@@ -299,6 +300,7 @@ export default function FileInbox() {
           <p>{simple ? "Every bank statement we expect today, how it reaches us, and what to do when it doesn't." : "Today's statements, arriving through each bank's approved setup: manual upload, email, API or portal bot. Check them, fix them, reprocess them."}
             {hasCap(perms, "bank_setup") && <> To change <i>how</i> a bank is connected or read, use <button className="link" onClick={() => nav("/bank-setup")}>Bank statement setup</button>.</>}</p>
         </div>
+        <HeroArt name="folder" />
         <div className="actions" style={{ marginRight: 8 }}><RequestSetupButton /></div>
         {canManual && <div className="actions" style={{ marginRight: 8 }}><button className="btn btn-outline" onClick={() => setManualOpen(true)} data-testid="btn-manual-upload"><UploadCloud size={15} /> Manual upload (exception)</button></div>}
         {canEdit && canManual && manualWaiting.length > 0 && <div className="actions"><button className="btn btn-primary" onClick={() => (manualWaiting.length === 1 ? setUploadFor({ id: manualWaiting[0].id }) : setPickUpload(true))} data-testid="upload-statement-btn"><UploadCloud size={15} /> Upload a statement ({manualWaiting.length} waiting)</button></div>}

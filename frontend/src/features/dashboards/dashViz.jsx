@@ -1,7 +1,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 
-export const C = { ok: "#16a34a", bad: "#f43f5e", warn: "#f59e0b", info: "#3b82f6", mute: "rgba(15,23,42,.18)", blue: "#1d4ed8", violet: "#6366f1" };
+export const C = { ok: "#16a34a", bad: "#f43f5e", warn: "#f59e0b", info: "#7b61e8", mute: "rgba(15,23,42,.18)", blue: "#5b3fd1", violet: "#6366f1" };
 export const minsNow = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
 export const hhmm = (m) => { const h = Math.floor(((m % 1440) + 1440) % 1440 / 60), mm = Math.round(((m % 60) + 60) % 60); return `${((h + 11) % 12) + 1}:${String(mm).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
 export const ago = (min) => (min == null ? "—" : min < 1 ? "just now" : min < 60 ? `${Math.round(min)}m ago` : `${Math.floor(min / 60)}h ${Math.round(min % 60)}m ago`);

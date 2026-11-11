@@ -1,6 +1,7 @@
 // Central Setup › Recon › To do: everything waiting on the team, in one place, for the AMC picked at the top.
 //  To approve (a teammate made it) · Sent back (fix and resubmit) · Requests from Ops · Drafts (finish and send).
 import React from "react";
+import { HeroArt } from "@/components/Art";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CheckSquare, AlertTriangle, ClipboardList, FilePen, ArrowRight, CheckCircle2 } from "lucide-react";
 import { useStore } from "@/state/store";
@@ -42,6 +43,7 @@ export default function SetupTodo() {
         <div>
           <h1>To do</h1>
         </div>
+        <HeroArt name="clipboard" />
       </div>
 
       <div className="au-stats todo-stats">

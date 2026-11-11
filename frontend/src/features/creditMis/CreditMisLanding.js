@@ -1,4 +1,5 @@
 import React from "react";
+import { HeroArt } from "@/components/Art";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Search, AlertTriangle, Eye, Pencil, Copy, Download, FileSpreadsheet, CreditCard, GitCompareArrows, ChevronDown, ArrowLeftRight } from "lucide-react";
 import { useStore } from "@/state/store";
@@ -93,6 +94,7 @@ export default function CreditMisLanding() {
           <h1>Credit MIS</h1>
         </div>
         <div className="actions">
+          <HeroArt name="card" tone="pink" />
           <button className="btn btn-outline" onClick={exportCsv} data-testid="btn-export-credit"><Download size={15} /> Export</button>
           {canEdit && <button className="btn btn-primary" onClick={() => nav("/credit-mis/new")} data-testid="btn-add-credit"><Plus size={16} /> Add feed <kbd>N</kbd></button>}
         </div>

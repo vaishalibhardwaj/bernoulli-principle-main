@@ -1,4 +1,5 @@
 import React from "react";
+import { HeroArt } from "@/components/Art";
 import { Banknote, Download, CheckCircle2, AlertTriangle, MinusCircle, FileX2, ArrowUpRight, ArrowDownRight, Cpu, Info, Filter, ListChecks, ArrowRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/state/store";
@@ -15,8 +16,8 @@ const THREE_PM = 15 * 60;
 const FOUR_PM = 16 * 60;
 // Balance check (green / orange) and sweep (violet / blue) use different palettes on purpose.
 const BAL = { match: "#16a34a", mismatch: "#ff9f43", none: "rgba(140,160,200,.5)" };
-const STMT = { txn: "#16a34a", no_txn: "#3b82f6", not_received: "rgba(140,160,200,.5)" };
-const SWP = { full: "#6366f1", partial: "#1d4ed8", pending: "rgba(99,102,241,.22)" };
+const STMT = { txn: "#16a34a", no_txn: "#7b61e8", not_received: "rgba(140,160,200,.5)" };
+const SWP = { full: "#6366f1", partial: "#5b3fd1", pending: "rgba(99,102,241,.22)" };
 const STMT_TEXT = { txn: "Received", no_txn: "No transactions today", not_received: "Not received" };
 const ACCT_TYPE = { scheme: "Scheme account", common: "Common collection account" };
 const NO_FILTER = { bank: "all", account: "all", sebi: "all", type: "all" };
@@ -94,6 +95,7 @@ export default function ClosingBalances() {
           <h1><Banknote size={22} /> Closing balances</h1>
           <p>Every bank account's closing balance as at its last transaction before 3 PM, checked against the system's closing balance (the balance on the last line item in our tables){isManager ? ", and how much of it has been utilised" : ""}.</p>
         </div>
+        <HeroArt name="cubes" />
         <div className="dz-actions">
           <div className="segmented dz-asat" title="See the day at another time">{[["now", "Now"], [String(THREE_PM + 30), "3:30 PM"], [String(FOUR_PM), "4 PM"], [String(17 * 60), "5 PM"]].map(([v, l]) => <button key={v} className={asAt === v ? "on" : ""} onClick={() => setAsAt(v)} data-testid={"asat-" + v}>{l}</button>)}</div>
           <button className="btn btn-outline btn-sm" onClick={exportCsv} data-testid="cb-export"><Download size={14} /> Export</button>

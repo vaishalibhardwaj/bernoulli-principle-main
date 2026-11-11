@@ -1,4 +1,5 @@
 import React from "react";
+import { HeroArt } from "@/components/Art";
 import { Activity, Server, Plug, Bot, Upload, Download, AlertTriangle, ArrowRight, FileX2, Clock, Sparkles, Mail } from "lucide-react";
 import { useStore } from "@/state/store";
 import { downloadCsv } from "@/features/reports/csv";
@@ -78,6 +79,7 @@ export default function SchedulerMonitor() {
           <h1><Activity size={22} /> Scheduler monitor</h1>
           <p>Every file-pickup job and every file that landed today — from SFTP (GCS bucket), API and UI upload — for one AMC at a time.</p>
         </div>
+        <HeroArt name="folder" />
         <div className="dz-actions">
           <div className="segmented dz-mode" data-testid="sched-mode">
             <button className={mode === "overview" ? "on" : ""} onClick={() => switchMode("overview")}>Overview</button>

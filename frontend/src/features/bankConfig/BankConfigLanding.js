@@ -1,4 +1,5 @@
 import React from "react";
+import { HeroArt } from "@/components/Art";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Search, AlertTriangle, Eye, Pencil, Copy, History, Landmark, GitCompareArrows, ChevronDown, ArrowLeftRight, Tags } from "lucide-react";
 import VersionsDrawer from "./VersionsDrawer";
@@ -75,6 +76,7 @@ export default function BankConfigLanding() {
       <div className="bs-head">
         <div><h1>Bank statements</h1></div>
         <div className="actions">
+          <HeroArt name="bank" />
           {canEdit && <button className="btn btn-primary" onClick={() => nav("/bank-setup/new")} data-testid="btn-add-new"><Plus size={16} /> Add account <kbd>N</kbd></button>}
         </div>
       </div>
