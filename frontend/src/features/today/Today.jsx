@@ -6,23 +6,18 @@ import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
 import { Light } from "@/features/ops/ui";
 import { useApprovals } from "@/features/approvals/useApprovals";
-import { RELEASE_CUTOFF } from "@/mock/opsSeed";
 import { Drawer } from "@/components/Drawer";
 import { Modal } from "@/components/Modal";
 import { TiltCard, CountUp } from "@/features/viz/Viz";
 import { downloadCsv } from "@/features/reports/csv";
 import { useCycle } from "./Cycle";
 import { useWorkItems } from "./workItems";
+import TodayTodo from "./TodayTodo";
+import { NowStrip, useFailedFiles, useCutoffMins, greeting, longDate } from "@/features/home/NowStrip";
 import { EVENT_TYPES, NO_ACTION_REASONS, supervisorOf, isoDay, fmtDay, ageWords, startOfDay } from "@/lib/events";
 import { uid } from "@/lib/format";
-import { ArrowRight, ArrowLeft, Hourglass, Clock, Sun, ShieldCheck, Download, Flag, ListChecks, Sparkles, CheckCircle2, X, Repeat, Ban, CalendarDays, Inbox } from "lucide-react";
+import { ArrowRight, ArrowLeft, Hourglass, Sun, ShieldCheck, Download, Flag, ListChecks, CheckCircle2, X, Repeat, Ban, CalendarDays, Inbox } from "lucide-react";
 import { toast } from "sonner";
-
-function useCutoff() {
-  const [now, setNow] = React.useState(Date.now());
-  React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
-  return Math.round((new Date(RELEASE_CUTOFF) - now) / 60000);
-}
 
 const STEP_KEY = { 1: "files", 2: "match", 3: "cases", 4: "release", 5: "refunds", 6: "close" };
 const SHORT = { files: "Bank files", match: "Match payments", cases: "Problem cases", release: "Release money", refunds: "Send refunds", close: "Close the day" };
@@ -62,14 +57,15 @@ function NoActionModal({ item, supervisor, onClose, onSubmit }) {
 }
 
 export default function Today() {
-  const { collections, perms, personaUser, act, audit, currentUser } = useStore();
+  const { collections, perms, personaUser, act, audit, currentUser, activeAmc } = useStore();
   const nav = useNavigate();
   const loc = useLocation();
   const { steps } = useCycle();
   const work = useWorkItems();
   const approvals = useApprovals().filter((a) => !a.own);
   const isChecker = hasCap(perms, "inbox", "approve");
-  const mins = useCutoff();
+  const mins = useCutoffMins();
+  const failedFiles = useFailedFiles();
   const [idx, setIdx] = React.useState(0);
   const [queueOpen, setQueueOpen] = React.useState(false);
   const [closeOpen, setCloseOpen] = React.useState(loc.hash === "#close");
@@ -93,8 +89,13 @@ export default function Today() {
   const openWork = React.useMemo(() => work.filter((w) => !myNa[w.id] || myNa[w.id].status === "sent_back").map((w) => (myNa[w.id] ? { ...w, sentBack: myNa[w.id] } : w)), [work, myNa]);
 
   const first = personaUser.name.split(" ")[0];
-  const hour = new Date().getHours();
-  const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  // Sent back to me: my No-action calls the supervisor returned, and my own work a checker rejected.
+  const sentBackMine = [
+    ...openWork.filter((w) => w.sentBack).map((w) => ({ id: w.id, go: () => pickItem(w) })),
+    ...(collections.refunds || []).filter((r) => r.status === "rejected" && (r.owner || "").startsWith(first)).map((r) => ({ id: r.id, go: () => nav("/refunds") })),
+    ...["bank_config", "credit_config"].flatMap((k) => (collections[k] || []).filter((c) => c.status === "rejected" && c.owner === currentUser).map((c) => ({ id: c.id, go: () => nav(k === "bank_config" ? "/bank-setup?status=rejected" : "/credit-mis") }))),
+  ];
+  const greet = greeting();
   const todayStr = new Date().toDateString();
   const doneToday = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === todayStr).length;
   const release = (collections.releases || [])[0] || { status: "not_started" };
@@ -103,7 +104,6 @@ export default function Today() {
   const canSignClose = hasCap(perms, "ingestion", "approve");
   const carried = (collections.exceptions || []).filter((e) => e.status !== "closed").length;
   const isSetup = hasCap(perms, "bank_setup", "edit") || hasCap(perms, "credit_mis", "edit");
-  const isOps = hasCap(perms, "ingestion", "view");
   const waitingMine = [
     ...(collections.bank_config || []).filter((c) => /pending/.test(c.status || "") && c.owner === currentUser),
     ...(collections.credit_config || []).filter((c) => /pending/.test(c.status || "") && c.owner === currentUser),
@@ -175,20 +175,10 @@ export default function Today() {
 
   return (
     <div className="deck" data-testid="today">
-      <div className="deck-head">
+      <div className="home-head">
         <div>
-          <div className="eyebrow-sm"><Sun size={13} /> {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</div>
           <h1>{greet}, {first}</h1>
-        </div>
-        <div className="deck-head-r">
-          <div className="today-range" data-testid="today-range">
-            <CalendarDays size={14} />
-            <input type="date" className="input tnum" value={from} max={to} onChange={(e) => { if (e.target.value) { setFrom(e.target.value); setIdx(0); } }} data-testid="range-from" aria-label="From" />
-            <span>to</span>
-            <input type="date" className="input tnum" value={to} min={from} max={today} onChange={(e) => { if (e.target.value) { setTo(e.target.value); setIdx(0); } }} data-testid="range-to" aria-label="To" />
-            {[["Today", 0], ["7 days", 6], ["30 days", 29]].map(([l, d]) => { const f = isoDay(Date.now() - d * 86400000); return <button key={l} className={"rg-chip" + (from === f && to === today ? " on" : "")} onClick={() => { setFrom(f); setTo(today); setIdx(0); }}>{l}</button>; })}
-          </div>
-          {isOps && <span className={"cutoff-chip" + (mins < 60 ? " hot" : "")}><Clock size={13} /> Fund release cut-off {mins > 0 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : "passed"}</span>}
+          <p>{longDate()}{activeAmc ? <> · <b>{activeAmc}</b></> : null}</p>
         </div>
       </div>
 
@@ -201,12 +191,28 @@ export default function Today() {
         </div>
       )}
 
+      <NowStrip tiles={[
+        { kind: "approve", label: "Approvals waiting", value: approvals.length, sub: `Teammates' work for you to check`, clear: "Nothing to approve", onClick: () => nav("/approvals"), testid: "now-approvals" },
+        { kind: "back", label: "Sent back to you", value: sentBackMine.length, sub: "Fix and send again", clear: "Nothing sent back", onClick: () => (sentBackMine[0] ? sentBackMine[0].go() : setQueueOpen(true)), testid: "now-sent-back" },
+        { kind: "failed", label: "Files that failed", value: failedFiles.length, sub: "Layout changed, failed checks or not received", clear: "All files loaded", onClick: () => nav("/ingestion"), testid: "now-failed" },
+      ]} />
+
+      <div className="home-sec">
+        <h2>Your queue, one at a time</h2>
+        <div className="today-range" data-testid="today-range">
+          <CalendarDays size={14} />
+          <input type="date" className="input tnum" value={from} max={to} onChange={(e) => { if (e.target.value) { setFrom(e.target.value); setIdx(0); } }} data-testid="range-from" aria-label="From" />
+          <span>to</span>
+          <input type="date" className="input tnum" value={to} min={from} max={today} onChange={(e) => { if (e.target.value) { setTo(e.target.value); setIdx(0); } }} data-testid="range-to" aria-label="To" />
+          {[["Today", 0], ["7 days", 6], ["30 days", 29]].map(([l, d]) => { const f = isoDay(Date.now() - d * 86400000); return <button key={l} className={"rg-chip" + (from === f && to === today ? " on" : "")} onClick={() => { setFrom(f); setTo(today); setIdx(0); }}>{l}</button>; })}
+        </div>
+      </div>
+
       <div className="deck-hero">
         {/* 1 — The one thing to do now */}
         <TiltCard className={"focus-card tone-" + (focus?.tone || "green")} max={4} data-testid="next-action">
-          <Art name="coins" className="fc-art" />
           <div className="fc-top">
-            <span className="fc-eyebrow"><Sparkles size={13} /> {isChecker ? "Your focus for today: approvals" : "Your focus for today"}</span>
+            <span className="fc-eyebrow">Do this next</span>
             {focus && <span className="fc-count">{i + 1} <em>of {ranged.length}</em></span>}
           </div>
           <AnimatePresence mode="wait">
@@ -231,7 +237,7 @@ export default function Today() {
               </motion.div>
             ) : (
               <motion.div key="clear" className="fc-body fc-clear" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                <CheckCircle2 size={34} /><h2>You're all clear{from !== today || to !== today ? " for these dates" : " for today"}</h2><p>{overall.length ? `${overall.length} older or out-of-range item${overall.length !== 1 ? "s are" : " is"} still open — see Overall pending below.` : "Nothing is waiting for you. New work appears here automatically."}</p>
+                <Art name="badges" /><h2>You're all clear{from !== today || to !== today ? " for these dates" : " for today"}</h2><p>{overall.length ? `${overall.length} older or out-of-range item${overall.length !== 1 ? "s are" : " is"} still open — see Overall pending below.` : "Nothing is waiting for you. New work appears here automatically."}</p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -266,6 +272,9 @@ export default function Today() {
           </button>
         ))}
       </div>
+
+      {/* Today's to-do: the day's tasks from the user's KRAs (Ops only) */}
+      {hasCap(perms, "ingestion", "view") && <TodayTodo />}
 
       {/* 4 — Overall pending: every open item, no date limit, oldest first */}
       <div className="card op-card" data-testid="overall-pending">

@@ -1,5 +1,4 @@
 import React from "react";
-import { HeroArt } from "@/components/Art";
 import { useStore } from "@/state/store";
 import { Modal } from "@/components/Modal";
 import { hasCap } from "@/lib/access";
@@ -84,7 +83,6 @@ export default function MatchWorkbench() {
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Combine size={24} /> {simple ? "Match payments" : "Match Workbench"}</h1>
           <p>{simple ? "The system found these likely matches. Check each one and say yes or no." : "What rules couldn't match with certainty: AI suggestions with reasons, N:M selection with a live difference, and an explainer for anything left over."}</p>
         </div>
-        <HeroArt name="magnifier" />
         {!simple && <div className="actions"><PhaseBadge phase="P2">split-pane matching · P3: AI suggestions</PhaseBadge></div>}
       </div>
       {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}

@@ -22,14 +22,16 @@ export function Chip({ type, id }) {
   );
 }
 
-export function Toggle({ checked, onChange, id, disabled }) {
-  return (
+export function Toggle({ checked, onChange, id, disabled, say }) {
+  const sw = (
     <label className="switch">
       <input type="checkbox" checked={!!checked} disabled={disabled}
         onChange={(e) => onChange && onChange(e.target.checked)} id={id} data-testid={id} />
       <span className="track" />
     </label>
   );
+  // `say` prints On / Off beside the switch, so the state does not depend on colour alone.
+  return say ? <span className={"sw-say" + (checked ? " on" : "")}><em>{checked ? "On" : "Off"}</em>{sw}</span> : sw;
 }
 
 export function PasswordInput({ value, onChange, id, placeholder, onFocus }) {

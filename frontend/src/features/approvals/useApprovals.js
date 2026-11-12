@@ -5,6 +5,7 @@ import { PLAIN_EXCEPTION } from "@/lib/plain";
 import { inr, inrShort } from "@/features/ops/ui";
 import { maskAccount } from "@/lib/format";
 import { delayedInterest } from "@/mock/opsSeed";
+import { BANK_HEAD, BANK_ROWS } from "@/features/setup/StartPreview";
 import { useMatchActions } from "@/features/match/matchActions";
 
 /**
@@ -24,7 +25,7 @@ export function useApprovals() {
 
   // Fund release first (it gates unit allotment); day close last (it signs off everything else)
   (c.dayclose || []).filter((d) => d.status === "pending").forEach((d) => add("ingestion", {
-    id: d.id, kind: "Day close", title: "Sign off today's reconciliation", detail: `${d.carried} item${d.carried !== 1 ? "s" : ""} carried forward · notes: ${d.note || "—"}`, owner: d.submittedBy, priority: 9,
+    id: d.id, kind: "Day close", sample: { facts: [["Items carried to tomorrow", String(d.carried ?? 0)], ["Note from the maker", d.note || "None"]] }, title: "Sign off today's reconciliation", detail: `${d.carried} item${d.carried !== 1 ? "s" : ""} carried forward · notes: ${d.note || "—"}`, owner: d.submittedBy, priority: 9,
     approve: () => act({ screen: "ingestion", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "closed", closedBy: currentUser, closedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Sign off day", from: "Pending", to: "Closed" } }),
     reject: () => act({ screen: "ingestion", cap: "approve", kind: "dayclose", id: d.id, target: { owner: d.submittedBy }, patch: { status: "open" }, audit: { entityLabel: "Day close", action: "Return day close", from: "Pending", to: "Open" } }),
   }));
@@ -59,8 +60,24 @@ export function useApprovals() {
     approve: () => act({ screen: "extraction", cap: "approve", kind: "documents", id: d.id, patch: { status: "approved" }, audit: { entityLabel: d.name, action: "Approve extraction", from: "Awaiting checker", to: "Loaded" } }),
     reject: () => act({ screen: "extraction", cap: "approve", kind: "documents", id: d.id, patch: { status: "needs_review" }, audit: { entityLabel: d.name, action: "Return extraction", from: "Awaiting checker", to: "Needs review" } }),
   }));
+  // Recon Ops maker-checker: a file put in by hand, or an account marked "no transactions today", is checked by a teammate.
+  (c.ops_checks || []).filter((o) => o.status === "pending").forEach((o) => {
+    const upload = o.type === "hand_upload";
+    const label = `${o.bankName} ·${o.acct}`;
+    const done = (status, action, to) => act({ screen: "ingestion", cap: "approve", kind: "ops_checks", id: o.id, target: { owner: o.owner }, patch: { status, checkedBy: currentUser, checkedAt: new Date().toISOString() }, audit: { entityLabel: label, action, from: "Waiting for check", to } });
+    add("ingestion", {
+      id: o.id, amc: o.amc, owner: o.owner, ownerId: o.ownerId, priority: 2,
+      kind: upload ? "File uploaded by hand" : "No transactions today",
+      title: upload ? `Check the ${label} statement uploaded by hand` : `Confirm ${label} had no transactions today`,
+      detail: upload ? "This file did not come in the usual way. A teammate uploaded it by hand. Check it is the right file for this account and date." : "No statement will be loaded for this account today. Its closing balance stays the same as yesterday.",
+      sample: upload ? { facts: [["Bank account", label], ["File", o.fileName], ["Why by hand", o.reason], ["Rows in the file", (o.rows || 0).toLocaleString("en-IN")], ["Credits", `${(o.credits || 0).toLocaleString("en-IN")} · ${inrShort(o.creditAmount || 0)}`]], head: BANK_HEAD, rows: BANK_ROWS, note: "First 5 rows of the file, as uploaded." }
+        : { facts: [["Bank account", label], ["Marked as", "No transactions today"], ["Why", o.reason], ["What changes", "No file is expected today. The account stops showing as late."]] },
+      approve: () => done("approved", upload ? "Approve hand upload" : "Approve no transactions", "Approved"),
+      reject: () => done("returned", upload ? "Return hand upload" : "Return no transactions", "Sent back"),
+    });
+  });
   (c.files || []).filter((f) => f.status === "drift_pending").forEach((f) => add("ingestion", {
-    id: f.id, kind: "Bank file layout", title: `Accept ${f.bankName}'s new file layout`, detail: `${f.drift?.summary} · ${(f.drift?.rowsHeld || 0).toLocaleString("en-IN")} rows held until approved`, owner: f.owner, priority: 1, urgent: true,
+    id: f.id, kind: "Bank file layout", sample: f.drift ? { facts: [["Bank account", `${f.bankName} ·${f.accountNumber.slice(-4)}`], ["What changed", f.drift.summary], ["Rows waiting", (f.drift.rowsHeld || 0).toLocaleString("en-IN")]], cols: { was: f.drift.oldColumns, now: f.drift.newColumns }, head: ["System field", "Column before", "Column now"], rows: f.drift.changes.map((x) => [x.field, x.old || "not used", x.proposed]), note: "The rows are held, not lost. They load when this is approved." } : null, title: `Accept ${f.bankName}'s new file layout`, detail: `${f.drift?.summary} · ${(f.drift?.rowsHeld || 0).toLocaleString("en-IN")} rows held until approved`, owner: f.owner, priority: 1, urgent: true,
     approve: () => act({ screen: "ingestion", cap: "approve", kind: "files", id: f.id, patch: { status: "loaded", fingerprint: f.fingerprint + "·v2", checks: f.checks.map((x) => ({ ...x, ok: true })) }, audit: { entityLabel: `${f.bankName} ·${f.accountNumber.slice(-4)}`, action: "Approve mapping change", from: "Mapping change pending", to: "Loaded" } }),
     reject: () => act({ screen: "ingestion", cap: "approve", kind: "files", id: f.id, patch: { status: "drift" }, audit: { entityLabel: `${f.bankName} ·${f.accountNumber.slice(-4)}`, action: "Return mapping change", from: "Mapping change pending", to: "Format drift" } }),
   }));

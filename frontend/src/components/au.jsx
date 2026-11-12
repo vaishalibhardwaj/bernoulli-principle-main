@@ -2,7 +2,7 @@
 import React from "react";
 import { ArrowUpRight } from "lucide-react";
 
-const AVATAR_TONES = ["#7b61e8", "#d6336c", "#2f9e44", "#b86e00", "#5b3fd1", "#c2417e", "#16141c", "#8a5cf6", "#e0559b", "#3d2a78"];
+const AVATAR_TONES = ["#5b4ccf", "#d6336c", "#2f9e44", "#b86e00", "#5b3fd1", "#c2417e", "#16141c", "#8a5cf6", "#e0559b", "#3d2a78"];
 const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 export const toneFor = (name) => AVATAR_TONES[hash(name) % AVATAR_TONES.length];
 const initials = (name) => String(name).replace(/\b(Bank|of|Ltd|Limited)\b/gi, "").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
@@ -49,7 +49,7 @@ export function StatCard({ icon: Icon, tone = "blue", label, value, delta, delta
 }
 
 /** Progress row: label, "x/total" on the right, hatched bar in the given colour. */
-export function HatchBar({ label, value, total, color = "#7b61e8", onClick, active, right, testid, children }) {
+export function HatchBar({ label, value, total, color = "#5b4ccf", onClick, active, right, testid, children }) {
   const pct = total ? Math.max(value ? 3 : 0, Math.min(100, (value / total) * 100)) : 0;
   const Tag = onClick ? "button" : "div";
   return (

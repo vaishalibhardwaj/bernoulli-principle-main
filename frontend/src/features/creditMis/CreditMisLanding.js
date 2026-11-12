@@ -1,8 +1,8 @@
 import React from "react";
-import { HeroArt } from "@/components/Art";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, AlertTriangle, Eye, Pencil, Copy, Download, FileSpreadsheet, CreditCard, GitCompareArrows, ChevronDown, ArrowLeftRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, ChevronRight, AlertTriangle, Hourglass, FilePen, CheckCircle2, Eye, Pencil, Copy, HelpCircle, ArrowRight, Download, FileSpreadsheet } from "lucide-react";
 import { useStore } from "@/state/store";
+import MappingSummary from "@/features/mapping/MappingSummary";
 import { CREDIT_MODES } from "@/lib/constants";
 import { hasCap } from "@/lib/access";
 import { inScope, amcOfAccount, userAmcs } from "@/lib/org";
@@ -11,16 +11,12 @@ import { Drawer } from "@/components/Drawer";
 import { maskAccount, timeAgo, formatDate } from "@/lib/format";
 import { summarizeSetup, paLabel, normPa, feedOptionLabel, PA_OPTIONS } from "@/lib/setupSchema";
 import { toast } from "sonner";
-import { Avatar } from "@/components/au";
-import { sourceHealth } from "@/features/setup/sourceParts";
-import StatusStandardisation from "@/features/admin/StatusStandardisation";
-import MappingSummary from "@/features/mapping/MappingSummary";
 
 const SHORT_MODE = { email: "Email", auto: "Portal bot", manual: "SFTP / manual", api: "API" };
 const TABS = [["all", "All"], ["active", "Active"], ["rejected", "Needs fix"], ["pending", "Pending"], ["draft", "Drafts"], ["inactive", "Inactive"]];
 const TAB_KEY = "cams_cmis_tab";
-export const paOf = (c) => normPa(c.paCode || (c.paCodes || [])[0]);
-export const paName = (code) => PA_OPTIONS.find((o) => o.code === code)?.label || code || "Unknown aggregator";
+const paOf = (c) => normPa(c.paCode || (c.paCodes || [])[0]);
+const paName = (code) => PA_OPTIONS.find((o) => o.code === code)?.label || code || "Unknown aggregator";
 
 /** One sentence, in plain words, of what a setup does every day. */
 function describe(c) {
@@ -37,47 +33,36 @@ function describe(c) {
  *  3. Rows show only what differs from the default; everything else is one click away in a side panel.
  */
 export default function CreditMisLanding() {
-  const { collections, perms, amcUser } = useStore();
+  const { collections, perms, amcUser, personaUser } = useStore();
   const nav = useNavigate();
   const canEdit = hasCap(perms, "credit_mis", "edit");
-  const searchRef = React.useRef(null);
+  const canApprove = hasCap(perms, "credit_mis", "approve");
 
   const [tab, setTabRaw] = React.useState(() => { try { return localStorage.getItem(TAB_KEY) || "all"; } catch (e) { return "all"; } });
   const setTab = (t) => { setTabRaw(t); try { localStorage.setItem(TAB_KEY, t); } catch (e) { /* ignore */ } };
   const [q, setQ] = React.useState("");
-
-  // Keyboard: "/" search, "n" new setup.
-  React.useEffect(() => {
-    const h = (e) => {
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.metaKey || e.ctrlKey) return;
-      if (e.key === "/") { e.preventDefault(); searchRef.current?.focus(); }
-      if (e.key === "n" && canEdit) nav("/credit-mis/new");
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [canEdit, nav]);
+  const [open, setOpen] = React.useState({});
+  const [sel, setSel] = React.useState(null);
+  const [help, setHelp] = React.useState(false);
+  const [view, setView] = React.useState(() => (new URLSearchParams(window.location.search).get("view") === "mapping" ? "mapping" : "list"));
 
   // Only the AMC(s) this person is working on.
   const scoped = (collections.credit_config || []).filter((c) => inScope(amcUser, amcOfAccount(c.accountNumber)));
+  const toFix = scoped.filter((c) => c.status === "rejected");
+  const pending = scoped.filter((c) => c.status === "pending");
+  const drafts = scoped.filter((c) => c.status === "draft");
   const count = (st) => (st === "all" ? scoped.length : scoped.filter((c) => c.status === st).length);
 
-  const [sp, setSp] = useSearchParams();
-  const focusPa = sp.get("open");
-  const [openPas, setOpenPas] = React.useState(() => (focusPa ? [focusPa] : []));
-  const view = ["columns", "codes"].includes(sp.get("view")) ? sp.get("view") : "setups";
-  const setView = (v) => setSp(v === "setups" ? {} : { view: v }, { replace: true });
   const needle = q.trim().toLowerCase();
   const digits = needle.replace(/\D/g, "");
   const matches = (c) => !needle || c.bankName.toLowerCase().includes(needle) || paName(paOf(c)).toLowerCase().includes(needle) || paOf(c).toLowerCase().includes(needle) || (digits && c.accountNumber.includes(digits));
   const rows = scoped.filter((c) => (tab === "all" || c.status === tab) && matches(c));
   const groups = Object.entries(rows.reduce((m, c) => ({ ...m, [paOf(c)]: [...(m[paOf(c)] || []), c] }), {}))
-    .map(([pa, list]) => {
-      const health = sourceHealth(collections, "credit", pa, scoped.filter((c) => paOf(c) === pa));
-      const todo = health.accounts.todo + health.columns.todo + health.codes.todo + (health.columns.state === "empty" ? 1 : 0);
-      const waiting = health.accounts.waiting + health.columns.waiting + health.codes.waiting;
-      return { pa, list, health, weight: todo * 100 + waiting };
-    })
+    .map(([pa, list]) => ({ pa, list, issues: list.filter((c) => ["rejected", "pending", "draft"].includes(c.status)).length,
+      // Severity: anything sent back first, then waiting for a checker, then drafts.
+      weight: list.reduce((w, c) => w + ({ rejected: 100, pending: 10, draft: 1 }[c.status] || 0), 0) }))
     .sort((a, b) => b.weight - a.weight || paName(a.pa).localeCompare(paName(b.pa)));
+  const isOpen = (g) => (open[g.pa] !== undefined ? open[g.pa] : Boolean(needle) || g.issues > 0 || groups.length <= 2);
   const scopeLabel = userAmcs(amcUser).length === 1 ? userAmcs(amcUser)[0] : "all your AMCs";
 
   const exportCsv = () => {
@@ -91,93 +76,105 @@ export default function CreditMisLanding() {
     <div className="bs" data-testid="credit-mis-landing">
       <div className="bs-head">
         <div>
-          <h1>Credit MIS</h1>
+          <h1>Credit MIS setup</h1>
+          <p>Which payment aggregators send settlement files, and how each file is read. <button className="link bs-help" onClick={() => setHelp((h) => !h)} aria-expanded={help}><HelpCircle size={13} /> {help ? "Hide" : "More"}</button></p>
+          {help && <div className="bs-helptext">An aggregator (Razorpay, BillDesk…) settles many investor payments as <b>one</b> credit in the bank. Its Credit MIS file lists the payments inside that credit. Each setup here says where that file comes from and how to read it, so every payment can be matched to its purchase. <button className="link" onClick={exportCsv}><Download size={12} /> Export this list</button></div>}
         </div>
-        <div className="actions">
-          <HeroArt name="card" tone="pink" />
-          <button className="btn btn-outline" onClick={exportCsv} data-testid="btn-export-credit"><Download size={15} /> Export</button>
-          {canEdit && <button className="btn btn-primary" onClick={() => nav("/credit-mis/new")} data-testid="btn-add-credit"><Plus size={16} /> Add feed <kbd>N</kbd></button>}
-        </div>
+        {canEdit && <button className="btn btn-primary" onClick={() => nav("/credit-mis/new")} data-testid="btn-add-credit"><Plus size={16} /> Add feed</button>}
       </div>
 
+      <div className="segmented bs-view" role="tablist" aria-label="What to show">
+        {[["list", "Feeds"], ["mapping", "Column mapping"]].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={view === k} className={view === k ? "on" : ""} onClick={() => setView(k)} data-testid={"view-" + k}>{l}</button>)}
+      </div>
 
-      <div className="src-views" role="tablist" aria-label="View">
-        {[["setups", "Credit MIS setups", CreditCard], ["columns", "Column mapping", GitCompareArrows], ["codes", "Transaction type mapping", ArrowLeftRight]].map(([k, l, I]) => (
-          <button key={k} role="tab" aria-selected={view === k} className={view === k ? "on" : ""} onClick={() => setView(k)} data-testid={"view-" + k}><I size={15} /> {l}</button>
+      {view === "mapping" ? <MappingSummary embedded type="credit" /> : <>
+      {/* 1 — What needs me */}
+      <div className="bs-queue" data-testid="work-queue">
+        {[
+          ["rejected", canEdit ? "Needs your fix" : "Sent back to makers", toFix.length, AlertTriangle, "bad"],
+          ["pending", canApprove ? "Waiting for your approval" : "Waiting for checker", canApprove ? pending.filter((c) => c.owner !== personaUser.name.split(" ")[0]).length : pending.length, Hourglass, "warn"],
+          ["draft", "Drafts", drafts.length, FilePen, "info"],
+        ].map(([k, l, n, Icon, tone]) => (
+          <button key={k} className={"bs-q tone-" + tone + (tab === k ? " on" : "") + (n ? "" : " zero")} onClick={() => setTab(tab === k ? "all" : k)} data-testid={"queue-" + k}>
+            <Icon size={16} /><span>{l}</span><b className="fx-num">{n}</b>
+          </button>
         ))}
+        {toFix.length + pending.length + drafts.length === 0 && <span className="bs-calm"><CheckCircle2 size={15} /> Nothing needs you here</span>}
       </div>
 
-      {view === "columns" && <MappingSummary embedded type="credit" />}
-      {view === "codes" && <StatusStandardisation embedded source="credit" />}
-      {view === "setups" && <>
-      {/* Find */}
-      <div className="au-bar">
-        <label className="au-search"><Search size={17} /><input ref={searchRef} placeholder="Search aggregator, bank or last 4 digits" value={q} onChange={(e) => setQ(e.target.value)} data-testid="credit-search" /><kbd>/</kbd></label>
-        <div className="au-tabs" role="tablist">
+      {canEdit && toFix.length > 0 && tab !== "pending" && tab !== "draft" && (
+        <div className="bs-fix" data-testid="fix-list">
+          {toFix.slice(0, 3).map((c) => (
+            <div key={c.id} className="bs-fix-row">
+              <AlertTriangle size={15} />
+              <div><b>{paName(paOf(c))} · {c.bankName} ·{c.accountNumber.slice(-4)}</b><span>“{c.rejection?.comment}” — {c.rejection?.by}, {timeAgo(c.rejection?.date)}</span></div>
+              <button className="btn btn-primary btn-sm" onClick={() => nav(`/credit-mis/edit/${c.id}`)} data-testid={"fix-" + c.id}>Fix <ArrowRight size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 2 — Find */}
+      <div className="bs-bar">
+        <div className="search bs-search"><Search /><input className="input" placeholder="Search aggregator, bank or last 4 digits" value={q} onChange={(e) => setQ(e.target.value)} data-testid="credit-search" /></div>
+        <div className="bs-tabs" role="tablist">
           {TABS.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)} data-testid={"tab-" + k}>{l} <em>{count(k)}</em></button>)}
         </div>
       </div>
-      <div className="bs-scope">Showing <b>{scopeLabel}</b> · {rows.length} feed{rows.length !== 1 ? "s" : ""} from {groups.length} aggregator{groups.length !== 1 ? "s" : ""}</div>
+      <div className="bs-scope">Showing <b>{scopeLabel}</b> · {rows.length} setups from {groups.length} aggregator{groups.length !== 1 ? "s" : ""}</div>
 
-      {/* Aggregators: one card each, with what is done and what is left */}
+      {/* 3 — Aggregators, each one line */}
       <div className="bs-banks" data-testid="pa-groups">
-        {groups.length === 0 && <div className="au-list bs-empty">{needle ? `Nothing matches “${q}”.` : tab === "rejected" ? "Nothing sent back — nice work." : "Nothing here yet."}{canEdit && !needle && <button className="link" onClick={() => nav("/credit-mis/new")}>Add a feed</button>}</div>}
-        {groups.map((g, i) => {
+        {groups.length === 0 && <div className="card bs-empty">{needle ? `Nothing matches “${q}”.` : tab === "rejected" ? "Nothing sent back — nice work." : "Nothing here yet."}{canEdit && !needle && <button className="link" onClick={() => nav("/credit-mis/new")}>Add a feed</button>}</div>}
+        {groups.map((g) => {
+          const o = isOpen(g);
           const modes = [...new Set(g.list.map((c) => SHORT_MODE[c.feedMode]))];
           const banks = new Set(g.list.map((c) => c.bankName)).size;
-          const h = g.health;
-          const isOpen = openPas.includes(g.pa);
-          const toggle = () => setOpenPas((o) => (o.includes(g.pa) ? o.filter((x) => x !== g.pa) : [...o, g.pa]));
+          const st = (s) => g.list.filter((c) => c.status === s).length;
           return (
-            <div key={g.pa} className={"au-list src-card2" + (isOpen ? " open" : "")} style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }} data-testid={"pa-" + g.pa}>
-              <button type="button" className="src-card2-h" onClick={toggle} aria-expanded={isOpen}>
-                <Avatar name={paName(g.pa)} size={44} badge={h.accounts.todo || h.columns.todo || h.codes.todo ? "bad" : h.accounts.waiting || h.columns.waiting || h.codes.waiting ? "warn" : undefined} />
-                <span className="src-card-name"><b>{paName(g.pa)}</b><em>{g.list.length} feed{g.list.length !== 1 ? "s" : ""} at {banks} bank{banks !== 1 ? "s" : ""} · {modes.join(", ")}</em></span>
-                <span className="au-round src-chev"><ChevronDown size={16} /></span>
+            <div key={g.pa} className={"card bs-bank" + (o ? " open" : "")} data-testid={"pa-" + g.pa}>
+              <button className="bs-bank-h" onClick={() => setOpen({ ...open, [g.pa]: !o })} aria-expanded={o}>
+                <ChevronRight size={16} className="bs-chev" />
+                <b>{paName(g.pa)}</b>
+                <span className="muted">{g.list.length} account{g.list.length !== 1 ? "s" : ""} at {banks} bank{banks !== 1 ? "s" : ""} · {modes.join(", ")}</span>
+                <span className="bs-badges">
+                  {st("rejected") > 0 && <span className="bs-badge bad">{st("rejected")} needs fix</span>}
+                  {st("pending") > 0 && <span className="bs-badge warn">{st("pending")} pending</span>}
+                  {st("draft") > 0 && <span className="bs-badge info">{st("draft")} draft</span>}
+                  {!g.issues && <span className="bs-ok"><CheckCircle2 size={13} /> {st("inactive") ? `${st("active")} active · ${st("inactive")} inactive` : "all active"}</span>}
+                </span>
               </button>
-              {isOpen && <div className="src-detail"><CreditFeedRows list={g.list} /></div>}
+              {o && (
+                <div className="bs-rows">
+                  {g.list.sort((x, y) => ["rejected", "pending", "draft", "active", "inactive"].indexOf(x.status) - ["rejected", "pending", "draft", "active", "inactive"].indexOf(y.status)).map((c) => {
+                    const Mode = CREDIT_MODES[c.feedMode];
+                    return (
+                      <button key={c.id} className="bs-row" onClick={() => setSel(c)} data-testid={"credit-row-" + c.id}>
+                        <span className="bs-acct tnum"><b>{c.bankName}</b><em>{maskAccount(c.accountNumber)} · {c.accountCategory}</em></span>
+                        <span className="bs-mode"><Mode.icon size={14} /> {SHORT_MODE[c.feedMode]}</span>
+                        <span className="bs-tags">
+                          {c.feedOption === "NO_FEED" && <span className="bs-tag hi" title="No MIS file — each bank-statement credit is copied as the feed">No feed — uses bank credit</span>}
+                          {c.feedOption === "CREDIT_REVERSAL_FEED" && <span className="bs-tag">Includes reversals</span>}
+                          {c.feedOption === "SETTLEMENT_ONLY" && <span className="bs-tag">Settlement summary only</span>}
+                          {c.fileConfig?.instrumentStatus === "D" && <span className="bs-tag hi" title="Every row is a failed / reversed payment">Debit-only file</span>}
+                          {c.processing?.reconciliationType === "Liability" && <span className="bs-tag">Liability · {c.processing.liabilityCategory}</span>}
+                        </span>
+                        <StatusPill status={c.status} />
+                        <span className="bs-when">{timeAgo(c.lastUpdated)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
-      </>}
-    </div>
-  );
-}
 
-/** One aggregator's feeds as rows; click a row for its side panel. */
-export function CreditFeedRows({ list }) {
-  const { perms } = useStore();
-  const nav = useNavigate();
-  const canEdit = hasCap(perms, "credit_mis", "edit");
-  const [sel, setSel] = React.useState(null);
-  const order = ["rejected", "pending", "draft", "active", "inactive"];
-  return (
-    <>
-      <div className="au-list bs-rows2">
-        <div className="au-row bs-row2 bs-row2-h" aria-hidden="true"><span>Bank account</span><span>How it comes in</span><span>Details</span><span>Status</span><span>Last changed</span></div>
-        {list.length === 0 && <div className="bs-empty">No feeds for this AMC from this aggregator yet.</div>}
-        {[...list].sort((x, y) => order.indexOf(x.status) - order.indexOf(y.status)).map((c) => {
-          const Mode = CREDIT_MODES[c.feedMode];
-          return (
-            <button key={c.id} className="au-row bs-row2" onClick={() => setSel(c)} data-testid={"credit-row-" + c.id}>
-              <span className="au-who"><Avatar name={c.bankName} icon={Mode?.icon} size={38} color="#5b606b" /><span><b>{c.bankName} · <span className="tnum">{maskAccount(c.accountNumber)}</span></b><em>{c.accountCategory || ""}</em></span></span>
-              <span className="au-meta">{SHORT_MODE[c.feedMode]}</span>
-              <span className="au-pills">
-                {c.feedOption === "NO_FEED" && <span className="au-tag hi" title="No MIS file — each bank-statement credit is copied as the feed">No feed — uses bank credit</span>}
-                {c.feedOption === "CREDIT_REVERSAL_FEED" && <span className="au-tag">Includes reversals</span>}
-                {c.feedOption === "SETTLEMENT_ONLY" && <span className="au-tag">Settlement summary only</span>}
-                {c.fileConfig?.instrumentStatus === "D" && <span className="au-tag hi" title="Every row is a failed / reversed payment">Debit-only file</span>}
-                {c.processing?.reconciliationType === "Liability" && <span className="au-tag">Liability · {c.processing.liabilityCategory}</span>}
-              </span>
-              <span className={"au-st " + c.status}>{{ active: "Active", pending: "Pending approval", rejected: "Sent back", draft: "Draft", inactive: "Inactive" }[c.status] || c.status}</span>
-              <span className="au-when">{timeAgo(c.lastUpdated)}</span>
-            </button>
-          );
-        })}
-      </div>
+      </>}
+
       {sel && <CmisPanel c={sel} canEdit={canEdit} onClose={() => setSel(null)} nav={nav} />}
-    </>
+    </div>
   );
 }
 
@@ -200,7 +197,7 @@ function CmisPanel({ c, canEdit, onClose, nav }) {
       <button className="link" onClick={() => setAll((a) => !a)}>{all ? "Show key settings only" : `Show all ${facts.length} settings`}</button>
       <div className="bs-more">
         {canEdit && <button className="bs-more-btn" onClick={() => nav(`/credit-mis/copy/${c.id}`)} data-testid="panel-copy"><Copy size={15} /><span><b>Start a new account from this setup</b><em>Copies everything except the account number</em></span></button>}
-        <button className="bs-more-btn" onClick={() => nav("/credit-mis?view=columns")}><FileSpreadsheet size={15} /><span><b>Columns for this aggregator</b><em>How the file's columns become system fields</em></span></button>
+        <button className="bs-more-btn" onClick={() => nav("/mapping?tab=credit")}><FileSpreadsheet size={15} /><span><b>Column mapping for this aggregator</b><em>How the file's columns become system fields</em></span></button>
       </div>
     </Drawer>
   );

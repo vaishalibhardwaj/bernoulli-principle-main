@@ -17,11 +17,12 @@ import { FILE_TYPES, isDelimited, SEPARATORS, REVERSAL_CODES, LIABILITY_CATEGORI
 import { PatternTester, ScheduleField, TestConnection, ChangesCard } from "@/features/setup/SetupBits";
 import { maskAccount, uid } from "@/lib/format";
 import { toast } from "sonner";
+import { SentScreen, HowRead } from "@/features/setup/SentScreen";
 
 const STEPS = [
   { key: "mode", label: "Mode & Feed" }, { key: "agg", label: "Aggregator & Account" },
   { key: "file", label: "File Configuration" }, { key: "modespec", label: "Mode-Specific Details" },
-  { key: "proc", label: "Processing Controls" }, { key: "feed", label: "Feed Option" }, { key: "review", label: "Review & Submit" },
+  { key: "proc", label: "Processing options" }, { key: "feed", label: "Feed Option" }, { key: "review", label: "Review & Submit" },
 ];
 
 function defaults() {
@@ -64,6 +65,7 @@ export default function CreditMisWizard() {
   const [errors, setErrors] = React.useState({});
   const [errorSteps, setErrorSteps] = React.useState({});
   const [analysing, setAnalysing] = React.useState(false);
+  const [sent, setSent] = React.useState(false);
   const [showPreview, setShowPreview] = React.useState(!!initial.fileConfig.sampleFileName);
   const [confirmReset, setConfirmReset] = React.useState(false);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
@@ -123,7 +125,7 @@ export default function CreditMisWizard() {
   const doSubmit = () => {
     const { e, es } = validate();
     if (Object.keys(es).length) { setErrors(e); setErrorSteps(es); gotoStep(Object.keys(es).map(Number).sort((a, b) => a - b)[0]); toast.error("Please fix the highlighted fields"); return; }
-    setErrors({}); setErrorSteps({}); submit("credit_config", persist(form), label); toast.success("Submitted for Approval"); nav("/credit-mis");
+    setErrors({}); setErrorSteps({}); submit("credit_config", persist(form), label); setSent(true); window.scrollTo(0, 0);
   };
   const doReset = () => { setForm(JSON.parse(JSON.stringify(savedRef.current))); setErrors({}); setErrorSteps({}); toast("Changes reset"); };
 
@@ -148,6 +150,11 @@ export default function CreditMisWizard() {
     else { if (!form.feedOption) set({ feedOption: "CREDIT_FEED" }); if (!form.bankName) fillAgg(); fillFile(); fillModeSpec(form.feedMode); }
     toast.success(k === "review" ? "All steps filled with sample data" : "Step filled with sample data");
   };
+
+  if (sent) return (
+    <SentScreen what="The Credit MIS setup for" name={label} edited={!!form.baseline} listPath="/credit-mis" listLabel="Back to Credit MIS"
+      anotherLabel="Set up another feed" onAnother={() => { const d = defaults(); savedRef.current = d; setForm(d); setStep(0); setMaxReached(0); setShowPreview(false); setSent(false); nav("/credit-mis/new"); }} />
+  );
 
   return (
     <div data-testid="credit-mis-wizard">
@@ -193,9 +200,10 @@ export default function CreditMisWizard() {
           </>)}
 
           {STEPS[step].key === "file" && (<>
-            <div className="step-title">File Configuration</div><p className="step-desc">Upload a sample Credit MIS to auto-detect layout.</p>
+            <div className="step-title">File Configuration</div><p className="step-desc">Drop one real Credit MIS file. The system works out the layout; you check it.</p>
             <FileDropZone fileName={form.fileConfig.sampleFileName} onPick={onPickFile} onClear={() => { setFile({ sampleFileName: null, detected: {}, edited: {} }); setShowPreview(false); }} />
             {detectFor(form.fileConfig.sampleFileName)?.mismatch && showPreview && <div style={{ marginTop: 14 }}><Note kind="warn">File extension says <b>XLS</b> but content looks like <b>HTML/CSV</b> — settings pre-filled from content.</Note></div>}
+            <HowRead credit />
             {analysing && <div className="analysing"><div className="spinner" /><div><b>Analysing file…</b></div></div>}
             {showPreview && !analysing && (<>
               <div className="form-grid" style={{ marginTop: 18 }}>
@@ -259,11 +267,11 @@ export default function CreditMisWizard() {
           </>)}
 
           {STEPS[step].key === "proc" && (<>
-            <div className="step-title">Processing Controls</div><p className="step-desc">Reconciliation behaviour for this feed.</p>
+            <div className="step-title">Processing options</div><p className="step-desc">How this feed is used once its file is read.</p>
             <div className="toggle-list">
-              <div className="toggle-row"><div className="tr-txt"><b>Date &amp; Time Update</b><span>Update credit date &amp; time from the MIS file.</span></div><div className="sw-wrap"><Toggle checked={form.processing.dateTimeUpdate} onChange={(v) => setProc({ dateTimeUpdate: v })} id="toggle-datetime" /></div></div>
-              <div className="toggle-row"><div className="tr-txt"><b>Is Active</b><span>Feed becomes Active on approval.</span></div><div className="sw-wrap"><Toggle checked={form.processing.isActive} onChange={(v) => setProc({ isActive: v })} id="toggle-credit-active" /></div></div>
-              <div className="toggle-row"><div className="tr-txt"><b>Reconciliation Type</b><span>Subscription collection, or liability payments.</span></div><div className="sw-wrap segmented" data-testid="credit-recon-type">{RECON_TYPES.map((t) => <button key={t} className={form.processing.reconciliationType === t ? "on" : ""} onClick={() => setProc({ reconciliationType: t, liabilityCategory: t === "Liability" ? form.processing.liabilityCategory : "" })}>{t}</button>)}</div></div>
+              <div className="toggle-row"><div className="tr-txt"><b>Take credit date and time from this file</b><span>The credit date and time on each transaction are updated from the MIS file.</span></div><div className="sw-wrap"><Toggle say checked={form.processing.dateTimeUpdate} onChange={(v) => setProc({ dateTimeUpdate: v })} id="toggle-datetime" /></div></div>
+              <div className="toggle-row"><div className="tr-txt"><b>Active</b><span>Use this feed as soon as a teammate approves it. Off keeps it saved but not in use.</span></div><div className="sw-wrap"><Toggle say checked={form.processing.isActive} onChange={(v) => setProc({ isActive: v })} id="toggle-credit-active" /></div></div>
+              <div className="toggle-row"><div className="tr-txt"><b>What this feed is for</b><span>Money coming in (subscription) or money going out (liability).</span></div><div className="sw-wrap segmented" data-testid="credit-recon-type">{RECON_TYPES.map((t) => <button key={t} className={form.processing.reconciliationType === t ? "on" : ""} onClick={() => setProc({ reconciliationType: t, liabilityCategory: t === "Liability" ? form.processing.liabilityCategory : "" })}>{t}</button>)}</div></div>
               {form.processing.reconciliationType === "Liability" && <div className="toggle-sub"><label className="field-label">Liability category</label><select className={"select" + (errors.liabilityCategory ? " invalid" : "")} style={{ maxWidth: 240 }} value={form.processing.liabilityCategory} onChange={(e) => setProc({ liabilityCategory: e.target.value })} data-testid="field-liability-cat"><option value="">Select…</option>{LIABILITY_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>{errors.liabilityCategory && <span className="field-error">{errors.liabilityCategory}</span>}</div>}
             </div>
           </>)}
@@ -296,7 +304,7 @@ export default function CreditMisWizard() {
 
         <div className="wiz-foot">
           <button className="btn btn-outline" onClick={back} disabled={step === 0} data-testid="credit-btn-back"><ArrowLeft size={15} /> Back</button>
-          {STEPS[step].key !== "review" ? <button className="btn btn-primary" onClick={next} data-testid="credit-btn-next">Next <ArrowRight size={15} /></button> : !isView && <button className="btn btn-success" onClick={doSubmit} data-testid="credit-btn-submit"><Send size={15} /> Submit for Approval</button>}
+          {STEPS[step].key !== "review" ? <button className="btn btn-primary" onClick={next} data-testid="credit-btn-next">Next <ArrowRight size={15} /></button> : !isView && <button className="btn btn-success" onClick={doSubmit} data-testid="credit-btn-submit"><Send size={15} /> Send for approval</button>}
           {isView && <span className="muted" style={{ marginLeft: 8 }}>View only{(form.remarks || []).length ? ` · ${form.remarks.length} authoriser remark(s)` : ""}</span>}
           <div className="spacer" />
           {!isView && <><button className="btn btn-fill" onClick={fillStep} data-testid="credit-btn-fill-step"><Wand2 size={15} /> {STEPS[step].key === "review" ? "Fill all steps" : "Fill this step"}</button>

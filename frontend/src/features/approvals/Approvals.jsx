@@ -5,30 +5,15 @@ import { BANK_MODES, CREDIT_MODES } from "@/lib/constants";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "@/state/store";
 import { useApprovals } from "./useApprovals";
-import { Inbox, Check, X, ArrowRight, AlertTriangle, CheckCircle2, Keyboard, CheckCheck } from "lucide-react";
+import { Inbox, Check, X, ArrowRight, AlertTriangle, CheckCircle2, CheckCheck } from "lucide-react";
+import { timeAgo } from "@/lib/format";
 import { toast } from "sonner";
 
-const KIND_ORDER = ["Fund release", "Bank file layout", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Transaction type", "Narration tag", "Cutoff time", "Access", "Day close"];
-const WHY = {
-  "Fund release": "Units can't be allotted until this money is released to Transaction Posting. Cut-off 3:00 PM.",
-  "Bank file layout": "Rows from this bank are held until the new layout is accepted.",
-  Refund: "Money goes back to the investor. Delayed interest applies after 5 days.",
-  "Manual match": "Confirms that a payment belongs to a purchase, so it can be released.",
-  "Case closure": "Closes a problem case with the reason the maker gave.",
-  Document: "High-value values read from a PDF / email, checked by a maker.",
-  "Match rule": "Changes how payments are matched automatically. Review the simulation first.",
-  "Day close": "Signs off today's reconciliation and sends the summary to AMCs.",
-  "Bank setup": "Controls how this account's statement is fetched and read. Once approved, it's live from the next file.",
-  "Credit MIS setup": "Controls how this payment aggregator's MIS is fetched and read. Live from the next file once approved.",
-  "Column mapping": "Decides which column in the bank file becomes which field. A wrong mapping mis-reads every row.",
-  "Transaction type": "Decides whether rows carrying this value are read as credits or debits, for every file from this source loaded from now on.",
-  "Narration tag": "Rows whose narration fits this rule are tagged and kept out of payment matching, for every file loaded from now on.",
-  "Cutoff time": "Changes when money must be in for same-day NAV. Used by closing balances and fund release.",
-};
+const KIND_ORDER = ["Fund release", "Bank file layout", "File uploaded by hand", "No transactions today", "Refund", "Manual match", "Case closure", "Document", "Match rule", "Bank setup", "Credit MIS setup", "Column mapping", "Transaction type", "Narration tag", "Cutoff time", "Access", "Day close"];
 
 /**
  * Checker inbox as a split view (like an email client): a contained list on the left,
- * one item in detail on the right, keyboard-driven, auto-advancing after each decision.
+ * one item in detail on the right, auto-advancing after each decision.
  */
 export default function Approvals({ embedded = false }) {
   const nav = useNavigate();
@@ -44,7 +29,6 @@ export default function Approvals({ embedded = false }) {
   const idx = Math.max(0, items.findIndex((a) => a.kind + a.id === selId));
   const cur = items[idx];
 
-  const go = (d) => { const n = items[Math.max(0, Math.min(items.length - 1, idx + d))]; if (n) setSelId(n.kind + n.id); };
   const decide = React.useCallback((a, yes) => {
     if (!a || a.own) return;
     const fn = yes ? (a.approve || a.config?.approve) : a.reject;
@@ -69,19 +53,6 @@ export default function Approvals({ embedded = false }) {
     setComment(""); toast.success("Remark saved. The maker sees it; nothing was changed or decided.");
   };
 
-  React.useEffect(() => {
-    const h = (e) => {
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.metaKey || e.ctrlKey) return;
-      if (e.key === "s" && cur?.needsComment && comment.trim().length < 10) { document.getElementById("ap-comment")?.focus(); toast("Write why you're sending it back (10+ characters), then press Send back"); return; }
-      if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); go(1); }
-      if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); go(-1); }
-      if (e.key === "a") decide(cur, true);
-      if (e.key === "s") decide(cur, false);
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  });
-
   const groups = KIND_ORDER.map((k) => [k, items.filter((a) => a.kind === k)]).filter(([, l]) => l.length);
 
   return (
@@ -89,7 +60,7 @@ export default function Approvals({ embedded = false }) {
       {!embedded && <div className="page-head">
         <div>
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={22} /> Approvals</h1>
-          <p>One item at a time. Approve with <kbd>A</kbd>, send back with <kbd>S</kbd>, move with <kbd>J</kbd>/<kbd>K</kbd>. The next item opens automatically.</p>
+          <p>One item at a time. After you approve or send back, the next item opens.</p>
         </div>
         <div className="actions"><span className="inbox-done"><CheckCheck size={15} /> {done} done this session · {all.length} left</span></div>
       </div>}
@@ -103,9 +74,13 @@ export default function Approvals({ embedded = false }) {
         ))}
       </div>
 
-      <div className="chip-row" style={{ marginBottom: 12 }}>
-        <button className={"filter-chip" + (kind === "all" ? " on" : "")} onClick={() => setKind("all")}>All <b>{all.length}</b></button>
-        {counts.map(([k, n]) => <button key={k} className={"filter-chip" + (kind === k ? " on" : "")} onClick={() => setKind(k)}>{k} <b>{n}</b></button>)}
+      <div className="ap-filter">
+        <label htmlFor="ap-kind">Show</label>
+        <select id="ap-kind" className="select" value={kind} onChange={(e) => { setKind(e.target.value); setSelId(null); }} data-testid="ap-kind">
+          <option value="all">All types ({all.length})</option>
+          {counts.map(([k, n]) => <option key={k} value={k}>{k} ({n})</option>)}
+        </select>
+        <span className="muted">{items.length} waiting for you</span>
       </div>
 
       <div className="split">
@@ -131,26 +106,35 @@ export default function Approvals({ embedded = false }) {
                 <div className="sd-top"><span className="ap-kind">{cur.kind}</span>{cur.urgent && <span className="pill pill-rejected"><span className="dot" />Blocks today's cycle</span>}<span className="sd-pos">{idx + 1} / {items.length}</span></div>
                 <h2>{cur.title}</h2>
                 <p className="sd-detail">{cur.detail}</p>
-                <div className="sd-facts">
-                  <div><span>Submitted by</span><b>{cur.owner || "—"}</b></div>
-                  <div><span>Why it matters</span><b>{WHY[cur.kind] || "Needs a second person before it takes effect."}</b></div>
-                  <div><span>Rule</span><b>{cur.own ? "You created this — someone else must approve it." : "Maker–checker: your approval is recorded in the audit trail."}</b></div>
-                </div>
+                <div className="sd-by"><span>Submitted by</span><b>{cur.owner || "—"}</b>{cur.record?.lastUpdated && <em>{timeAgo(cur.record.lastUpdated)}</em>}</div>
+                {cur.sample && <div className="ap-sample" data-testid="ap-sample">
+                  <h3>What you are approving</h3>
+                  <dl>{cur.sample.facts.map(([l, v]) => <React.Fragment key={l}><dt>{l}</dt><dd>{v}</dd></React.Fragment>)}</dl>
+                  {cur.sample.cols && <div className="ap-cols">
+                    <div><span>Columns before</span>{cur.sample.cols.was.map((c) => <em key={c} className={cur.sample.cols.now.includes(c) ? "" : "gone"}>{c}</em>)}</div>
+                    <div><span>Columns now</span>{cur.sample.cols.now.map((c) => <em key={c} className={cur.sample.cols.was.includes(c) ? "" : "new"}>{c}</em>)}</div>
+                  </div>}
+                  {cur.sample.rows && <div className="sp-scroll"><table className="sp ap-sp">
+                    <thead><tr>{cur.sample.head.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+                    <tbody>{cur.sample.rows.map((r, i) => <tr key={i}>{r.map((v, k) => <td key={k}>{v}</td>)}</tr>)}</tbody>
+                  </table></div>}
+                  {cur.sample.note && <p>{cur.sample.note}</p>}
+                </div>}
                 {cur.record && <div className="sd-review"><ReviewBody x={cur.record} audit={audit} modeLabel={cur.record._kind === "credit_config" ? CREDIT_MODES[cur.record.feedMode]?.label : cur.record._kind === "bank_config" ? BANK_MODES[cur.record.downloadMode]?.label : cur.record.fileType} /></div>}
                 {!cur.own && cur.reject && <textarea id="ap-comment" className="textarea ap-comment" value={comment} onChange={(e) => setComment(e.target.value)}
                   placeholder={cur.needsComment ? "Why are you sending this back? (required, at least 10 characters — the maker sees this)" : "Comment for the maker (optional)"} data-testid="ap-comment" />}
                 <div className="sd-actions">
                   {cur.own ? <span className="pill pill-pending"><span className="dot" />Your own submission</span> : <>
-                    {(cur.approve || cur.config) && <button className="btn btn-success btn-lg" onClick={() => decide(cur, true)} data-testid={"ap-approve-" + cur.id}><Check size={16} /> Approve <kbd>A</kbd></button>}
-                    {cur.reject && <button className="btn btn-outline btn-lg" onClick={() => decide(cur, false)}><X size={16} /> Send back <kbd>S</kbd></button>}
-                    {cur.record && <button className="btn btn-ghost btn-lg" onClick={() => addRemark(cur)} data-testid="ap-remark">Add remark only</button>}
+                    {(cur.approve || cur.config) && <button className="btn btn-success btn-lg" onClick={() => decide(cur, true)} data-testid={"ap-approve-" + cur.id}><Check size={16} /> Approve</button>}
+                    {cur.reject && <button className="btn btn-outline btn-lg" onClick={() => decide(cur, false)}><X size={16} /> Send back</button>}
+                    {cur.record && <button className="btn btn-ghost btn-lg" onClick={() => addRemark(cur)} data-testid="ap-remark">Add remark</button>}
                     {cur.review && <button className="btn btn-outline btn-lg" onClick={() => nav(cur.review)}>Review in full <ArrowRight size={15} /></button>}
                   </>}
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
-          {cur && <div className="sd-next muted"><Keyboard size={13} /> Next: {items[idx + 1] ? items[idx + 1].title : "nothing — this is the last one"}</div>}
+          {cur && <div className="sd-next muted">Next: {items[idx + 1] ? items[idx + 1].title : "nothing — this is the last one"}</div>}
         </div>
       </div>
       <p className="muted" style={{ marginTop: 10 }}>Signed in as {currentUser}. You can't approve anything you created.</p>

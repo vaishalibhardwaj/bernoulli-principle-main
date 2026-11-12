@@ -3,7 +3,8 @@ import { UploadCloud, FileSpreadsheet, FileText, Landmark, CreditCard, Users, X,
 import { toast } from "sonner";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { userAmcs } from "@/lib/org";
+import { userAmcs, inScope } from "@/lib/org";
+import { maskAccount } from "@/lib/format";
 import { uid, timeAgo } from "@/lib/format";
 
 const TYPES = [
@@ -29,6 +30,15 @@ export default function FileUpload() {
   const canUpload = hasCap(perms, "file_upload", "edit");
   const amc = userAmcs(amcUser)[0];
   const [type, setType] = React.useState(null);
+  // Which statement this is: bank and account (bank statement), bank (remitter), and the business date for every type.
+  const today = new Date().toISOString().slice(0, 10);
+  const [meta, setMeta] = React.useState({ bank: "", account: "", date: today });
+  const accts = (collections.balances || []).filter((r) => inScope(amcUser, r.amc));
+  const banks = [...new Set(accts.map((r) => r.bankName))].sort();
+  const bankAccts = accts.filter((r) => r.bankName === meta.bank);
+  const needBank = type === "bank" || type === "remitter";
+  const needAcct = type === "bank";
+  const metaMissing = !type ? null : !meta.date ? "Pick the business date." : meta.date > today ? "The business date can't be in the future." : needBank && !meta.bank ? "Pick the bank." : needAcct && !meta.account ? "Pick the account number." : null;
   const [queue, setQueue] = React.useState([]);
   const [drag, setDrag] = React.useState(false);
   const inputRef = React.useRef(null);
@@ -64,15 +74,17 @@ export default function FileUpload() {
   const good = queue.filter((x) => !x.error);
 
   const upload = () => {
+    if (metaMissing) { toast.error(metaMissing); return; }
     const at = new Date().toISOString();
     const day = at.slice(0, 10);
     let done = 0;
     good.forEach((f) => {
       const gcsPath = `${BUCKET}/${slug(amc)}/${f.fileType}/${day}/${f.name}`;
-      const rec = { id: uid("upl"), name: f.name, size: f.size, fileType: f.fileType, amc, uploadedBy: personaUser.name, uploadedAt: at, gcsPath };
+      const details = { bankName: needBank ? meta.bank : null, accountNumber: needAcct ? meta.account : null, businessDate: meta.date };
+      const rec = { id: uid("upl"), name: f.name, size: f.size, fileType: f.fileType, amc, uploadedBy: personaUser.name, uploadedAt: at, gcsPath, ...details };
       const res = act({ screen: "file_upload", cap: "edit", kind: "file_uploads", patch: rec, audit: { entityLabel: f.name, action: "Upload file", to: gcsPath } });
       if (!res.ok) { toast.error(res.error); return; }
-      act({ screen: "file_upload", cap: "edit", kind: "file_track", patch: { id: uid("ft"), name: f.name, folder: `Uploaded on screen by ${personaUser.name}`, placedAt: at, picked: null, processed: null, outcome: "pending", note: "In GCS — waiting for the next pickup (every 5 min)", amc, source: "ui", fileType: f.fileType, uploadedBy: personaUser.name, gcsPath } });
+      act({ screen: "file_upload", cap: "edit", kind: "file_track", patch: { id: uid("ft"), name: f.name, folder: `Uploaded on screen by ${personaUser.name}`, placedAt: at, picked: null, processed: null, outcome: "pending", note: "In GCS — waiting for the next pickup (every 5 min)", amc, source: "ui", fileType: f.fileType, uploadedBy: personaUser.name, gcsPath, ...details } });
       done += 1;
     });
     if (done) {
@@ -115,7 +127,17 @@ export default function FileUpload() {
           })}
         </div>
 
-        <div className="fu-step"><span>2</span>Drop the file{queue.length ? "s" : ""}</div>
+        {type && <>
+          <div className="fu-step"><span>2</span>Which {type === "credit" ? "day is it for" : "statement is it"}?</div>
+          <div className="fu-details" data-testid="fu-details">
+            {needBank && <label>Bank<select className="select" value={meta.bank} onChange={(e) => setMeta({ ...meta, bank: e.target.value, account: "" })} data-testid="fu-bank"><option value="">Pick a bank</option>{banks.map((b) => <option key={b}>{b}</option>)}</select></label>}
+            {needAcct && <label>Account number<select className="select" value={meta.account} onChange={(e) => setMeta({ ...meta, account: e.target.value })} disabled={!meta.bank} data-testid="fu-account"><option value="">{meta.bank ? "Pick an account" : "Pick a bank first"}</option>{bankAccts.map((r) => <option key={r.id} value={r.accountNumber}>{maskAccount(r.accountNumber)} · {r.schemeName}</option>)}</select></label>}
+            <label>Business date<input type="date" className="input" value={meta.date} max={today} onChange={(e) => setMeta({ ...meta, date: e.target.value })} data-testid="fu-date" /></label>
+            <p className="hint">The system checks that the file matches these before it is processed.</p>
+          </div>
+        </>}
+
+        <div className="fu-step"><span>{type ? 3 : 2}</span>Drop the file{queue.length ? "s" : ""}</div>
         <div className={"fu-drop" + (drag ? " drag" : "") + (!type || !canUpload ? " off" : "")} data-testid="fu-drop"
           onDragOver={(e) => { e.preventDefault(); if (type) setDrag(true); }}
           onDragLeave={() => setDrag(false)}
@@ -143,7 +165,8 @@ export default function FileUpload() {
             <div className="fu-actions">
               <span className="muted">{good.length} ready{queue.length - good.length ? ` · ${queue.length - good.length} need a fix (they won't be uploaded)` : ""}</span>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setQueue([])}>Clear</button>
-              <button type="button" className="btn btn-primary" disabled={!good.length} onClick={upload} data-testid="fu-upload">Upload {good.length || ""} to GCS</button>
+              {metaMissing && <span className="neg" style={{ fontSize: 13 }}>{metaMissing}</span>}
+              <button type="button" className="btn btn-primary" disabled={!good.length || !!metaMissing} onClick={upload} data-testid="fu-upload">Upload {good.length || ""} to GCS</button>
             </div>
           </div>
         )}
@@ -153,7 +176,7 @@ export default function FileUpload() {
         <div className="dz-card-h">Uploaded on screen today — {amc}</div>
         {recent.length === 0 ? <p className="muted">Nothing uploaded on screen yet.</p> : (
           <table className="grid" data-testid="fu-recent">
-            <thead><tr><th>File</th><th>Type</th><th>Uploaded by</th><th>When</th><th>Status</th></tr></thead>
+            <thead><tr><th>File</th><th>Type</th><th>Bank · account</th><th>Business date</th><th>Uploaded by</th><th>When</th><th>Status</th></tr></thead>
             <tbody>
               {recent.map((f) => {
                 const [label, tone] = stateOf(f);
@@ -161,6 +184,8 @@ export default function FileUpload() {
                   <tr key={f.id}>
                     <td className="tnum"><b>{f.name}</b>{f.gcsPath && <div className="muted" style={{ fontSize: 11 }}>{f.gcsPath}</div>}</td>
                     <td>{TYPE_LABEL[f.fileType || "bank"]}</td>
+                    <td>{f.bankName ? <>{f.bankName}{f.accountNumber ? <span className="tnum"> · {maskAccount(f.accountNumber)}</span> : ""}</> : <span className="muted">—</span>}</td>
+                    <td className="tnum">{f.businessDate ? new Date(f.businessDate + "T00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : <span className="muted">—</span>}</td>
                     <td>{f.uploadedBy || "—"}</td>
                     <td>{timeAgo(f.when)}</td>
                     <td><span className={"fu-state " + tone}>{label}</span></td>

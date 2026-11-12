@@ -1,5 +1,4 @@
 import React from "react";
-import { HeroArt } from "@/components/Art";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { Drawer } from "@/components/Drawer";
@@ -53,7 +52,6 @@ export default function Refunds() {
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Undo2 size={22} /> Refunds</h1>
           <p>{simple ? "Send money back to investors who paid twice, paid too much, or whose application was rejected. After 5 days CAMS has to add interest." : `Duplicate, excess and NIGO refunds. ${REFUND_SLA_DAYS}-day SLA from value date; after that delayed interest (15% p.a.) is added automatically. Accounts are verified by penny drop before payout.`}</p>
         </div>
-        <HeroArt name="card" tone="pink" />
         {canEdit && ready.length > 0 && <div className="actions"><button className="btn btn-primary" onClick={batch} data-testid="make-batch"><FileDown size={14} /> Create NEFT batch ({ready.length})</button></div>}
       </div>
       {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}

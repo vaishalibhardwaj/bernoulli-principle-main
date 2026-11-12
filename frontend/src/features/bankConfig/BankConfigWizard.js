@@ -11,53 +11,31 @@ import PreviewTable from "@/components/PreviewTable";
 import { ConfirmModal, Modal } from "@/components/Modal";
 import { Toggle, PasswordInput, Note, VaultNote } from "@/components/bits";
 import { detectFor, buildPreview, detectAccountInSample } from "@/mock/sampleFiles";
-import { LIABILITY_CATEGORIES, MAPPING_FIELDS, HEADER_SYNONYMS } from "@/lib/setupSchema";
-import { AMCS, userAmcs } from "@/lib/org";
+import { LIABILITY_CATEGORIES } from "@/lib/setupSchema";
 import { FILE_TYPES, STANDARD_FORMATS, isStandard, isDelimited, SEPARATORS, sepLabel, attachmentTypesFor, CAMS_DOMAIN, exampleFileNames, exampleSubjects, extFor, defaultSchedule, scheduleText } from "@/lib/setupSchema";
 import { PatternTester, ScheduleField, TestConnection, ChangesCard } from "@/features/setup/SetupBits";
 import { maskAccount, formatDate, uid } from "@/lib/format";
 import { toast } from "sonner";
+import { SentScreen, HowRead } from "@/features/setup/SentScreen";
 
-// Order agreed in review: pick the AMC and drop a sample, read and confirm its header row, map each column,
-// then say how the file arrives and which account it is for.
 const STEPS = [
-  { key: "sample", label: "AMC & Sample" },
-  { key: "header", label: "Confirm Header" },
-  { key: "map", label: "Map Columns" },
   { key: "mode", label: "Download Mode" },
   { key: "bank", label: "Bank Information" },
   { key: "conn", label: "Connection Details" },
+  { key: "file", label: "File Configuration" },
   { key: "proc", label: "Processing Options" },
   { key: "review", label: "Review & Submit" },
 ];
-const I = Object.fromEntries(STEPS.map((x, i) => [x.key, i]));
-// Fields a bank statement must have mapped before the setup can be submitted.
-const MUST_MAP = ["VALUE_DATE", "BANK_NARRATION"];
-
-/** Header cells of the confirmed header row, from the start column on. */
-function headerCells(fc) {
-  const pv = buildPreview(fc.sampleFileName);
-  if (!pv) return [];
-  const row = pv.rows[(parseInt(fc.startRow, 10) || pv.headerIdx + 1) - 1] || [];
-  return row.slice((parseInt(fc.startColumn, 10) || 1) - 1).map((h) => String(h || "").trim()).filter(Boolean);
-}
-/** First guess at the mapping: the header name each bank commonly uses for a field. */
-function guessMap(cells) {
-  const out = {};
-  MAPPING_FIELDS.forEach(([f]) => { const hit = cells.find((h) => (HEADER_SYNONYMS[f] || []).some((re) => re.test(h))); if (hit) out[f] = hit; });
-  return out;
-}
 
 function defaults() {
   return {
     id: uid("bc"), kind: "bank_config", sno: null, downloadMode: "auto",
     bankName: "", bankCode: "", accountNumber: "", schemeOrCollection: "Scheme",
-    amc: "", columnMap: {},
-    schemeCode: "", schemeName: "", assetClass: "", status: "new", owner: "",
+    schemeCode: "", schemeName: "", assetClass: "", status: "new", owner: "Priya",
     rejection: null, lastUpdated: null,
     maskedPattern: "", priority: "low", formatName: "",
     connection: { url: "", path: "", corporateId: "", loginId: "", passwordSet: false, _newPassword: "", _confirmPassword: "", schedule: defaultSchedule(), tested: null, subjectPattern: "", sender: "", receiver: "", attachmentPattern: "", zipOption: "none", _zipPassword: "" },
-    fileConfig: { fileType: "", separator: "", startRow: "", startColumn: "", uploadPath: "", uploadUser: "", uploadPasswordSet: false, _uploadPassword: "", fileNamePattern: "", sampleFileName: null, detected: {}, edited: {}, headerConfirmed: false },
+    fileConfig: { fileType: "", separator: "", startRow: "", startColumn: "", uploadPath: "", uploadUser: "", uploadPasswordSet: false, _uploadPassword: "", fileNamePattern: "", sampleFileName: null, detected: {}, edited: {} },
     processing: { isActive: true, bulkUpload: false, computeRunningBalance: false, validateRunningBalance: true, runningBalanceCleanup: false, cleanupChars: "", directMatch: false, reconciliationType: "Subscription", liabilityCategory: "", descendingOrder: false },
   };
 }
@@ -65,7 +43,7 @@ function defaults() {
 export default function BankConfigWizard() {
   const { mode, id } = useParams();
   const nav = useNavigate();
-  const { get, saveDraft, submit, collections, perms, act, personaUser, amcUser } = useStore();
+  const { get, saveDraft, submit, collections, perms } = useStore();
   const highCount = (collections.bank_config || []).filter((c) => c.priority === "high" && c.status === "active").length;
   const isView = mode === "view";
 
@@ -81,16 +59,8 @@ export default function BankConfigWizard() {
         return { ...base, ...clone, connection: { ...base.connection, ...clone.connection }, fileConfig: { ...base.fileConfig, ...clone.fileConfig }, processing: { ...base.processing, ...clone.processing } };
       }
     }
-    // Started from Central Setup › Pending tasks: carry the AMC, bank and account the Ops request named.
-    const taskId = new URLSearchParams(window.location.search).get("task");
-    const task = taskId && (collections.setup_requests || []).find((t) => t.id === taskId);
-    if (task) {
-      const b = BANKS.find((x) => x.name === task.bankName); const a = task.accountNumber ? accountMeta(task.bankName, task.accountNumber) : null;
-      return { ...base, amc: task.amc, taskId: task.id, bankName: task.bankName, bankCode: b?.code || "", accountNumber: task.accountNumber || "", schemeCode: a?.schemeCode || "", schemeName: a?.schemeName || "", assetClass: a?.assetClass || "" };
-    }
-    // A new setup starts on the AMC picked for Recon setup this session.
-    return { ...base, amc: userAmcs(amcUser).length === 1 ? userAmcs(amcUser)[0] : "" };
-  }, [id, mode, get]); // eslint-disable-line react-hooks/exhaustive-deps
+    return base;
+  }, [id, mode, get]);
 
   const [form, setForm] = React.useState(initial);
   const savedRef = React.useRef(initial);
@@ -102,6 +72,7 @@ export default function BankConfigWizard() {
   const [showPreview, setShowPreview] = React.useState(!!initial.fileConfig.sampleFileName);
   const [confirmReset, setConfirmReset] = React.useState(false);
   const [submitShow, setSubmitShow] = React.useState(false);
+  const [sent, setSent] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [replacingCred, setReplacingCred] = React.useState(!id);
 
@@ -119,7 +90,7 @@ export default function BankConfigWizard() {
   const statusMap = {};
   STEPS.forEach((s, i) => {
     if (s.key === "conn" && isManual) statusMap[s.key] = "na";
-    else if (errorSteps[i] || errorSteps[s.key]) statusMap[s.key] = "error";
+    else if (errorSteps[i]) statusMap[s.key] = "error";
     else if (i === step) statusMap[s.key] = "current";
     else if (i < step) statusMap[s.key] = "complete";
     else statusMap[s.key] = "upcoming";
@@ -156,49 +127,41 @@ export default function BankConfigWizard() {
 
   const validate = () => {
     const e = {}; const es = {};
-    if (!form.amc) { e.amc = "Pick the AMC this statement is for"; es[I.sample] = true; }
-    if (!form.fileConfig.sampleFileName) { e.sample = "Upload a sample statement"; es[I.sample] = true; }
-    if (form.fileConfig.sampleFileName && !isStandard(form.fileConfig.fileType)) {
-      if (!form.fileConfig.headerConfirmed) { e.headerConfirmed = "Confirm the header row"; es[I.header] = true; }
-      const missing = MUST_MAP.filter((f) => !(form.columnMap || {})[f]);
-      const amount = (form.columnMap || {}).INSTRM_AMOUNT || (form.columnMap || {}).INSTRM_AMOUNT_CREDIT;
-      if (missing.length || !amount) { e.columnMap = `Map ${[...missing, ...(amount ? [] : ["INSTRM_AMOUNT or INSTRM_AMOUNT_CREDIT"])].join(", ")}`; es[I.map] = true; }
-    }
-    if (!form.bankName) { e.bankName = "Select a bank"; es[I.bank] = true; }
-    if (!form.processing.bulkUpload && !form.accountNumber) { e.accountNumber = "Select an account"; es[I.bank] = true; }
+    if (!form.bankName) { e.bankName = "Select a bank"; es[1] = true; }
+    if (!form.processing.bulkUpload && !form.accountNumber) { e.accountNumber = "Select an account"; es[1] = true; }
     const c = form.connection, fc = form.fileConfig, p = form.processing;
-    if (form.maskedPattern && !/^[X*]+\d{2,}$/i.test(form.maskedPattern.trim())) { e.maskedPattern = "Masked pattern must look like XXXXXX1234 (X or * then the visible digits)"; es[I.bank] = true; }
+    if (form.maskedPattern && !/^[X*]+\d{2,}$/i.test(form.maskedPattern.trim())) { e.maskedPattern = "Masked pattern must look like XXXXXX1234 (X or * then the visible digits)"; es[1] = true; }
     if (!isManual) {
       if (form.downloadMode === "email") {
-        if (!c.sender) { e.sender = "Sender required"; es[I.conn] = true; }
-        if (!c.receiver) { e.receiver = "Receiver required"; es[I.conn] = true; }
-        else if (!c.receiver.toLowerCase().endsWith(CAMS_DOMAIN)) { e.receiver = `Receiver must be a CAMS mailbox (${CAMS_DOMAIN})`; es[I.conn] = true; }
-        if (!c.subjectPattern) { e.subjectPattern = "Subject pattern required"; es[I.conn] = true; }
-        if (c.zipOption === "zippw" && !c._zipPassword && !c.zipPasswordSet) { e.zipPassword = "ZIP password required"; es[I.conn] = true; }
+        if (!c.sender) { e.sender = "Sender required"; es[2] = true; }
+        if (!c.receiver) { e.receiver = "Receiver required"; es[2] = true; }
+        else if (!c.receiver.toLowerCase().endsWith(CAMS_DOMAIN)) { e.receiver = `Receiver must be a CAMS mailbox (${CAMS_DOMAIN})`; es[2] = true; }
+        if (!c.subjectPattern) { e.subjectPattern = "Subject pattern required"; es[2] = true; }
+        if (c.zipOption === "zippw" && !c._zipPassword && !c.zipPasswordSet) { e.zipPassword = "ZIP password required"; es[2] = true; }
       } else {
-        if (!c.url) { e.url = "URL required"; es[I.conn] = true; }
-        if (!c.corporateId) { e.corporateId = "Corporate ID required"; es[I.conn] = true; }
-        if (!c.loginId) { e.loginId = "Login ID required"; es[I.conn] = true; }
-        if (!c.passwordSet && !c._newPassword) { e.password = "Password required"; es[I.conn] = true; }
-        else if (c._newPassword && c._newPassword !== c._confirmPassword) { e.password = "The Password and Re-enter Password fields do not match. Please enter matching values and try again."; es[I.conn] = true; }
+        if (!c.url) { e.url = "URL required"; es[2] = true; }
+        if (!c.corporateId) { e.corporateId = "Corporate ID required"; es[2] = true; }
+        if (!c.loginId) { e.loginId = "Login ID required"; es[2] = true; }
+        if (!c.passwordSet && !c._newPassword) { e.password = "Password required"; es[2] = true; }
+        else if (c._newPassword && c._newPassword !== c._confirmPassword) { e.password = "The Password and Re-enter Password fields do not match. Please enter matching values and try again."; es[2] = true; }
       }
     }
-    if (!fc.fileType) { e.fileType = "File type required"; es[I.header] = true; }
+    if (!fc.fileType) { e.fileType = "File type required"; es[3] = true; }
     if (!isStandard(fc.fileType)) {
-      if (isDelimited(fc.fileType) && !fc.separator) { e.separator = "File separator required for delimited files"; es[I.header] = true; }
-      if (!(Number(fc.startRow) >= 1 && Number.isInteger(Number(fc.startRow)))) { e.startRow = "Start row must be a whole number ≥ 1"; es[I.header] = true; }
-      if (!(Number(fc.startColumn) >= 1 && Number.isInteger(Number(fc.startColumn)))) { e.startColumn = "Start column must be a whole number ≥ 1"; es[I.header] = true; }
+      if (isDelimited(fc.fileType) && !fc.separator) { e.separator = "File separator required for delimited files"; es[3] = true; }
+      if (!(Number(fc.startRow) >= 1 && Number.isInteger(Number(fc.startRow)))) { e.startRow = "Start row must be a whole number ≥ 1"; es[3] = true; }
+      if (!(Number(fc.startColumn) >= 1 && Number.isInteger(Number(fc.startColumn)))) { e.startColumn = "Start column must be a whole number ≥ 1"; es[3] = true; }
     }
     // SFTP path / user / password are parked: SFTP is one per AMC and will move to a central table.
-    if (fc.fileNamePattern && testRegex(fc.fileNamePattern) === false) { e.fileNamePattern = "File name pattern is not a valid pattern"; es[I.header] = true; }
-    if (p.reconciliationType === "Liability" && !p.liabilityCategory) { e.liabilityCategory = "Pick the liability type"; es[I.proc] = true; }
-    if (p.runningBalanceCleanup && !p.cleanupChars.trim()) { e.cleanupChars = "Enter the character(s) to remove, or switch cleanup off"; es[I.proc] = true; }
+    if (fc.fileNamePattern && testRegex(fc.fileNamePattern) === false) { e.fileNamePattern = "File name pattern is not a valid pattern"; es[3] = true; }
+    if (p.reconciliationType === "Liability" && !p.liabilityCategory) { e.liabilityCategory = "Pick the liability type"; es[4] = true; }
+    if (p.runningBalanceCleanup && !p.cleanupChars.trim()) { e.cleanupChars = "Enter the character(s) to remove, or switch cleanup off"; es[4] = true; }
     return { e, es };
   };
 
   const persist = (data) => {
     const toStore = { ...data };
-    if (toStore.connection._newPassword) { toStore.connection = { ...toStore.connection, passwordSet: true, _newPassword: "", credentialUpdatedAt: new Date().toISOString(), credentialUpdatedBy: "" }; }
+    if (toStore.connection._newPassword) { toStore.connection = { ...toStore.connection, passwordSet: true, _newPassword: "", credentialUpdatedAt: new Date().toISOString(), credentialUpdatedBy: "Priya" }; }
     if (toStore.connection._zipPassword) toStore.connection = { ...toStore.connection, zipPasswordSet: true };
     if (toStore.fileConfig._uploadPassword) toStore.fileConfig = { ...toStore.fileConfig, uploadPasswordSet: true, _uploadPassword: "" };
     toStore.connection = { ...toStore.connection, _confirmPassword: "", _zipPassword: "" };
@@ -215,10 +178,9 @@ export default function BankConfigWizard() {
 
   const doSubmitConfirmed = () => {
     submit("bank_config", persist(form), label);
-    // Started from an Ops request: close the ticket so Ops can see the setup is with a teammate for approval.
-    if (form.taskId) act({ screen: "setup_tasks", cap: "edit", kind: "setup_requests", id: form.taskId, patch: { status: "done", doneAt: new Date().toISOString(), doneBy: personaUser.name, setupId: form.id }, audit: { entityLabel: label, action: "Close setup task", to: "Setup submitted for approval" } });
-    toast.success("Submitted for Approval");
-    nav("/bank-setup?status=pending");
+    setSubmitShow(false);
+    setSent(true);
+    window.scrollTo(0, 0);
   };
 
   const doReset = () => {
@@ -241,8 +203,7 @@ export default function BankConfigWizard() {
     if (k === "mode") set({ downloadMode: pick(Object.keys(BANK_MODES)) });
     else if (k === "bank") fillBank();
     else if (k === "conn") fillConn(form.bankName, form.downloadMode);
-    else if (k === "sample" || k === "header") { set({ amc: form.amc || pick(AMCS) }); fillFile(form.bankName); }
-    else if (k === "map") set({ columnMap: guessMap(headerCells(form.fileConfig)) });
+    else if (k === "file") fillFile(form.bankName);
     else if (k === "proc") setProc({ reconciliationType: pick(RECON_TYPES), runningBalanceCleanup: true, cleanupChars: "Cr" });
     else { const dm = form.downloadMode === "manual" ? "auto" : form.downloadMode; const bn = form.bankName || fillBank(); set({ downloadMode: dm }); if (dm !== "manual") fillConn(bn, dm); fillFile(bn); }
     toast.success(k === "review" ? "All steps filled with sample data" : "Step filled with sample data");
@@ -250,6 +211,28 @@ export default function BankConfigWizard() {
 
   const reviewVal = STEPS[step].key === "review" ? validate() : { e: {}, es: {} };
   const hasIssues = Object.keys(reviewVal.es).length > 0;
+
+  const procRow = ([k, t, h]) => (
+    <React.Fragment key={k}>
+                    <div className="toggle-row">
+                      <div className="tr-txt"><b>{t}</b><span>{h}</span></div>
+                      <div className="sw-wrap"><Toggle say checked={form.processing[k]} disabled={isView} onChange={(v) => setProc({ [k]: v })} id={"toggle-" + k} /></div>
+                    </div>
+                    {k === "runningBalanceCleanup" && form.processing.runningBalanceCleanup && (
+                      <div className="toggle-sub" data-testid="cleanup-chars">
+                        <label className="field-label">Character(s) to remove from the start or end of the balance</label>
+                        <input className={"input tnum" + (errors.cleanupChars ? " invalid" : "")} style={{ maxWidth: 220 }} value={form.processing.cleanupChars} disabled={isView} placeholder="e.g. C, Cr, Dr" onChange={(e) => setProc({ cleanupChars: e.target.value })} data-testid="field-cleanup-chars" />
+                        <span className="muted">{form.processing.cleanupChars ? <>Example: <span className="tnum">{form.processing.cleanupChars.split(",")[0].trim()}12345</span> is read as <span className="tnum">12345</span></> : "Example: C12345 with “C” is read as 12345"}</span>
+                        {errors.cleanupChars && <span className="field-error">{errors.cleanupChars}</span>}
+                      </div>
+                    )}
+                  </React.Fragment>
+  );
+
+  if (sent) return (
+    <SentScreen what="The bank statement setup for" name={label} edited={!!form.baseline} listPath="/bank-setup" listLabel="Back to bank statements"
+      anotherLabel="Set up another account" onAnother={() => { const d = defaults(); savedRef.current = d; setForm(d); setStep(0); setMaxReached(0); setShowPreview(false); setSubmitShow(false); setSent(false); nav("/bank-setup/new"); }} />
+  );
 
   return (
     <div data-testid="bank-config-wizard">
@@ -382,53 +365,34 @@ export default function BankConfigWizard() {
             </>
           )}
 
-          {/* STEPS 1–2: AMC and sample, then the header row read from it */}
-          {(STEPS[step].key === "sample" || STEPS[step].key === "header") && (
-            <FileStep part={STEPS[step].key} form={form} set={set} setFile={setFile} markEdited={markEdited} errors={errors} isView={isView} A={A}
+          {/* STEP 4 */}
+          {STEPS[step].key === "file" && (
+            <FileStep form={form} setFile={setFile} markEdited={markEdited} errors={errors} isView={isView} A={A}
               onFormatName={(v) => set({ formatName: v })} sameBank={(collections.bank_config || []).filter((c) => c.bankName === form.bankName && c.id !== form.id && c.accountNumber === form.accountNumber).length}
               onUseDetected={(d) => { const a = accountMeta(d.bankName, d.accountNumber); set({ bankName: d.bankName, bankCode: d.bankCode, accountNumber: d.accountNumber, schemeCode: a?.schemeCode || "", assetClass: a?.assetClass || "", schemeName: a?.schemeName || "" }); toast.success(`Bank and account filled from the sample: ${d.bankName} ·${d.accountNumber.slice(-4)}`); }}
-              analysing={analysing} showPreview={showPreview} onPickFile={onPickFile} onClear={() => { setFile({ sampleFileName: null, detected: {}, edited: {}, headerConfirmed: false }); setShowPreview(false); set({ columnMap: {} }); }}
-              onConfirmHeader={() => { setFile({ headerConfirmed: true }); const cells = headerCells({ ...form.fileConfig }); if (!Object.keys(form.columnMap || {}).length) set({ columnMap: guessMap(cells) }); toast.success("Header confirmed. Next, map each column."); gotoStep(I.map); }} />
+              analysing={analysing} showPreview={showPreview} onPickFile={onPickFile} onClear={() => { setFile({ sampleFileName: null, detected: {}, edited: {} }); setShowPreview(false); }} />
           )}
-
-          {/* STEP 3: map each column of the confirmed header */}
-          {STEPS[step].key === "map" && <MapStep form={form} set={set} isView={isView} goHeader={() => gotoStep(I.header)} />}
 
           {/* STEP 5 */}
           {STEPS[step].key === "proc" && (
             <>
-              <div className="step-title">Processing Options</div>
-              <p className="step-desc">Control how the statement is processed during reconciliation.</p>
+              <div className="step-title">Processing options</div>
+              <p className="step-desc">How this bank's file is read and used. Most accounts need no change here.</p>
               <div className="toggle-list">
+                <div className="tl-head">Reading the file</div>
                 {[
-                  ["isActive", "Is Active", "Configuration becomes Active on approval (otherwise Inactive)."],
-                  ["bulkUpload", "Bulk Upload", "Allow multiple accounts in one file; account derived from file."],
-                  ["computeRunningBalance", "Compute Running Balance", "Only for banks whose file has NO closing balance (e.g. Standard Chartered): the system works it out from our data. Shown as \"computed, not bank-verified\"."],
-                  ["runningBalanceCleanup", "Running Balance Cleanup", "Remove set characters (prefix or suffix) from the closing balance before processing."],
-                  ["directMatch", "Direct Match", "Turn on only for the ~10–15 UPI collection accounts. The direct-match scheduler then runs on these accounts alone instead of all ~200, which keeps it fast."],
-                  ["descendingOrder", "Descending Order", "File is newest-first; process and validate balances bottom-to-top."],
-                ].map(([k, t, h]) => (
-                  <React.Fragment key={k}>
-                    <div className="toggle-row">
-                      <div className="tr-txt"><b>{t}</b><span>{h}</span></div>
-                      <div className="sw-wrap"><Toggle checked={form.processing[k]} disabled={isView} onChange={(v) => setProc({ [k]: v })} id={"toggle-" + k} /></div>
-                    </div>
-                    {k === "runningBalanceCleanup" && form.processing.runningBalanceCleanup && (
-                      <div className="toggle-sub" data-testid="cleanup-chars">
-                        <label className="field-label">Character(s) to remove from the start or end of the balance</label>
-                        <input className={"input tnum" + (errors.cleanupChars ? " invalid" : "")} style={{ maxWidth: 220 }} value={form.processing.cleanupChars} disabled={isView} placeholder="e.g. C, Cr, Dr" onChange={(e) => setProc({ cleanupChars: e.target.value })} data-testid="field-cleanup-chars" />
-                        <span className="muted">{form.processing.cleanupChars ? <>Example: <span className="tnum">{form.processing.cleanupChars.split(",")[0].trim()}12345</span> is read as <span className="tnum">12345</span></> : "Example: C12345 with “C” is read as 12345"}</span>
-                        {errors.cleanupChars && <span className="field-error">{errors.cleanupChars}</span>}
-                      </div>
-                    )}
-                  </React.Fragment>
-                ))}
+                  ["bulkUpload", "Several accounts in one file", "The bank sends one file that covers many accounts. The account is read from each row."],
+                  ["descendingOrder", "Newest transaction first", "The file lists the latest transaction at the top. Rows are read bottom to top so the balances check correctly."],
+                  ["computeRunningBalance", "Work out the running balance", "Only for banks whose file has no closing balance. The balance is worked out from the transactions and is marked as not verified by the bank."],
+                  ["runningBalanceCleanup", "Clean the balance text", "Remove letters such as Cr or Dr from the start or end of the balance before it is read."],
+                ].map(procRow)}
                 <div className="toggle-row" data-testid="balance-always-on">
-                  <div className="tr-txt"><b>Closing balance validation — always on</b><span>Every row is checked: opening balance ± each credit/debit must equal the bank's closing balance, and today's opening must equal yesterday's closing. If the bank's balance is wrong, ask the bank for a corrected statement; manual fixes only per the AMC's protocol.</span></div>
+                  <div className="tr-txt"><b>Closing balance check</b><span>Every row is checked: opening balance ± each credit/debit must equal the bank's closing balance, and today's opening must equal yesterday's closing. If the bank's balance is wrong, ask the bank for a corrected statement; manual fixes only per the AMC's protocol.</span></div>
                   <div className="sw-wrap"><span className="chip chip-previous"><ShieldCheck size={11} /> Always on</span></div>
                 </div>
+                <div className="tl-head">Using it in reconciliation</div>
                 <div className="toggle-row recon-row">
-                  <div className="tr-txt"><b>Reconciliation Type</b><span>Subscription collection or liability payments — decides the downstream tables.</span></div>
+                  <div className="tr-txt"><b>What this account is for</b><span>Money coming in (subscription) or money going out (liability). This decides where its transactions are matched.</span></div>
                   <div className="sw-wrap segmented" data-testid="recon-type">
                     {RECON_TYPES.map((t) => <button key={t} disabled={isView} className={form.processing.reconciliationType === t ? "on" : ""} onClick={() => setProc({ reconciliationType: t, liabilityCategory: t === "Liability" ? form.processing.liabilityCategory : "" })}>{t}</button>)}
                   </div>
@@ -441,10 +405,16 @@ export default function BankConfigWizard() {
                     {errors.liabilityCategory && <span className="field-error">{errors.liabilityCategory}</span>}
                   </div>
                 )}
+                {[
+                  ["directMatch", "Direct match", "Turn on only for UPI collection accounts. The direct match job then runs on these accounts alone instead of every account, which keeps it fast."],
+                ].map(procRow)}
                 <div className="toggle-row" data-testid="priority-row">
                   <div className="tr-txt"><b>Download priority</b><span>Pick High for the 10–15 accounts that matter most. Within the download window (e.g. every 15 min from 7:00 AM to 9:00 PM) high-priority accounts are fetched first, the rest after. {highCount} account{highCount !== 1 ? "s are" : " is"} High today.</span></div>
                   <div className="sw-wrap segmented">{["high", "low"].map((v) => <button key={v} disabled={isView} className={form.priority === v ? "on" : ""} onClick={() => set({ priority: v })} data-testid={"priority-" + v}>{v === "high" ? "High" : "Low"}</button>)}</div>
                 </div>
+                {[
+                  ["isActive", "Active", "Use this setup as soon as a teammate approves it. Off keeps it saved but not in use."],
+                ].map(procRow)}
               </div>
             </>
           )}
@@ -463,7 +433,7 @@ export default function BankConfigWizard() {
             <button className="btn btn-outline" onClick={doSaveDraft} data-testid="btn-save-draft"><Save size={15} /> Save as Draft</button>
             {STEPS[step].key !== "review"
               ? <button className="btn btn-primary" onClick={next} data-testid="btn-next">Next <ArrowRight size={15} /></button>
-              : <button className="btn btn-success" onClick={() => setSubmitShow(true)} disabled={hasIssues} data-testid="btn-submit-approval"><Send size={15} /> Submit for Approval</button>}
+              : <button className="btn btn-success" onClick={() => setSubmitShow(true)} disabled={hasIssues} data-testid="btn-submit-approval"><Send size={15} /> Send for approval</button>}
           </div>
         )}
         {isView && (
@@ -482,23 +452,13 @@ export default function BankConfigWizard() {
 }
 
 function SubmitDialog({ onCancel, onConfirm }) {
-  const [phase, setPhase] = React.useState("confirm");
-  const start = () => {
-    setPhase("loading");
-    setTimeout(() => { setPhase("success"); setTimeout(onConfirm, 850); }, 900);
-  };
   return (
-    <Modal id="submit-modal" title={phase === "success" ? "Submitted" : "Submit for approval?"}
-      onClose={phase === "confirm" ? onCancel : undefined}
-      footer={phase === "confirm" ? (
-        <>
-          <button className="btn btn-ghost" onClick={onCancel} data-testid="submit-modal-cancel">Cancel</button>
-          <button className="btn btn-success" onClick={start} data-testid="submit-modal-ok" autoFocus><Send size={15} /> Submit</button>
-        </>
-      ) : null}>
-      {phase === "confirm" && <p>This configuration becomes <b>Active</b> on approval. It applies from the next file received; files already loaded are not re-processed. Submit?</p>}
-      {phase === "loading" && <div className="submit-state" data-testid="submit-loading"><Loader2 className="spin" size={28} /><p>Submitting for approval…</p></div>}
-      {phase === "success" && <div className="submit-state" data-testid="submit-success"><div className="success-ring"><Check size={26} /></div><p>Submitted for approval</p></div>}
+    <Modal id="submit-modal" title="Send for approval?" onClose={onCancel}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onCancel} data-testid="submit-modal-cancel">Cancel</button>
+        <button className="btn btn-primary" onClick={onConfirm} data-testid="submit-modal-ok"><Send size={15} /> Send</button>
+      </>}>
+      <p>A teammate checks this setup. Once approved it is used from the next file received. Files already loaded are not read again.</p>
     </Modal>
   );
 }
@@ -536,8 +496,8 @@ function ReviewSummary({ form, onEdit, isManual, val }) {
   const fc = form.fileConfig;
   const p = form.processing;
   const c = form.connection;
-  const fieldStep = { amc: I.sample, sample: I.sample, headerConfirmed: I.header, columnMap: I.map, bankName: I.bank, accountNumber: I.bank, maskedPattern: I.bank, subjectPattern: I.conn, sender: I.conn, receiver: I.conn, zipPassword: I.conn, url: I.conn, corporateId: I.conn, loginId: I.conn, password: I.conn, fileType: I.header, separator: I.header, startRow: I.header, startColumn: I.header, uploadPath: I.header, fileNamePattern: I.header, cleanupChars: I.proc, liabilityCategory: I.proc };
-  const issues = Object.entries(val.e).map(([field, msg]) => ({ field, msg, step: fieldStep[field] ?? I.bank }));
+  const fieldStep = { bankName: 1, accountNumber: 1, maskedPattern: 1, subjectPattern: 2, sender: 2, receiver: 2, zipPassword: 2, url: 2, corporateId: 2, loginId: 2, password: 2, fileType: 3, separator: 3, startRow: 3, startColumn: 3, uploadPath: 3, fileNamePattern: 3, cleanupChars: 4 };
+  const issues = Object.entries(val.e).map(([field, msg]) => ({ field, msg, step: fieldStep[field] ?? 1 }));
   const hasIssues = issues.length > 0;
   const msgsFor = (step) => issues.filter((i) => i.step === step).map((i) => i.msg);
   const acct = form.accountNumber ? maskAccount(form.accountNumber) : "—";
@@ -568,20 +528,15 @@ function ReviewSummary({ form, onEdit, isManual, val }) {
         )}
 
         <ChangesCard base={form.baseline} cur={form} />
-        {(form.remarks || []).length > 0 && <div className="rev-issues" style={{ borderColor: "rgba(59,130,246,.35)" }}><div className="ri-title">Authoriser remarks</div><ul>{form.remarks.map((r, i) => <li key={i}><b>{r.by}</b>: {r.text}</li>)}</ul></div>}
+        {(form.remarks || []).length > 0 && <div className="rev-issues" style={{ borderColor: "rgba(57,208,255,.35)" }}><div className="ri-title">Authoriser remarks</div><ul>{form.remarks.map((r, i) => <li key={i}><b>{r.by}</b>: {r.text}</li>)}</ul></div>}
 
-        <Section title="Processing mode & connection" editStep={isManual ? I.mode : I.conn} onEdit={onEdit} invalid={!!val.es[I.conn]} warnMsgs={msgsFor(I.conn)}>
+        <Section title="Processing mode & connection" editStep={isManual ? 0 : 2} onEdit={onEdit} invalid={!!val.es[2]} warnMsgs={msgsFor(2)}>
           <KV k="Mode" v={BANK_MODES[form.downloadMode].label} />
           {form.downloadMode === "email" && (<><KV k="Sender" v={c.sender} /><KV k="Receiver" v={c.receiver} /><KV k="Subject pattern" v={c.subjectPattern} /><KV k="Attachment name" v={c.attachmentPattern || "Any name"} /><KV k="Accepted attachments" v={attachmentTypesFor(fc.fileType, c.zipOption).join(" ") || "—"} /><KV k="Not matching" v="Rejected and logged for review" /></>)}
           {["auto", "api"].includes(form.downloadMode) && (<><KV k="URL" v={c.url} /><KV k="Corporate ID" v={c.corporateId} /><KV k="Login ID" v={c.loginId} /><KV k="Credential" v={c.passwordSet || c._newPassword ? "Set ✓ (vault)" : "Not set"} /><KV k="Schedule" v={scheduleText(c.schedule)} /><KV k="Connection test" v={c.tested ? (c.tested.ok ? "Passed ✓" : "Failed") : "Not run"} /></>)}
         </Section>
 
-        <Section title="Column mapping" editStep={I.map} onEdit={onEdit} invalid={!!val.es[I.map]} warnMsgs={msgsFor(I.map)}>
-          {Object.keys(form.columnMap || {}).length ? Object.entries(form.columnMap).map(([f, h]) => <KV key={f} k={f} v={h} />) : <KV k="Mapping" v={std ? "Standard format — not needed" : null} />}
-        </Section>
-
-        <Section title="Bank Information" editStep={I.bank} onEdit={onEdit} invalid={!!val.es[I.bank]} warnMsgs={msgsFor(I.bank)}>
-          <KV k="AMC" v={form.amc} />
+        <Section title="Bank Information" editStep={1} onEdit={onEdit} invalid={!!val.es[1]} warnMsgs={msgsFor(1)}>
           <KV k="Bank Name" v={form.bankName} />
           <KV k="Account Number" v={form.accountNumber ? acct : null} />
           <KV k="Scheme / Collection" v={form.schemeOrCollection} />
@@ -590,7 +545,7 @@ function ReviewSummary({ form, onEdit, isManual, val }) {
           <KV k="Masked pattern" v={form.maskedPattern} />
         </Section>
 
-        <Section title="File Configuration" editStep={I.header} onEdit={onEdit} invalid={!!val.es[I.header] || !!val.es[I.sample]} warnMsgs={[...msgsFor(I.sample), ...msgsFor(I.header)]}>
+        <Section title="File Configuration" editStep={3} onEdit={onEdit} invalid={!!val.es[3]} warnMsgs={msgsFor(3)}>
           <KV k="Sample File" v={<><FileText size={14} style={{ color: "hsl(var(--muted))" }} /> {fc.sampleFileName || "—"}</>} />
           <KV k="File Type" v={fc.fileType} />
           {!std && <KV k="Separator" v={isDelimited(fc.fileType) ? sepLabel(fc.separator) : "n/a"} />}
@@ -600,7 +555,7 @@ function ReviewSummary({ form, onEdit, isManual, val }) {
           <KV k="File name pattern" v={fc.fileNamePattern} />
         </Section>
 
-        <Section title="Processing Options" editStep={I.proc} onEdit={onEdit} invalid={!!val.es[I.proc]} warnMsgs={msgsFor(I.proc)}>
+        <Section title="Processing Options" editStep={4} onEdit={onEdit} invalid={!!val.es[4]} warnMsgs={msgsFor(4)}>
           <KV k="Is Active" v={<Stat on={p.isActive} />} />
           <KV k="Bulk Upload" v={<Stat on={p.bulkUpload} />} />
           <KV k="Compute Running Balance" v={<Stat on={p.computeRunningBalance} />} />
@@ -661,44 +616,22 @@ function EmailRules({ form, setConn, errors, isView, A }) {
 }
 
 /** R2 + R4 — file layout (standard format or sample-detected custom file) and the SFTP drop folder. */
-function FileStep({ part, form, set, setFile, markEdited, errors, isView, A, analysing, showPreview, onPickFile, onClear, onUseDetected, onFormatName, sameBank, onConfirmHeader }) {
+function FileStep({ form, setFile, markEdited, errors, isView, A, analysing, showPreview, onPickFile, onClear, onUseDetected, onFormatName, sameBank }) {
   const fc = form.fileConfig;
   const std = isStandard(fc.fileType);
   const sample = detectFor(fc.sampleFileName);
   const preview = buildPreview(fc.sampleFileName);
   const bank = BANKS.find((b) => b.name === form.bankName);
-  const auto = (k) => fc.detected?.[k] && !fc.edited?.[k] ? <span className="chip chip-auto"><Sparkles size={10} /> Auto-detected</span> : null;
-  if (part === "sample") return (
-    <>
-      <div className="step-title">Which AMC, and a sample statement</div>
-      <p className="step-desc">Pick the AMC this bank statement is for, then drop one real statement. The system reads its layout and header row from it.</p>
-      <div className="form-grid" style={{ marginBottom: 16 }}>
-        <div className="field">
-          <label className="field-label">AMC</label>
-          <select className={"select" + (errors.amc ? " invalid" : "")} value={form.amc || ""} disabled={isView} onChange={(e) => set({ amc: e.target.value })} data-testid="field-amc">
-            <option value="">Which AMC is this bank statement for?</option>
-            {AMCS.map((a) => <option key={a}>{a}</option>)}
-          </select>
-          {errors.amc && <span className="field-error">{errors.amc}</span>}
-        </div>
-      </div>
-      <FileDropZone fileName={fc.sampleFileName} onPick={onPickFile} onClear={onClear} hint="Drag and drop a sample statement here — the header row is read from it" />
-      {fc.sampleFileName && !isView && <button className="btn btn-outline btn-sm" style={{ marginTop: 10 }} onClick={onClear} data-testid="replace-sample-setup"><RotateCcw size={13} /> Replace sample</button>}
-      {!analysing && sample && <DetectedAccount sample={fc.sampleFileName} form={form} onUse={onUseDetected} isView={isView} />}
-      {sample?.mismatch && showPreview && <div style={{ marginTop: 14 }}><Note kind="warn">File extension says <b>XLS</b> but content looks like <b>HTML/CSV</b> — settings pre-filled from content.</Note></div>}
-      {analysing && <div className="analysing" data-testid="analysing"><div className="spinner" /><div><b>Reading the sample…</b><div style={{ fontSize: 12, color: "hsl(var(--muted))" }}>Checking for a standard format, then header row, separator and column layout</div></div></div>}
-    </>
-  );
+  const auto = (k) => fc.detected?.[k] && !fc.edited?.[k] ? <span className="chip chip-auto"><Sparkles size={10} /> Read from sample</span> : null;
   return (
     <>
-      <div className="step-title">Confirm the header row</div>
-      <p className="step-desc">{fc.sampleFileName ? "The header row read from the sample is highlighted. Click another row if it is wrong, then confirm." : "Upload a sample first — the header row is read from it."}</p>
-      {fc.sampleFileName && !std && !analysing && (
-        <div className={"hdr-confirm" + (fc.headerConfirmed ? " ok" : "")} data-testid="header-confirm-bar">
-          {fc.headerConfirmed ? <><Check size={15} /> Header confirmed: row {fc.startRow}, from column {fc.startColumn}.</> : <><AlertTriangle size={15} /> Header row {fc.startRow || "?"} read from the sample. Check it below.</>}
-          {!isView && <button className={"btn btn-sm " + (fc.headerConfirmed ? "btn-outline" : "btn-success")} onClick={onConfirmHeader} data-testid="btn-confirm-header-setup"><Check size={14} /> {fc.headerConfirmed ? "Confirmed — map columns" : "Confirm header"}</button>}
-        </div>
-      )}
+      <div className="step-title">File Configuration</div>
+      <p className="step-desc">Drop one real statement. The system works out the layout; you check it. Standard bank formats need no mapping at all.</p>
+      <FileDropZone fileName={fc.sampleFileName} onPick={onPickFile} onClear={onClear} hint="Drop a sample statement — file type, separator, start row and column are filled in for you" />
+      <HowRead />
+      {!analysing && sample && <DetectedAccount sample={fc.sampleFileName} form={form} onUse={onUseDetected} isView={isView} />}
+      {sample?.mismatch && showPreview && <div style={{ marginTop: 14 }}><Note kind="warn">File extension says <b>XLS</b> but content looks like <b>HTML/CSV</b> — settings pre-filled from content.</Note></div>}
+      {analysing && <div className="analysing" data-testid="analysing"><div className="spinner" /><div><b>Analysing file…</b><div style={{ fontSize: 12, color: "hsl(var(--muted))" }}>Checking for a standard format, then header row, separator and column layout</div></div></div>}
 
       {!analysing && (
         <div className="form-grid" style={{ marginTop: 18 }}>
@@ -726,7 +659,7 @@ function FileStep({ part, form, set, setFile, markEdited, errors, isView, A, ana
             </div>
           )}
           {!std && <>
-            <div className="field"><label className="field-label">File Start Row {auto("startRow")}</label><input className={"input tnum" + (errors.startRow ? " invalid" : "")} value={fc.startRow} disabled={isView} data-testid="field-startrow" onChange={(e) => { setFile({ startRow: e.target.value, headerConfirmed: false }); markEdited("startRow"); }} />{errors.startRow && <span className="field-error">{errors.startRow}</span>}</div>
+            <div className="field"><label className="field-label">File Start Row {auto("startRow")}</label><input className={"input tnum" + (errors.startRow ? " invalid" : "")} value={fc.startRow} disabled={isView} data-testid="field-startrow" onChange={(e) => { setFile({ startRow: e.target.value }); markEdited("startRow"); }} />{errors.startRow && <span className="field-error">{errors.startRow}</span>}</div>
             <div className="field"><label className="field-label">File Start Column {auto("startColumn")}</label><input className={"input tnum" + (errors.startColumn ? " invalid" : "")} value={fc.startColumn} disabled={isView} data-testid="field-startcol" onChange={(e) => { setFile({ startColumn: e.target.value }); markEdited("startColumn"); }} />{errors.startColumn && <span className="field-error">{errors.startColumn}</span>}</div>
           </>}
         </div>
@@ -740,10 +673,10 @@ function FileStep({ part, form, set, setFile, markEdited, errors, isView, A, ana
       )}
       {!std && showPreview && !analysing && preview && (
         <PreviewTable {...preview} maxRows={40} caption="Whole sample — the highlighted row is the header" startColumn={parseInt(fc.startColumn, 10) || 1} headerIdx={(parseInt(fc.startRow, 10) || preview.headerIdx + 1) - 1}
-          onPickRow={isView ? undefined : (i) => { setFile({ startRow: String(i + 1), headerConfirmed: false }); markEdited("startRow"); }} />
+          onPickRow={isView ? undefined : (i) => { setFile({ startRow: String(i + 1) }); markEdited("startRow"); }} />
       )}
 
-      <div className="section-title">Upload Destination (SFTP)</div>
+      <div className="section-title">Where the file is saved (SFTP)</div>
       <div className="form-grid">
         <div className="field full"><Note kind="info">SFTP is set up once per AMC, so path, user name and password are parked here (display only) and will move to a central table once the client's SFTP / GCS approach is known.</Note></div>
         <div className="field"><label className="field-label">File Upload Path <span className="muted">(per AMC)</span></label><input className="input" value={fc.uploadPath || "/sftp/<amc>/inbound/"} readOnly disabled data-testid="field-upload-path" /></div>
@@ -774,43 +707,5 @@ function DetectedAccount({ sample, form, onUse, isView }) {
       <span>The sample says <b>“{d.printedBank}”</b>, account <b className="tnum">{d.printedAcct}</b> → Bank Master: <b>{d.bankName} ·{d.accountNumber.slice(-4)}</b> <span className="muted">(name match {Math.round(d.score * 100)}%)</span></span>
       {same ? <span className="field-ok"><Check size={12} /> Matches this setup</span> : !isView && <button className="btn btn-outline btn-sm" onClick={() => onUse(d)} data-testid="use-detected">Use these</button>}
     </div>
-  );
-}
-
-/** Step 3 — map each column of the confirmed header to a system field. Pre-filled from the header names banks commonly use. */
-function MapStep({ form, set, isView, goHeader }) {
-  const fc = form.fileConfig;
-  const std = isStandard(fc.fileType);
-  const cells = headerCells(fc);
-  const map = form.columnMap || {};
-  if (std) return (<><div className="step-title">Map columns</div><Note kind="info" icon={ShieldCheck}><b>{fc.fileType}</b> is a bank standard format, so no column mapping is needed.</Note></>);
-  if (!fc.headerConfirmed) return (<><div className="step-title">Map columns</div><Note kind="warn">Confirm the header row first. <button className="link" onClick={goHeader}>Go to Confirm header</button></Note></>);
-  const used = Object.values(map);
-  return (
-    <>
-      <div className="step-title">Map each column</div>
-      <p className="step-desc">For each system field, pick the column in this file that holds it. Guesses from the header names are filled in; check every one. Fields marked * must be mapped.</p>
-      <table className="grid map-grid" data-testid="setup-map-grid">
-        <thead><tr><th>System field</th><th>What it holds</th><th>Column in this file</th></tr></thead>
-        <tbody>
-          {MAPPING_FIELDS.map(([f, desc]) => {
-            const must = MUST_MAP.includes(f) || f === "INSTRM_AMOUNT_CREDIT";
-            return (
-              <tr key={f}>
-                <td className="tnum"><b>{f}</b>{must && <span className="neg"> *</span>}</td>
-                <td className="muted">{desc}</td>
-                <td>
-                  <select className={"select" + (must && !map[f] ? " invalid" : "")} value={map[f] || ""} disabled={isView} onChange={(e) => { const v = e.target.value; const next = { ...map }; if (v) next[f] = v; else delete next[f]; set({ columnMap: next }); }} data-testid={"map-" + f}>
-                    <option value="">Not in this file</option>
-                    {cells.map((h) => <option key={h} value={h} disabled={used.includes(h) && map[f] !== h}>{h}</option>)}
-                  </select>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>{Object.keys(map).length} of {cells.length} columns mapped. The mapping goes for approval together with this setup.</p>
-    </>
   );
 }

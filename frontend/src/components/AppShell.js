@@ -49,11 +49,6 @@ export default function AppShell() {
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [bellOpen, setBellOpen] = React.useState(false);
   const approvals = useApprovals().filter((a) => !a.own);
-  React.useEffect(() => {
-    const h = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((o) => !o); } };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, []);
 
   React.useEffect(() => { setBannerSeen(false); }, [persona, state.sessionId]);
   React.useEffect(() => {
@@ -139,14 +134,19 @@ export default function AppShell() {
                       <FolderCog /><span className="nav-label">{g.name}</span><ChevronRight className="nav-chev" />
                     </button>
                   ) : g.name !== m.label && <div className="nav-section-title">{g.name}</div>}
-                  {open && <div className={folder ? "nav-folder-items" : undefined}>{g.screens.map((s) => {
+                  {open && <div className={folder ? "nav-folder-items" : undefined}>{[...g.screens.filter((s) => !s.quiet), ...g.screens.filter((s) => s.quiet)].map((s, k, list) => {
                     const Icon = ICONS[s.key] || Layers;
                     const badge = badgeFor(s.key);
+                    // Rarely used screens sit last in their group, under a quiet "Less often" line.
+                    const firstQuiet = s.quiet && k > 0 && !list[k - 1].quiet;
                     return (
-                      <NavLink key={s.key} to={s.path} end={s.path === "/dashboard"} className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} data-testid={"nav-" + s.key}>
+                      <React.Fragment key={s.key}>
+                      {firstQuiet && <div className="nav-quiet">Less often</div>}
+                      <NavLink to={s.path} end={s.path === "/dashboard"} className={({ isActive }) => "nav-item" + (s.quiet ? " quiet" : "") + (isActive ? " active" : "")} data-testid={"nav-" + s.key}>
                         <Icon /><span className="nav-label">{screenLabel(s, simple)}</span>{s.step && <span className="nav-step" title={`Step ${s.step} of the daily cycle`}>{s.step}</span>}
                         {badge > 0 && <span className="nav-badge pop" key={badge}>{badge}</span>}
                       </NavLink>
+                      </React.Fragment>
                     );
                   })}</div>}
                 </React.Fragment>
@@ -187,7 +187,7 @@ export default function AppShell() {
               </div>
             )}
           </div>}
-          <button className="search-trigger" onClick={() => setPaletteOpen(true)} data-testid="open-search"><Search size={14} /><span>Search or jump to…</span><kbd>⌘K</kbd></button>
+          <button className="search-trigger" onClick={() => setPaletteOpen(true)} data-testid="open-search"><Search size={14} /><span>Search or jump to…</span></button>
           <div className="topbar-spacer" />
           <div style={{ position: "relative" }}>
             <button className="icon-btn" aria-label="Notifications" data-testid="bell" onClick={(e) => { e.stopPropagation(); setBellOpen((o) => !o); }}>

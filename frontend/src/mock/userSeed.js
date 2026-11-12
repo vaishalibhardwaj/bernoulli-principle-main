@@ -308,7 +308,7 @@ export function seedUsers() {
   });
 
   // Platform access model: every user holds one or more module roles.
-  const explicit = { usr_meera: ["role_platform_admin"], usr_rohit: ["role_access_approver"], usr_priya: ["role_recon_ops"], usr_arun: ["role_recon_ops"], usr_sanjay: ["role_recon_auditor"] };
+  const explicit = { usr_meera: ["role_platform_admin"], usr_rohit: ["role_access_approver"], usr_priya: ["role_recon_ops", "role_recon_l2"], usr_arun: ["role_recon_ops", "role_recon_l1"], usr_sanjay: ["role_recon_auditor"] };
   users.forEach((u, i) => { if (!u.roles) u.roles = explicit[u.id] || rolesForLegacy(u.role, i); });
 
   // AMC scope, daily-cycle assignment and biometric punch-in (for the 10-day auto-deactivation policy).

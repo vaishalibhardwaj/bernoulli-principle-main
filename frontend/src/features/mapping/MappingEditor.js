@@ -40,12 +40,12 @@ export default function MappingEditor() {
   const [overrides, setOverrides] = React.useState(0);
   const [keyHint, setKeyHint] = React.useState(null);
 
-  if (!mapping) return <div className="card card-pad" data-testid="mapping-missing">Mapping not found. <button className="link" onClick={() => nav(type === "credit" ? "/credit-mis" : "/bank-setup")}>Back to list</button></div>;
+  if (!mapping) return <div className="card card-pad" data-testid="mapping-missing">Mapping not found. <button className="link" onClick={() => nav("/mapping")}>Back to list</button></div>;
 
   if (mapping.standard) return (
     <div data-testid="mapping-editor">
       <div className="page-head"><div>
-        <button className="link" onClick={() => nav(type === "credit" ? "/credit-mis?view=columns" : "/bank-setup?view=columns")}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to column mapping</button>
+        <button className="link" onClick={() => nav(`/mapping?tab=${type}`)}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to mappings</button>
         <h1 style={{ marginTop: 6 }}>{mapping.bankName} — Column Mapping</h1>
       </div></div>
       <div className="card card-pad"><Note kind="info" icon={ShieldCheck}><b>{mapping.fileType}</b> is a bank standard format. The pre-built parser reads it, so there is no column mapping to maintain for this setup.</Note></div>
@@ -196,7 +196,7 @@ export default function MappingEditor() {
   return (
     <div data-testid="mapping-editor">
       <div className="page-head"><div>
-        <button className="link" onClick={() => nav(type === "credit" ? "/credit-mis?view=columns" : "/bank-setup?view=columns")}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to column mapping</button>
+        <button className="link" onClick={() => nav(`/mapping?tab=${type}`)}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to mappings</button>
         <h1 style={{ marginTop: 6 }}>{mapping.bankName}{mapping.formatName ? ` · ${mapping.formatName}` : ""} — Column Mapping</h1>
         <div className="impact-chip" data-testid="impact"><Landmark size={13} /> Used by <b>{acctCount}</b> account{acctCount !== 1 ? "s" : ""} at {mapping.bankName}. A change here applies to all of them.</div>
       </div></div>
