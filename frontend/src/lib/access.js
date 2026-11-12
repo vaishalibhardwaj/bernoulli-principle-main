@@ -21,10 +21,11 @@ export const MODULES = [
     screens: [
       { key: "today", label: "Today", plain: "Today", path: "/today", group: "Home", caps: ["view"] },
       { key: "inbox", label: "Approvals", plain: "Approvals", path: "/approvals", group: "Home", caps: ["view", "approve"] },
-      { key: "balances", label: "Closing balances", plain: "Closing balances", path: "/closing-balances", group: "Home", caps: ["view", "export"] },
-      { key: "scheduler", label: "Scheduler monitor", plain: "File pickups", path: "/scheduler", group: "Home", caps: ["view", "export"] },
+      { key: "balances", label: "Closing balances", plain: "Closing balances", path: "/closing-balances", group: "Home", caps: ["view", "edit", "export"] },
+      { key: "scheduler", quiet: true, label: "Scheduler monitor", plain: "File pickups", path: "/scheduler", group: "Home", caps: ["view", "export"] },
       { key: "no_action_review", label: "No-action review", plain: "No-action review", path: "/no-action-review", group: "Home", caps: ["view", "approve", "export"] },
       { key: "command", label: "Dashboard", plain: "Team overview", path: "/command", group: "Home", caps: ["view", "export"], analytics: true },
+      { key: "task_templates", label: "Task templates", plain: "Team tasks", path: "/task-templates", group: "Home", caps: ["view", "edit", "approve"] },
       { key: "file_upload", label: "File upload", plain: "Upload files", path: "/upload", group: "Daily cycle", caps: ["view", "edit"] },
       { key: "ingestion", label: "Bank files", plain: "Bank files", path: "/ingestion", group: "Daily cycle", step: 1, caps: ["view", "edit", "approve"] },
       { key: "manual_upload", label: "Manual upload (exception)", plain: "Manual upload", path: "/ingestion?manual=1", group: "Daily cycle", caps: ["view", "edit"], hidden: true },
@@ -34,7 +35,7 @@ export const MODULES = [
       { key: "release", label: "Fund release", plain: "Release money", path: "/release", group: "Daily cycle", step: 4, phase: "P2", caps: ["view", "edit", "approve", "export"] },
       { key: "refunds", label: "Refunds", plain: "Refunds", path: "/refunds", group: "Daily cycle", step: 5, phase: "P2", caps: ["view", "edit", "approve", "export"] },
       { key: "approvals", label: "Setup approvals", path: "/dashboard", group: "Setup", caps: ["view", "approve"], hidden: true },
-      { key: "audit", label: "Audit history", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
+      { key: "audit", quiet: true, label: "Audit history", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
     ],
   },
   {
@@ -108,12 +109,12 @@ export const MODULES = [
       { key: "setup_todo", label: "To do", crumb: "To do", path: "/setup-todo", group: "Recon", caps: ["view"] },
       { key: "bank_setup", label: "Bank statements", crumb: "Bank statements", path: "/bank-setup", group: "Recon", caps: ["view", "edit", "approve", "export"] },
       { key: "credit_mis", label: "Credit MIS", crumb: "Credit MIS", path: "/credit-mis", group: "Recon", caps: ["view", "edit", "approve", "export"] },
-      { key: "cutoffs", label: "Cutoff times", path: "/cutoffs", group: "Recon", caps: ["view", "edit", "approve"] },
-      { key: "setup_scheduler", label: "File pickups", crumb: "File pickups", path: "/setup-scheduler", group: "Recon", caps: ["view", "export"] },
+      { key: "cutoffs", quiet: true, label: "Cutoff times", path: "/cutoffs", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "setup_scheduler", quiet: true, label: "File pickups", crumb: "File pickups", path: "/setup-scheduler", group: "Recon", caps: ["view", "export"] },
       { key: "setup_tasks", label: "Requests from Ops", crumb: "Setup to do", path: "/setup-tasks", group: "Recon", caps: ["view", "edit"], nav: false },
-      { key: "mapping", label: "Columns", crumb: "Columns", path: "/mapping", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
-      { key: "status_std", label: "Transaction type mapping", crumb: "Transaction type mapping", path: "/status-standardisation", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
-      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
+      { key: "mapping", label: "Column mapping", crumb: "Column mapping", path: "/mapping", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "status_std", label: "Transaction type mapping", crumb: "Transaction type mapping", path: "/status-standardisation", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Recon", caps: ["view", "edit", "approve"] },
       { key: "setup_approvals", label: "Approvals", crumb: "Setup to do", path: "/setup-approvals", group: "Recon", caps: ["view", "approve"], nav: false },
     ],
   },
@@ -143,7 +144,13 @@ export function seedRoles() {
       { users: ["view", "approve"], roles: ["view", "approve"] }),
     // Recon Ops: one role for the back-office team. Every member is both maker and checker; whoever did the work cannot authorise it.
     r("role_recon_ops", "Recon · Ops", "recon", "One role for the recon back-office (BO) team: uploads and reprocesses files, watches closing balances, and raises setup requests to the Central Setup Team. Every member is maker and checker: whoever did the work cannot authorise it; anyone else in the team can.",
-      { today: ["view"], inbox: ["view", "approve"], balances: ["view", "export"], file_upload: ["view", "edit"], ingestion: ["view", "edit", "approve"], manual_upload: ["view", "edit"], audit: ["view", "export"] }, { peer: true }),
+      { today: ["view"], inbox: ["view", "approve"], balances: ["view", "edit", "export"], file_upload: ["view", "edit"], ingestion: ["view", "edit", "approve"], manual_upload: ["view", "edit"], audit: ["view", "export"], task_templates: ["view"] }, { peer: true }),
+    // Level 1 and Level 2: added on top of Recon · Ops for senior team members. Both change the team's task templates
+    // (times, who does it, on or off); only Level 2 can add a new task. Whether Level 1/2 may add tasks is still to be confirmed.
+    r("role_recon_l1", "Recon · Level 1", "recon", "For senior Ops members. Changes the team's task templates: when each task is due, who does it, and whether it is on. Cannot add new tasks.",
+      { today: ["view"], task_templates: ["view", "edit"] }),
+    r("role_recon_l2", "Recon · Level 2", "recon", "Oversight of the Ops team. Everything Level 1 can do, and can add new tasks to the team's templates.",
+      { today: ["view"], task_templates: ["view", "edit", "approve"] }),
     r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", Object.fromEntries(Object.entries(all("recon", ["view", "export"])).filter(([k]) => !SCREENS[k].phase))),
     r("role_functional_manager", "Recon · Functional Manager", "recon", "Dashboards and approval screens only: the team dashboard, closing balances, approvals and the No-action review. Never a maker; no setup screens.",
       { command: ["view", "export"], balances: ["view", "export"], inbox: ["view", "approve"], no_action_review: ["view", "approve", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"] }),
@@ -219,11 +226,13 @@ export function navFor(perms, simple = false) {
       g.screens.push(s);
     });
     return { ...m, groups, count: screens.length };
-  }).filter((m) => m.count > 0);
+  }).filter((m) => m.count > 0).sort((a, b) => (a.key === "admin") - (b.key === "admin"));
 }
 
-/** Home route: first visible screen. */
+/** Home route: the "what needs you now" screen when the user has one (Today for Ops, To do for the Central Setup Team), else the first visible screen. */
 export function homePath(perms, simple = false) {
+  if (hasCap(perms, "today")) return "/today";
+  if (hasCap(perms, "setup_todo")) return "/setup-todo";
   const nav = navFor(perms, simple);
   return nav[0]?.groups[0]?.screens[0]?.path || "/no-access";
 }
@@ -251,8 +260,8 @@ export const VERTICALS = [
 export const PERSONAS = [
   { id: "usr_meera", label: "Meera · Central Setup Team" },
   { id: "usr_anil", label: "Anil · Central Setup Team" },
-  { id: "usr_priya", label: "Priya · Recon Ops" },
-  { id: "usr_arun", label: "Arun · Recon Ops" },
+  { id: "usr_priya", label: "Priya · Recon Ops, Level 2" },
+  { id: "usr_arun", label: "Arun · Recon Ops, Level 1" },
   { id: "usr_kavita", label: "Kavita · Functional Manager" },
   { id: "usr_vikram", label: "Vikram · IT Support" },
 ];

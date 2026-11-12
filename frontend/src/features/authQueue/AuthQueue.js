@@ -1,5 +1,6 @@
 import React from "react";
 import { ChangesCard } from "@/features/setup/SetupBits";
+import StartPreview from "@/features/setup/StartPreview";
 import { summarizeSetup } from "@/lib/setupSchema";
 import { useStore } from "@/state/store";
 import { KIND_LABELS } from "@/lib/constants";
@@ -159,6 +160,8 @@ export function ReviewBody({ x, modeLabel, audit }) {
       </div>
 
       <div style={{ marginBottom: 16 }}><ChangesCard base={x.baseline ? { ...x.baseline, kind: x._kind } : null} cur={{ ...x, kind: x._kind }} /></div>
+
+      <div style={{ marginBottom: 16 }}><StartPreview x={x} /></div>
 
       <div className="rev-card" style={{ marginBottom: 16 }}>
         <div className="rc-head"><h4>Full setup</h4></div>

@@ -7,8 +7,3 @@ const BASE = (process.env.PUBLIC_URL || "") + "/art/";
 export function Art({ name, className = "", size }) {
   return <img className={"li-art " + className} src={BASE + name + ".webp"} alt="" aria-hidden="true" width={size} height={size} decoding="async" />;
 }
-
-/** The object on a lilac (or pink) field, at the right end of a screen header. */
-export function HeroArt({ name, tone = "lilac" }) {
-  return <span className={"li-hero-art " + tone} aria-hidden="true"><Art name={name} /></span>;
-}

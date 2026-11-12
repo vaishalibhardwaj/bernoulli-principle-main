@@ -13,7 +13,7 @@ import { earlierFailures, seedFiles, seedMatchData, seedRules, seedExceptions, s
 
 const KEY = "cams_recon_state_v29";
 // Saved state must contain every collection this build seeds; otherwise reseed (avoids stale demo data from older builds).
-const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp", "cutoffs", "narration_tags", "balances", "jobs", "liab_debits"];
+const REQUIRED = ["users", "roles", "files", "emails", "connections", "refunds", "releases", "dayclose", "status_map", "sftp", "cutoffs", "narration_tags", "balances", "jobs", "liab_debits", "ops_checks"];
 
 /** R7 — keep the live (last approved) version on a draft/pending edit so the checker sees a diff. */
 function baselineOf(prev, item) {
@@ -30,6 +30,20 @@ function seedSetupRequests() {
     { id: "str_3", type: "mapping", amc: "DSP Mutual Fund", bankName: "Yes Bank", accountNumber: "", note: "Yes Bank added a Remarks column; the file fails the layout check. Please re-map.", status: "in_progress", raisedBy: "Priya Sharma", raisedById: "usr_priya", raisedAt: ago(50), assignee: "Anil Kulkarni", assigneeId: "usr_anil", pickedAt: ago(20) },
     { id: "str_4", type: "bank", amc: "Kotak Mahindra MF", bankName: "Kotak Mahindra Bank", accountNumber: "", note: "New collection account opened for the Kotak liquid fund. Statement will come by SFTP.", status: "done", raisedBy: "Arun Mehta", raisedById: "usr_arun", raisedAt: ago(96), assignee: "Meera Iyer", assigneeId: "usr_meera", doneAt: ago(70), doneBy: "Meera Iyer" },
   ];
+}
+
+/** Work one Ops person did today that a second Ops person checks (maker-checker). Synthetic samples. */
+function seedOpsChecks(files) {
+  const ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const out = [];
+  ["HDFC Mutual Fund", "ICICI Prudential MF", "Kotak Mahindra MF"].forEach((amc, i) => {
+    const mine = files.filter((f) => f.amc === amc);
+    const up = mine.find((f) => f.status === "loaded");
+    if (up) out.push({ id: "oc_up_" + i, type: "hand_upload", amc, bankName: up.bankName, acct: up.accountNumber.slice(-4), fileName: up.fileName, rows: up.rows, credits: up.credits, creditAmount: up.creditAmount, reason: i === 0 ? "The bank's SFTP folder was down this morning" : "The bank sent the file by email today", status: "pending", owner: "Arun Mehta", ownerId: "usr_arun", at: ago(35 + i * 20) });
+    const nil = i === 0 && mine.find((f) => ["late", "missing"].includes(f.status));
+    if (nil) out.push({ id: "oc_nil_" + i, type: "no_txn", amc, bankName: nil.bankName, acct: nil.accountNumber.slice(-4), reason: "The bank confirmed by email that this account had no transactions today", status: "pending", owner: "Arun Mehta", ownerId: "usr_arun", at: ago(15) });
+  });
+  return out;
 }
 
 function buildSeed() {
@@ -52,7 +66,7 @@ function buildSeed() {
     collections: {
       bank_config: configs, credit_config: creditConfigs, bank_mapping: mappings, users, roles,
       access_requests: [],
-      files: files.map((f) => ({ ...f, histV2: true })), emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], file_uploads: [], setup_requests: seedSetupRequests(), no_action: seedNoAction(), dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
+      files: files.map((f) => ({ ...f, histV2: true })), emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], ops_checks: seedOpsChecks(files), file_uploads: [], setup_requests: seedSetupRequests(), no_action: seedNoAction(), dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
       exceptions: seedExceptions(), documents: seedDocuments(),
       releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(), cutoffs: seedCutoffs(), narration_tags: seedNarrationTags(),
     },
@@ -88,7 +102,7 @@ function load() {
         });
         const seedPerms = Object.fromEntries(seedRoles().map((r) => [r.id, r.perms]));
         // Screens that moved between roles: Scheduler monitor is IT support only; Status standardisation moved from admin to the setup maker / checker; Match rules and Reports are not in Phase 1.
-        const MOVED = ["scheduler", "status_std", "rules", "reports"];
+        const MOVED = ["scheduler", "status_std", "rules", "reports", "balances", "task_templates"];
         parsed.collections.roles = parsed.collections.roles.map((r) => {
           if (r.id === "role_platform_admin") return { ...r, perms: seedPerms[r.id] };
           if (!(r.system && seedPerms[r.id])) return r;
@@ -96,6 +110,10 @@ function load() {
           MOVED.forEach((k) => { if (seedPerms[r.id][k]) perms[k] = seedPerms[r.id][k]; else delete perms[k]; });
           return { ...r, perms };
         });
+        // New seed roles (Level 1, Level 2) join saved demo state; Priya and Arun get them as in the seed.
+        seedRoles().forEach((sr) => { if (!parsed.collections.roles.some((r) => r.id === sr.id)) parsed.collections.roles.push(sr); });
+        const LEVEL = { usr_priya: "role_recon_l2", usr_arun: "role_recon_l1" };
+        parsed.collections.users = parsed.collections.users.map((u) => (LEVEL[u.id] && !(u.roles || []).includes(LEVEL[u.id]) ? { ...u, roles: [...(u.roles || []), LEVEL[u.id]] } : u));
         // Personas removed from the demo switcher fall back to Meera.
         if (!PERSONAS.some((x) => x.id === parsed.persona)) parsed.persona = "usr_meera";
         if (!Array.isArray(parsed.collections.file_uploads)) parsed.collections.file_uploads = [];

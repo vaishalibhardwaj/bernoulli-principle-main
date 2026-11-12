@@ -1,22 +1,23 @@
 import { fileSchedule, clock } from "@/lib/schedule";
 import { RequestSetupButton } from "@/features/setup/SetupTasks";
 import React from "react";
-import { HeroArt } from "@/components/Art";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { Drawer } from "@/components/Drawer";
 import { Modal } from "@/components/Modal";
 import { hasCap } from "@/lib/access";
 import { formatDateTime, timeAgo } from "@/lib/format";
-import { inrShort, num, Conf, ReadOnlyNote } from "@/features/ops/ui";
+import { num, Conf, ReadOnlyNote } from "@/features/ops/ui";
 import { Spark } from "@/features/ops/charts";
 import { CHANNEL_LABEL } from "@/mock/opsSeed";
 import { Inbox, CheckCircle2, XCircle, Fingerprint, ArrowRight, RefreshCw, Send, Trash2, Wand2, Clock, UploadCloud, Mail, Plug, Bot, Server, PauseCircle, PlayCircle, KeyRound, History, FileText, Loader2, RotateCcw, Paperclip, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { Art } from "@/components/Art";
 import { JourneyBar } from "@/features/today/Cycle";
+import BankCheckpoints from "@/features/dashboards/BankCheckpoints";
 import { PLAIN_FILE_STATUS } from "@/lib/plain";
 import { scopeToUser } from "@/lib/journey";
-import { uiStatus, StatusStrip, BalanceBreak, TxnDupSection, DismissModal, SftpTab, ManualUploadModal, ManualLog } from "./ingestionBits";
+import { uiStatus, BalanceBreak, TxnDupSection, DismissModal, SftpTab, ManualUploadModal, ManualLog } from "./ingestionBits";
 import { withAutoVoid, unresolvedFingerprints } from "@/lib/events";
 
 const STATUS = {
@@ -189,8 +190,7 @@ export default function FileInbox() {
   const nav = useNavigate();
   const [sp] = useSearchParams();
   const [tab, setTab] = React.useState(sp.get("tab") || "files");
-  const [filter, setFilter] = React.useState("attention");
-  const [stFilter, setStFilter] = React.useState(null);
+  const [filter, setFilter] = React.useState("all");
   const [manualOpen, setManualOpen] = React.useState(sp.get("manual") === "1");
   const [dismissing, setDismissing] = React.useState(null);
   const [openId, setOpenId] = React.useState(sp.get("file"));
@@ -198,7 +198,6 @@ export default function FileInbox() {
   const [reprocessId, setReprocessId] = React.useState(null);
   const [emailId, setEmailId] = React.useState(sp.get("email"));
   const [emailFilter, setEmailFilter] = React.useState("rejected");
-  const [pickUpload, setPickUpload] = React.useState(false);
   const files = collections.files || [];
   const emails = collections.emails || [];
   const conns = collections.connections || [];
@@ -211,11 +210,6 @@ export default function FileInbox() {
   // A rejected email stops being an alert once the statement arrived some other way, or someone dismissed it.
   const emailResolved = (e) => e.dismissed ? `Dismissed by ${e.dismissed.by}: ${e.dismissed.why}` : (e.reason === "duplicate" || (e.suggestFileId && loadedIdsAll.includes(e.suggestFileId))) ? "Resolved — the statement is already loaded through another channel" : e.waiting ? `Waiting for a corrected email (${e.waiting.by})` : null;
 
-  const rows = files.filter((f) => {
-    const st = uiStatus(f, conns.find((c) => c.fileId === f.id)).key;
-    if (stFilter && stFilter !== "all") return stFilter === "received" ? st !== "not_received" : st === stFilter;
-    return filter === "all" || (filter === "loaded" ? st === "success" : !["loaded", "discarded", "nil"].includes(f.status));
-  });
   const open = files.find((f) => f.id === openId);
   const uploadFile = uploadFor && files.find((f) => f.id === uploadFor.id);
   const reprocessFile = files.find((f) => f.id === reprocessId);
@@ -223,10 +217,37 @@ export default function FileInbox() {
   const label = (f) => (f ? `${f.bankName} ·${f.accountNumber.slice(-4)}` : "an account outside your AMC");
   const anyFile = (id) => (rawCollections.files || []).find((x) => x.id === id); // emails can point at any AMC's statement
   const connFor = (f) => conns.find((c) => c.fileId === f.id);
-  const manualWaiting = files.filter((f) => f.channel === "manual" && ["late", "missing"].includes(f.status));
   const markNil = (f) => run(f, (x) => ({ ...x, status: "nil", nilBy: currentUser, history: [...(x.history || []), stamp(currentUser, "No transactions today", "Bank confirmed there is no statement / no transactions for today")] }), "Mark: no transactions today", "Bank confirmed");
+  const plainStatus = (f) => (f.status === "nil" ? "No transactions today" : PLAIN_FILE_STATUS[f.status] || statusText(f.status));
+  const nextRun = (f) => { const sc = fileSchedule(f); return sc ? ` The next pickup is at ${clock(sc.next)}.` : ""; };
+  // One plain sentence and one thing to do for each file. kind: need (this person acts), wait (someone else or the clock), done.
+  const todoFor = (f) => {
+    const c = connFor(f);
+    const openIt = { go: () => setOpenId(f.id), opens: true };
+    switch (f.status) {
+      case "loaded": case "nil": case "discarded": return { kind: "done" };
+      case "late": case "missing":
+        if (f.channel === "manual") return canEdit && canManual ? { kind: "need", say: "This bank's file is put in by hand, and today's file is not in yet.", label: "Upload the file", go: () => setUploadFor({ id: f.id }) } : { kind: "wait", say: "Waiting for a teammate to upload it." };
+        if (c && c.status === "failing" && canEdit) return { kind: "need", say: "We could not reach the bank to get this file.", label: c.userTrigger === false ? "Ask IT to fetch it" : "Try to fetch it again", go: () => pullNow(c) };
+        return { kind: "wait", say: "Not in yet. This is not a failure." + nextRun(f) };
+      case "check_failed":
+        if (!canEdit) return { kind: "wait", say: "The balances do not add up. A teammate is on it." };
+        return f.corrected ? { kind: "need", say: "The corrected file has come in. It needs to be loaded again.", label: "Load it again", go: () => setReprocessId(f.id) }
+          : { kind: "need", say: "The balances in this file do not add up. The bank has to send a corrected file.", label: "Ask the bank for a corrected file", go: () => run(f, (x) => ({ ...x, history: [...(x.history || []), stamp(currentUser, "Corrected statement requested", "Asked the bank for a corrected statement (balance mismatch)")] }), "Request corrected statement", "Balance mismatch") };
+      case "retrying": return canEdit ? { kind: "need", say: "A fresh copy of this file was fetched. It needs to be loaded.", label: "Load it again", go: () => setReprocessId(f.id) } : { kind: "wait", say: "A fresh copy was fetched. A teammate will load it." };
+      case "duplicate": return canEdit ? { kind: "need", say: "The bank sent the same file twice. The first copy is already loaded.", label: "Remove the extra copy", go: () => run(f, (x) => ({ ...x, status: "discarded", history: [...(x.history || []), stamp(currentUser, "Discarded", "Duplicate of an already-loaded file")] }), "Discard duplicate", "Identical content hash") } : { kind: "wait", say: "Same file sent twice. A teammate will remove the copy." };
+      case "drift": return canEdit && canSetup ? { kind: "need", say: "The bank changed the layout of its file. The new layout has to be confirmed.", label: "Check the new layout", ...openIt } : { kind: "wait", say: "The bank changed its file layout. The Setup Team is fixing it. The rows are held, not lost." };
+      case "drift_pending": return canApprove && f.owner !== currentUser ? { kind: "need", say: "A teammate confirmed the bank's new layout. It needs a second person to approve it.", label: "Check and approve", ...openIt } : { kind: "wait", say: "The new layout is waiting for a second person to approve it." };
+      case "unknown": return canSetup ? { kind: "need", say: "This file is not recognised. No approved layout matches it.", label: "See what to do", ...openIt } : { kind: "wait", say: "This file is not recognised. The Setup Team has to set it up first." };
+      default: return { kind: "wait", say: "Being checked." };
+    }
+  };
+  const need = files.filter((f) => todoFor(f).kind === "need");
+  const waiting = files.filter((f) => todoFor(f).kind === "wait");
+  const inCount = files.filter((f) => ["loaded", "nil"].includes(f.status)).length;
+  const rows = files.filter((f) => filter === "all" || (filter === "loaded" ? ["loaded", "nil"].includes(f.status) : !["loaded", "nil", "discarded"].includes(f.status)));
   const counts = {
-    files: files.filter((f) => !["loaded", "discarded"].includes(f.status)).length,
+    files: need.length,
     email: emails.filter((e) => e.status === "rejected" && !emailResolved(e)).length,
     conns: conns.filter((c) => ["failing", "degraded"].includes(c.status)).length,
   };
@@ -297,17 +318,15 @@ export default function FileInbox() {
       <div className="page-head">
         <div>
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Inbox size={22} /> Bank files</h1>
-          <p>{simple ? "Every bank statement we expect today, how it reaches us, and what to do when it doesn't." : "Today's statements, arriving through each bank's approved setup: manual upload, email, API or portal bot. Check them, fix them, reprocess them."}
+          <p>Today's bank statements. Files that need you are at the top, each with one thing to do.
             {hasCap(perms, "bank_setup") && <> To change <i>how</i> a bank is connected or read, use <button className="link" onClick={() => nav("/bank-setup")}>Bank statement setup</button>.</>}</p>
         </div>
-        <HeroArt name="folder" />
         <div className="actions" style={{ marginRight: 8 }}><RequestSetupButton /></div>
-        {canManual && <div className="actions" style={{ marginRight: 8 }}><button className="btn btn-outline" onClick={() => setManualOpen(true)} data-testid="btn-manual-upload"><UploadCloud size={15} /> Manual upload (exception)</button></div>}
-        {canEdit && canManual && manualWaiting.length > 0 && <div className="actions"><button className="btn btn-primary" onClick={() => (manualWaiting.length === 1 ? setUploadFor({ id: manualWaiting[0].id }) : setPickUpload(true))} data-testid="upload-statement-btn"><UploadCloud size={15} /> Upload a statement ({manualWaiting.length} waiting)</button></div>}
+        {canManual && <div className="actions" style={{ marginRight: 8 }}><button className="btn btn-outline" onClick={() => setManualOpen(true)} data-testid="btn-manual-upload"><UploadCloud size={15} /> Upload a file by hand</button></div>}
       </div>
 
       <div className="fi-tabs">
-        {[["files", "Files today", Inbox, counts.files], ["sftp", "SFTP folders", Server, sftp.reduce((n, fo) => n + fo.accounts.filter((a) => a.state === "error").length, 0)], ["email", "Email intake", Mail, counts.email], ["conns", "API & portal", Plug, counts.conns]].map(([k, l, I, n]) => (
+        {[["files", "Today's files", Inbox, counts.files], ["sftp", "SFTP folders", Server, sftp.reduce((n, fo) => n + fo.accounts.filter((a) => a.state === "error").length, 0)], ["email", "Emails", Mail, counts.email], ["conns", "Bank connections", Plug, counts.conns]].map(([k, l, I, n]) => (
           <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)} data-testid={"fi-tab-" + k}><I size={14} /> {l}{n > 0 && <span className="fi-count">{n}</span>}</button>
         ))}
       </div>
@@ -315,33 +334,56 @@ export default function FileInbox() {
       {tab === "sftp" && <SftpTab folders={sftp} files={files} canEdit={canEdit} onOpenFile={(id) => { setTab("files"); setOpenId(id); }} />}
 
       {tab === "files" && <>
-        <StatusStrip files={files} conns={conns} active={stFilter} onPick={(k) => setStFilter(stFilter === k ? null : k)} />
-        <div className="segmented" style={{ marginBottom: 12 }}>
-          {[["attention", "Needs attention"], ["all", "All files today"], ["loaded", "Loaded"]].map(([k, l]) => <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)} data-testid={"fi-filter-" + k}>{l}</button>)}
+        <BankCheckpoints />
+        <div className="fp-facts bf-facts" data-testid="bf-facts">
+          <div><b className="tnum">{inCount} of {files.length}</b><span>files are in and loaded</span></div>
+          <div><b className="tnum">{need.length}</b><span>{need.length === 1 ? "file needs you" : "files need you"}</span></div>
+          <div><b className="tnum">{waiting.length}</b><span>still on the way. Nothing to do yet</span></div>
         </div>
-        <div className="card">
+
+        {need.length > 0 ? (
+          <section className="bf-need" data-testid="bf-need">
+            <h2>{need.length === 1 ? "1 file needs you" : `${need.length} files need you`}</h2>
+            <p className="bf-sub">Start at the top. Each one has one thing to do.</p>
+            {need.map((f, i) => { const t = todoFor(f); return (
+              <div key={f.id} className="bf-item" data-testid={"bf-item-" + f.id}>
+                <span className="bf-n tnum">{i + 1}</span>
+                <div className="bf-what"><b>{f.bankName} <span className="tnum">·{f.accountNumber.slice(-4)}</span></b><p>{t.say}</p></div>
+                <div className="bf-do">
+                  <button type="button" className={"btn " + (i === 0 ? "btn-primary" : "btn-outline")} onClick={t.go} data-testid={"bf-do-" + f.id}>{t.label}</button>
+                  {!t.opens && <button type="button" className="link" onClick={() => setOpenId(f.id)}>See details</button>}
+                </div>
+              </div>
+            ); })}
+          </section>
+        ) : (
+          <div className="card bf-clear" data-testid="bf-clear"><Art name="folder" size={120} /><div><h2>No file needs you right now</h2><p>{waiting.length ? `${waiting.length} ${waiting.length === 1 ? "file is" : "files are"} still on the way. They will show here if they need you.` : "Every file for today is in and loaded."}</p></div></div>
+        )}
+
+        <div className="card bf-all">
+          <div className="bf-all-head">
+            <h2>All files today</h2>
+            <div className="segmented">
+              {[["all", "All"], ["waiting", "Not in yet"], ["loaded", "In"]].map(([k, l]) => <button key={k} type="button" className={filter === k ? "on" : ""} onClick={() => setFilter(k)} data-testid={"fi-filter-" + k}>{l}</button>)}
+            </div>
+          </div>
           <table className="grid" data-testid="file-table">
-            <thead><tr><th>Bank · account</th><th>How it arrives</th><th>Scheduler</th><th>Last run</th><th>Next run</th><th>File received</th><th>Status</th><th>Status remarks</th><th className="r">Credits</th><th>Next step</th></tr></thead>
+            <thead><tr><th>Bank account</th><th>How it comes in</th><th>Came in at</th><th>Status</th><th>What happens next</th></tr></thead>
             <tbody>
               {rows.map((f) => {
                 const Icon = CHANNEL_ICON[f.channel] || FileText;
-                const c = connFor(f);
-                const next = ["late", "missing"].includes(f.status) ? (canManual ? "Upload by hand if needed" : "Waiting — not a failure")
-                  : f.status === "check_failed" ? (f.corrected ? "Reprocess" : "Corrected statement from bank") : f.status === "retrying" ? "Reprocess" : f.status === "drift" ? (canSetup ? "Confirm new layout" : "Setup team is confirming") : f.status === "drift_pending" ? "Waiting for checker" : f.status === "duplicate" ? "Discard" : f.status === "unknown" ? "Onboard format" : "—";
+                const t = todoFor(f);
                 return (
                   <tr key={f.id} onClick={() => setOpenId(f.id)} style={{ cursor: "pointer" }} data-testid={"file-row-" + f.id}>
                     <td><b>{f.bankName}</b> <span className="tnum muted">·{f.accountNumber.slice(-4)}</span></td>
                     <td><span className="chan"><Icon size={13} /> {CHANNEL_LABEL[f.channel]}</span></td>
-                    {(() => { const sc = fileSchedule(f); return sc ? <><td className="tnum">every {sc.every} min</td><td className="tnum">{clock(sc.last)}</td><td className="tnum">{clock(sc.next)}</td></> : <><td className="muted">by hand</td><td className="muted">—</td><td className="muted">—</td></>; })()}
-                    <td className="tnum">{f.receivedAt ? formatDateTime(f.receivedAt).split(", ")[1] : <span className="muted">—</span>}</td>
-                    <td>{(() => { const u = uiStatus(f, c); return <span className={"pill " + u.cls} data-testid={"ui-status-" + f.id}><span className="dot" />{u.label}</span>; })()}</td>
-                    <td className="remark-cell">{uiStatus(f, c).remark}</td>
-                    <td className="tnum r">{f.creditAmount ? inrShort(f.creditAmount) : "—"}</td>
-                    <td className={next === "—" ? "muted" : "next-cell"}>{next}{next !== "—" && <ArrowRight size={12} />}</td>
+                    <td className="tnum">{f.receivedAt ? formatDateTime(f.receivedAt).split(", ")[1] : <span className="muted">Not in yet</span>}</td>
+                    <td><span className={"pill " + uiStatus(f, connFor(f)).cls} data-testid={"ui-status-" + f.id}><span className="dot" />{plainStatus(f)}</span></td>
+                    <td className={t.kind === "need" ? "next-cell" : "muted"}>{t.kind === "need" ? t.label : t.kind === "wait" ? t.say : "Nothing. It is loaded."}</td>
                   </tr>
                 );
               })}
-              {rows.length === 0 && <tr><td colSpan={10} className="muted" style={{ textAlign: "center", padding: 30 }}>All of today's files are clean.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 30 }}>No files here.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -526,11 +568,6 @@ export default function FileInbox() {
         </Drawer>
       )}
 
-      {pickUpload && (
-        <Modal id="pick-upload" title="Which statement are you uploading?" onClose={() => setPickUpload(false)}>
-          {manualWaiting.map((f) => <button key={f.id} className="un-row" onClick={() => { setPickUpload(false); setUploadFor({ id: f.id }); }}><UploadCloud size={14} /><span className="un-title">{label(f)}<small>{STATUS[f.status].label}{fileSchedule(f) ? ` · scheduler last ran ${clock(fileSchedule(f).last)}` : ""}</small></span><ArrowRight size={13} /></button>)}
-        </Modal>
-      )}
       {manualOpen && canManual && <ManualUploadModal files={files} folders={sftp} onClose={() => setManualOpen(false)} />}
       {dismissing && <DismissModal what={dismissing.kind === "email" ? `email from ${dismissing.item.from}` : `${dismissing.item.bankName} ${CHANNEL_LABEL[dismissing.item.type]}`} onClose={() => setDismissing(null)}
         onSubmit={(why) => { const d = { by: currentUser, at: new Date().toISOString(), why }; if (dismissing.kind === "email") updEmail(dismissing.item, { dismissed: d }, "Dismiss alert", why); else updConn(dismissing.item, { dismissed: d }, "Dismiss alert", why); toast("Alert dismissed and recorded. The underlying work is not marked complete."); setDismissing(null); }} />}

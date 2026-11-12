@@ -6,7 +6,7 @@ import { navFor, screenLabel, PERSONAS, FUNCTIONS, hasCap } from "@/lib/access";
 import { PLAIN_EXCEPTION } from "@/lib/plain";
 import { Search, CornerDownLeft, ArrowRight, User, Zap } from "lucide-react";
 
-/** ⌘K: jump to any screen you can open, find a case or refund by reference, or switch demo persona. */
+/** Search: jump to any screen you can open, find a case or refund by reference, or switch demo persona. */
 export default function CommandPalette({ open, onClose }) {
   const { perms, simple, collections, switchPersona } = useStore();
   const nav = useNavigate();
@@ -26,7 +26,7 @@ export default function CommandPalette({ open, onClose }) {
   return (
     <div className="cmdk-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <Command className="cmdk" label="Search" loop>
-        <div className="cmdk-input"><Search size={16} /><Command.Input autoFocus placeholder="Search any module, screen or task you have access to…" /><kbd>esc</kbd></div>
+        <div className="cmdk-input"><Search size={16} /><Command.Input autoFocus placeholder="Search any module, screen or task you have access to…" /></div>
         <Command.List className="cmdk-list">
           <Command.Empty className="cmdk-empty">No results.</Command.Empty>
           {functions.length > 0 && <Command.Group heading="Do something">
@@ -67,7 +67,6 @@ export default function CommandPalette({ open, onClose }) {
             ))}
           </Command.Group>
         </Command.List>
-        <div className="cmdk-foot"><span><CornerDownLeft size={12} /> open</span><span>↑↓ move</span><span>⌘K toggle</span></div>
       </Command>
     </div>
   );

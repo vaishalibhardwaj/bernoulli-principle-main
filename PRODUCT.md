@@ -29,7 +29,10 @@ Desktop, office hours, used all day. Sessions are scoped to one AMC at a time. A
 
 ## Brand Commitments
 
-- The user pinned the visual reference: a pastel fintech app look with lilac and pink cards, bold rounded type, black round icon buttons, purple pill buttons and 3D clay-style illustrations generated with Higgsfield.
+- Light mode only: bright, airy, calm; premium and quietly futuristic; warm rather than corporate.
+- Must stay current for 10 to 15 years: timeless structure, generous space and clear hierarchy, no trend effects.
+- As beautiful and pleasant as the best consumer apps; people spend their whole working day in it.
+- 3D clay objects (Higgsfield) are kept for empty and done states only.
 
 ## Evidence on Hand
 
@@ -39,5 +42,7 @@ All data is synthetic seed data. There are no real customers, volumes or metrics
 
 - An average person should understand every screen without training.
 - Show what needs doing first, and keep rarely used configuration out of the way.
+- Every screen has one obvious next step; finishing a task should feel light and a little satisfying.
+- Phase 1 of 3: navigation, layout and components must take later phases without a redesign.
 - Approved values stay live while an edit waits for approval.
 - One AMC at a time, chosen explicitly.

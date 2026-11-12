@@ -1,11 +1,14 @@
 import React from "react";
-import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import BankConfigLanding from "@/features/bankConfig/BankConfigLanding";
 import BankConfigWizard from "@/features/bankConfig/BankConfigWizard";
 import CreditMisLanding from "@/features/creditMis/CreditMisLanding";
 import CreditMisWizard from "@/features/creditMis/CreditMisWizard";
 import MappingEditor from "@/features/mapping/MappingEditor";
+import MappingSummary from "@/features/mapping/MappingSummary";
+import StatusStandardisation from "@/features/admin/StatusStandardisation";
+import NarrationTags from "@/features/narration/NarrationTags";
 import AuditHistory from "@/features/audit/AuditHistory";
 import UserManagement from "@/features/admin/UserManagement";
 import RolesAccess from "@/features/admin/RolesAccess";
@@ -21,6 +24,7 @@ import Exceptions from "@/features/exceptions/Exceptions";
 import DocumentExtraction from "@/features/extraction/DocumentExtraction";
 import ModulePlaceholder from "@/features/modules/ModulePlaceholder";
 import Today from "@/features/today/Today";
+import TaskTemplates from "@/features/today/TaskTemplates";
 import Approvals from "@/features/approvals/Approvals";
 import SetupTodo from "@/features/setup/SetupTodo";
 import BankProfile, { BankRules } from "@/features/bankConfig/BankProfile";
@@ -36,12 +40,6 @@ function SetupApprovalsRedirect() {
   return <Navigate to={hasCap(perms, "setup_approvals", "approve") ? "/setup-todo?tab=approve" : hasCap(perms, "inbox", "approve") ? "/approvals?kind=Bank%20setup" : "/bank-setup?status=pending"} replace />;
 }
 
-/** Old Recon setup menus now live inside a bank / aggregator page or in To do; old links land in the right place. */
-function MappingRedirect() {
-  const [sp] = useSearchParams();
-  return <Navigate to={sp.get("tab") === "credit" ? "/credit-mis?view=columns" : "/bank-setup?view=columns"} replace />;
-}
-
 function HomeRedirect() {
   const { perms, simple } = useStore();
   return <Navigate to={homePath(perms, simple)} replace />;
@@ -55,9 +53,10 @@ export default function App() {
           <Route path="/" element={<HomeRedirect />} />
           <Route path="/admin/users" element={<UserManagement />} />
           <Route path="/admin/roles" element={<RolesAccess />} />
-          <Route path="/status-standardisation" element={<Navigate to="/bank-setup?view=codes" replace />} />
-          <Route path="/admin/status-standardisation" element={<Navigate to="/bank-setup?view=codes" replace />} />
+          <Route path="/status-standardisation" element={<StatusStandardisation />} />
+          <Route path="/admin/status-standardisation" element={<Navigate to="/status-standardisation" replace />} />
           <Route path="/today" element={<Today />} />
+          <Route path="/task-templates" element={<TaskTemplates />} />
           <Route path="/my-work" element={<Navigate to="/today" replace />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/setup-todo" element={<SetupTodo />} />
@@ -83,11 +82,11 @@ export default function App() {
           <Route path="/credit-mis/pa/:code" element={<AggregatorProfile />} />
           <Route path="/credit-mis/:mode/:id" element={<CreditMisWizard />} />
           <Route path="/credit-mis/new" element={<CreditMisWizard />} />
-          <Route path="/mapping" element={<MappingRedirect />} />
+          <Route path="/mapping" element={<MappingSummary />} />
           <Route path="/mapping/:type/:id" element={<MappingEditor />} />
           <Route path="/audit" element={<AuditHistory />} />
           <Route path="/cutoffs" element={<Cutoffs />} />
-          <Route path="/narration-tags" element={<Navigate to="/bank-setup?view=tags" replace />} />
+          <Route path="/narration-tags" element={<NarrationTags />} />
           <Route path="/closing-balances" element={<ClosingBalances />} />
           <Route path="/scheduler" element={<SchedulerMonitor />} />
           <Route path="/upload" element={<FileUpload />} />

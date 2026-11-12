@@ -1,5 +1,4 @@
 import React from "react";
-import { HeroArt } from "@/components/Art";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { Drawer } from "@/components/Drawer";
@@ -120,7 +119,6 @@ export default function Exceptions() {
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Siren size={24} /> {simple ? "Problem cases" : "Exceptions"}</h1>
           {simple ? <p>Payments that could not be sorted out automatically. Most urgent at the top.</p> : <p>One workbench for every exception type. Each case has an owner, a ₹ amount, an interest clock, a suggested fix and a root cause. Highest priority first.</p>}
         </div>
-        <HeroArt name="magnifier" tone="pink" />
         {!simple && <div className="actions">
           <PhaseBadge phase="P2">cases · SLA & interest clock · root causes · bulk actions</PhaseBadge>
           {hasCap(perms, "exceptions", "export") && <button className="btn btn-outline btn-sm" onClick={() => toast.success(`Exported ${rows.length} cases to CSV`)}><Download size={14} /> Export</button>}

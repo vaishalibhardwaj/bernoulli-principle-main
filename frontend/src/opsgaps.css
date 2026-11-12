@@ -1,0 +1,59 @@
+/* Phase 1 gaps: bank checkpoints, upload details, closing balance by bank, mismatch resolve, task assignment.
+   Uses the Calm Day tokens (calm.css) with fallbacks. */
+
+/* Bank checkpoints */
+.ck { padding: 22px 24px; margin: 0 0 18px; }
+.ck-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.ck-head h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+.ck-head p { margin: 0; color: var(--c-mute, #736e66); font-size: 13.5px; max-width: 60ch; }
+.ck-summary { margin: 14px 0 10px; font-weight: 500; color: var(--c-ink-2, #514d46); }
+.ck-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ck-bank { border-radius: var(--c-r-sm, 14px); background: var(--c-sunk, #f2f0eb); }
+.ck-bank.amber { background: var(--c-amber-soft, #fbf0dc); }
+.ck-row { all: unset; box-sizing: border-box; width: 100%; display: grid; grid-template-columns: 14px minmax(140px, 1fr) auto 18px; gap: 12px; align-items: center; padding: 12px 16px; cursor: pointer; border-radius: inherit; }
+.ck-row:disabled { cursor: default; }
+.ck-row:focus-visible { outline: 2px solid var(--c-accent, #5b4ccf); outline-offset: 2px; }
+.ck-row b { font-weight: 600; }
+.ck-state { color: var(--c-ink-2, #514d46); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.ck-dot { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.ck-dot.green { background: var(--c-green, #2b7a4b); }
+.ck-dot.amber { background: #e39b1b; box-shadow: 0 0 0 4px rgba(227, 155, 27, .2); }
+.ck-dot.wait { background: var(--c-line-2, #dbd7ce); }
+.ck-chev { transition: transform .2s ease; color: var(--c-mute, #736e66); }
+.ck-bank.open .ck-chev { transform: rotate(180deg); }
+.ck-drill { padding: 0 16px 14px; }
+.ck-drill-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 10px; font-size: 13px; color: var(--c-ink-2, #514d46); font-weight: 500; }
+.ck-table-wrap { max-height: 320px; overflow: auto; background: var(--c-card, #fff); border-radius: 12px; }
+.ck-table { width: 100%; font-size: 13px; }
+.ck-table th { position: sticky; top: 0; background: var(--c-card, #fff); }
+.ck-st { font-weight: 600; font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--c-sunk, #f2f0eb); white-space: nowrap; }
+.ck-st.failed { color: var(--c-rose, #b4344a); background: var(--c-rose-soft, #fbe9eb); }
+.ck-st.pending { color: var(--c-amber, #9a5600); background: var(--c-amber-soft, #fbf0dc); }
+.ck-st.not_uploaded { color: var(--c-ink-2, #514d46); }
+
+/* Upload details (bank, account, business date) */
+.fu-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 0 0 18px; }
+.fu-details label { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--c-ink-2, #514d46); }
+.fu-details .hint { grid-column: 1 / -1; font-size: 12.5px; color: var(--c-mute, #736e66); margin: -4px 0 0; }
+
+/* Closing balance by bank: names and counts, no summed amounts */
+.cb-bank-row { all: unset; box-sizing: border-box; width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 11px 12px; border-radius: 12px; cursor: pointer; }
+.cb-bank-row:hover, .cb-bank-row.on { background: var(--c-accent-soft, #efedfb); }
+.cb-bank-row:focus-visible { outline: 2px solid var(--c-accent, #5b4ccf); outline-offset: 1px; }
+.cb-bank-row b { font-weight: 600; }
+.cb-bank-row span { font-size: 13px; color: var(--c-mute, #736e66); font-variant-numeric: tabular-nums; }
+.cb-bank-row .warn { color: var(--c-amber, #9a5600); font-weight: 600; }
+.cb-date { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: var(--c-accent-soft, #efedfb); color: var(--c-accent-ink, #2f2785); }
+
+/* Mismatch resolve */
+.cb-resolve { margin-left: 8px; }
+.cb-chk.resolved { color: var(--c-green, #2b7a4b); }
+
+/* Task assignment */
+.tq-who { font-size: 12.5px; color: var(--c-mute, #736e66); }
+.tq-assign { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+.tq-assign select { max-width: 240px; }
+.tt-tabs { margin: 0 0 14px; }
+.tt-table td input, .tt-table td select { width: 100%; min-width: 0; }
+.tt-times { display: flex; gap: 6px; flex-wrap: wrap; }
+.tt-times span { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--c-sunk, #f2f0eb); font-variant-numeric: tabular-nums; }

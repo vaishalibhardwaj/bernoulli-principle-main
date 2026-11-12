@@ -1,5 +1,4 @@
 import React from "react";
-import { HeroArt } from "@/components/Art";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
@@ -49,7 +48,6 @@ export default function FundRelease() {
           <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Banknote size={22} /> {simple ? "Release money" : "Fund release"}</h1>
           <p>{simple ? "Send the money that has arrived to the team that allots units. Must be done by 3:00 PM." : "SEBI requires units to be allotted only after funds are realised. Release matched, realised money to Transaction Posting before the 3:00 PM cut-off; unmatched money stays held."}</p>
         </div>
-        <HeroArt name="coins" />
         <div className="actions"><span className={"cutoff-chip" + (mins < 60 ? " hot" : "")}><Clock size={13} /> Cut-off {mins > 0 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : "passed"}</span></div>
       </div>
       {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
