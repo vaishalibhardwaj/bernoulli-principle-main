@@ -1,26 +1,24 @@
 import React from "react";
 import { Art } from "@/components/Art";
 import { useNavigate, useLocation } from "react-router-dom";
-import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { Light } from "@/features/ops/ui";
 import { useApprovals } from "@/features/approvals/useApprovals";
 import { Drawer } from "@/components/Drawer";
 import { Modal } from "@/components/Modal";
-import { TiltCard, CountUp } from "@/features/viz/Viz";
 import { downloadCsv } from "@/features/reports/csv";
 import { useCycle } from "./Cycle";
 import { useWorkItems } from "./workItems";
-import TodayTodo from "./TodayTodo";
-import { NowStrip, useFailedFiles, useCutoffMins, greeting, longDate } from "@/features/home/NowStrip";
-import { EVENT_TYPES, NO_ACTION_REASONS, supervisorOf, isoDay, fmtDay, ageWords, startOfDay } from "@/lib/events";
+import { AREAS, templatesFrom, tasksFor, taskState, taskRoute } from "./todayTasks";
+import { ReviewModal } from "@/features/approvals/ReviewQueue";
+import DateRange, { todayRange, inRange as inDates } from "@/components/DateRange";
+import { useFailedFiles, useCutoffMins, greeting, longDate } from "@/features/home/NowStrip";
+import { EVENT_TYPES, NO_ACTION_REASONS, supervisorOf, isoDay, fmtDay, ageWords } from "@/lib/events";
 import { uid } from "@/lib/format";
-import { ArrowRight, ArrowLeft, Hourglass, Sun, ShieldCheck, Download, Flag, ListChecks, CheckCircle2, X, Repeat, Ban, CalendarDays, Inbox } from "lucide-react";
+import { ArrowRight, ArrowLeft, Hourglass, ShieldCheck, Download, Flag, ListChecks, CheckCircle2, X, Repeat, Ban, CalendarDays, Check } from "lucide-react";
 import { toast } from "sonner";
 
 const STEP_KEY = { 1: "files", 2: "match", 3: "cases", 4: "release", 5: "refunds", 6: "close" };
-const SHORT = { files: "Bank files", match: "Match payments", cases: "Problem cases", release: "Release money", refunds: "Send refunds", close: "Close the day" };
 
 /** "First seen" line: repeating events show their first date and how often they have repeated since. */
 function SeenLine({ it }) {
@@ -57,7 +55,7 @@ function NoActionModal({ item, supervisor, onClose, onSubmit }) {
 }
 
 export default function Today() {
-  const { collections, perms, personaUser, act, audit, currentUser, activeAmc } = useStore();
+  const { collections, perms, personaUser, act, audit, currentUser, activeAmc, upsert, addAudit } = useStore();
   const nav = useNavigate();
   const loc = useLocation();
   const { steps } = useCycle();
@@ -68,17 +66,14 @@ export default function Today() {
   const failedFiles = useFailedFiles();
   const [idx, setIdx] = React.useState(0);
   const [queueOpen, setQueueOpen] = React.useState(false);
+  const [doneOpen, setDoneOpen] = React.useState(false);
   const [closeOpen, setCloseOpen] = React.useState(loc.hash === "#close");
   const [note, setNote] = React.useState("");
   const [naItem, setNaItem] = React.useState(null);
-  const [showAllPending, setShowAllPending] = React.useState(false);
-  // Date range for the focus list; "Overall pending" ignores it. An item counts if it was active at any point in the range.
+  const [reviewKey, setReviewKey] = React.useState(null);
+  // Dates start on today and show everything still open today; changing a date filters by when an item started.
+  const [range, setRange] = React.useState(() => todayRange(false));
   const today = isoDay(new Date());
-  const [from, setFrom] = React.useState(today);
-  const [to, setTo] = React.useState(today);
-  const fromTs = startOfDay(from + "T00:00:00").getTime();
-  const toTs = startOfDay(to + "T00:00:00").getTime() + 86400000 - 1;
-  const inRange = (it) => !it.firstAt || (new Date(it.firstAt).getTime() <= toTs && new Date(it.lastAt || it.firstAt).getTime() >= fromTs);
   const supervisor = supervisorOf(personaUser);
   // My No-action calls: pending or agreed ones leave my list; sent-back ones return with the supervisor's note.
   const myNa = React.useMemo(() => {
@@ -96,22 +91,21 @@ export default function Today() {
     ...["bank_config", "credit_config"].flatMap((k) => (collections[k] || []).filter((c) => c.status === "rejected" && c.owner === currentUser).map((c) => ({ id: c.id, go: () => nav(k === "bank_config" ? "/bank-setup?status=rejected" : "/credit-mis") }))),
   ];
   const greet = greeting();
-  const todayStr = new Date().toDateString();
-  const doneToday = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === todayStr).length;
   const release = (collections.releases || [])[0] || { status: "not_started" };
   const close = (collections.dayclose || [])[0] || { status: "open" };
   const canSubmitClose = hasCap(perms, "ingestion", "edit");
   const canSignClose = hasCap(perms, "ingestion", "approve");
   const carried = (collections.exceptions || []).filter((e) => e.status !== "closed").length;
-  const isSetup = hasCap(perms, "bank_setup", "edit") || hasCap(perms, "credit_mis", "edit");
-  const waitingMine = [
-    ...(collections.bank_config || []).filter((c) => /pending/.test(c.status || "") && c.owner === currentUser),
-    ...(collections.credit_config || []).filter((c) => /pending/.test(c.status || "") && c.owner === currentUser),
-    ...(collections.matches || []).filter((m) => m.status === "pending" && m.owner === first),
-    ...(collections.exceptions || []).filter((e) => e.status === "pending_approval" && e.closedBy === first),
-    ...(collections.refunds || []).filter((r) => r.status === "pending" && (r.owner || "").startsWith(first)),
-    ...(collections.documents || []).filter((d) => d.status === "pending_checker" && d.owner === first),
-  ].length;
+
+  // The day's tasks and which of them are already ticked (waiting for review or reviewed).
+  const tasks = React.useMemo(() => tasksFor(templatesFrom(collections.task_templates), personaUser.id), [collections.task_templates, personaUser.id]);
+  const taskDone = React.useMemo(() => Object.fromEntries((collections.task_done || []).filter((r) => r.ownerId === personaUser.id && r.date === new Date().toDateString() && ["pending", "approved"].includes(r.status)).map((r) => [r.taskId, r])), [collections.task_done, personaUser.id]);
+  const fmtTime = (iso) => new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+  const tickTask = (t) => {
+    upsert("task_done", { id: `td_${personaUser.id}_${t.id}`, taskId: t.id, ownerId: personaUser.id, owner: first, date: new Date().toDateString(), doneAt: new Date().toISOString(), status: "pending" });
+    addAudit({ entityType: "task_done", entityId: t.id, entityLabel: t.title, action: "Task marked done", from: "To do", to: "Waiting for review" });
+    toast.success(`Done: ${t.title}. Sent to your functional manager for review.`);
+  };
 
   // ---- One queue, in the order the day needs it ----
   const queue = React.useMemo(() => {
@@ -119,16 +113,28 @@ export default function Today() {
     if (isChecker) {
       approvals.forEach((a) => q.push({
         id: a.kind + a.id, tone: a.urgent ? "red" : "amber", kind: a.kind, eventType: null, firstAt: a.at || a.submittedAt || null, title: a.title, detail: a.detail, hint: `Sent by ${a.owner || "—"}`,
-        primary: a.approve || a.config ? { label: "Approve", run: () => { const r = (a.approve || a.config.approve)(); if (r && r.ok === false) toast.error(r.error); else toast.success(`${a.kind} approved`); } } : { label: "Review", run: () => nav(a.review) },
-        secondary: a.reject ? (a.needsComment ? { label: "Review & send back", run: () => nav(`/approvals?kind=${encodeURIComponent(a.kind)}`) } : { label: "Send back", run: () => { const r = a.reject(); if (r && r.ok === false) toast.error(r.error); else toast("Sent back to " + (a.owner || "the maker")); } }) : null,
-        more: { label: "Open in Approvals", run: () => nav("/approvals") },
+        approval: a, firstAt: a.when || null, primary: { label: "Review", run: () => setReviewKey(a.kind + a.id) },
       }));
-    } else {
+    }
+    // Work that needs a person, for everyone who has it: files that failed or changed layout, balances that do not match,
+    // late or missing statements and the other events from useWorkItems. Checkers see it too, alongside their approvals.
+    {
       if (hasCap(perms, "release", "edit") && release.status === "not_started" && steps.some((s) => s.key === "release")) {
         q.push({ id: "release", eventType: "release", firstAt: new Date().toISOString(), tone: mins < 120 ? "red" : "amber", kind: "Release money", step: 4, title: "Prepare today's fund release", detail: "Matched, realised money goes to Transaction Posting so units can be allotted", when: mins > 0 ? `Cut-off in ${Math.floor(mins / 60)}h ${mins % 60}m` : "Cut-off passed", hint: "One click — your checker releases it", primary: { label: "Prepare release", run: () => nav("/release") } });
       }
       const myKeys = steps.map((s) => s.key);
       openWork.filter((w) => !w.step || myKeys.includes(STEP_KEY[w.step])).forEach((w) => q.push({ ...w, noActionOk: true }));
+    }
+    // Today's tasks from the person's KRAs (Ops), with the time each is due.
+    if (hasCap(perms, "ingestion", "view")) {
+      tasks.filter((t) => !t.phase && !taskDone[t.id] && (!myNa["task:" + t.id] || myNa["task:" + t.id].status === "sent_back")).forEach((t) => {
+        const st = taskState(t);
+        q.push({ id: "task:" + t.id, task: t, tone: st === "overdue" ? "red" : st === "soon" ? "amber" : "green", kind: "Task", eventType: "task", firstAt: t.due || null, title: t.title, detail: t.detail,
+          when: !t.due ? (t.when || "No fixed time") : st === "overdue" ? `Was due at ${fmtTime(t.due)}. Do it now.` : `Due at ${fmtTime(t.due)}`,
+          hint: AREAS.find((x) => x.key === t.area)?.label, noActionOk: true, sentBack: myNa["task:" + t.id]?.status === "sent_back" ? myNa["task:" + t.id] : null,
+          primary: (() => { const r = taskRoute(t); return hasCap(perms, r.screen) ? { label: r.label, run: () => nav(r.path) } : null; })(),
+          secondary: { label: "I have done this", run: () => tickTask(t) } });
+      });
     }
     if (steps.some((s) => s.key === "close") && (canSubmitClose && close.status === "open") || (canSignClose && close.status === "pending" && !(close.submittedBy || "").startsWith(first))) {
       q.push({ id: "close", eventType: "day_close", firstAt: new Date().toISOString(), tone: "green", kind: "Close the day", step: 6, title: close.status === "pending" ? "Sign off today's reconciliation" : "Close the day when you're done", detail: close.status === "pending" ? `Submitted by ${close.submittedBy}` : `${carried} open items will carry forward`, hint: "Produces the day summary for the AMCs", primary: { label: close.status === "pending" ? "Sign off" : "Close the day", run: () => setCloseOpen(true) } });
@@ -136,33 +142,22 @@ export default function Today() {
     const order = { red: 0, amber: 1, green: 2 };
     const t = (x) => (x.firstAt ? new Date(x.firstAt).getTime() : Date.now());
     return q.sort((a, b) => (a.id === "close") - (b.id === "close") || order[a.tone] - order[b.tone] || t(a) - t(b));
-  }, [isChecker, approvals, openWork, perms, release.status, mins, canSubmitClose, canSignClose, close.status, close.submittedBy, carried, first, nav, steps]);
+  }, [isChecker, approvals, openWork, perms, release.status, mins, canSubmitClose, canSignClose, close.status, close.submittedBy, carried, first, nav, steps, tasks, taskDone, myNa]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Focus list = the queue within the date range. Overall pending = every open item, no date limit, oldest first.
-  const ranged = queue.filter(inRange); // eslint-disable-line react-hooks/exhaustive-deps
-  const overall = queue.filter((q) => q.firstAt).slice().sort((a, b) => new Date(a.firstAt) - new Date(b.firstAt));
-  const olderCount = overall.filter((q) => new Date(q.firstAt).getTime() < startOfDay(Date.now()).getTime()).length;
+  // The focus list: every open item, or those that started within the dates once a date is changed.
+  const ranged = queue.filter((q) => inDates(q.firstAt, range));
   const i = Math.min(idx, Math.max(0, ranged.length - 1));
   const focus = ranged[i];
-  const upNext = ranged.slice(i + 1, i + 4);
-  const pickItem = (it) => { const k = ranged.findIndex((x) => x.id === it.id); if (k >= 0) setIdx(k); else { setFrom(isoDay(it.firstAt)); setTo(today); setIdx(0); toast(`Date range widened to ${fmtDay(it.firstAt)} – today so this item is in your focus list.`); } window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const doneTasks = Object.keys(taskDone).length;
+  const pickItem = (it) => { const k = ranged.findIndex((x) => x.id === it.id); if (k >= 0) setIdx(k); };
   const markNoAction = (reason, comment) => {
     const it = naItem;
-    const rec = { id: uid("na"), itemId: it.id, by: personaUser.name, supervisor, eventType: it.eventType, kind: EVENT_TYPES[it.eventType]?.label || it.kind, title: it.title, detail: it.detail, reason, comment, at: new Date().toISOString(), status: "pending", firstAt: it.firstAt, count: it.count || 1, amc: (collections.files || [])[0]?.amc };
+    const rec = { id: uid("na"), itemId: it.id, by: personaUser.name, supervisor, eventType: it.eventType, kind: EVENT_TYPES[it.eventType]?.label || it.kind, title: it.title, detail: it.detail, reason, comment, at: new Date().toISOString(), status: "pending", firstAt: it.firstAt, count: it.count || 1, amc: activeAmc || null };
     const res = act({ screen: "today", cap: "view", kind: "no_action", patch: rec, audit: { entityLabel: it.title, action: "No action", to: `Sent to ${supervisor}`, comment: `${reason}${comment ? " — " + comment : ""}` } });
     if (!res.ok) { toast.error(res.error); return; }
-    toast.success(`Sent to ${supervisor} to verify. It also goes into the feedback on “${rec.kind}”.`);
+    toast.success(`Recorded and sent to ${supervisor} to check.`);
     setNaItem(null);
   };
-
-  // "Welcome back": what changed in this person's queue since they last opened Today (after a break or a new login).
-  const seenKey = `cams_seen_${personaUser.id}`;
-  const since = React.useMemo(() => { try { return JSON.parse(localStorage.getItem(seenKey) || "null"); } catch (e) { return null; } }, [seenKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  React.useEffect(() => { try { localStorage.setItem(seenKey, JSON.stringify({ at: Date.now(), ids: queue.map((q) => q.id) })); } catch (e) { /* storage unavailable */ } }, [seenKey, queue]);
-  const [hideBack, setHideBack] = React.useState(false);
-  const newSince = since ? queue.filter((q) => !since.ids.includes(q.id)) : [];
-  const clearedSince = since ? since.ids.filter((id) => !queue.some((q) => q.id === id)).length : 0;
-
   const submitClose = () => {
     const res = act({ screen: "ingestion", cap: "edit", kind: "dayclose", id: "day_today", patch: { status: "pending", submittedBy: currentUser, carried, note: note.trim(), submittedAt: new Date().toISOString() }, audit: { entityLabel: "Day close", action: "Submit day close", from: "Open", to: "Pending", comment: `${carried} items carried forward` } });
     if (res.ok) { toast.success("Sent to your checker to sign off the day."); setCloseOpen(false); } else toast.error(res.error);
@@ -172,143 +167,105 @@ export default function Today() {
     if (res.ok) { toast.success("Day signed off. Summary sent to AMCs."); setCloseOpen(false); } else toast.error(res.error);
   };
   const daySummary = () => downloadCsv(`day_summary_${new Date().toISOString().slice(0, 10)}.csv`, ["Step", "Status", "Detail"], steps.map((s) => [s.title, s.state, s.summary]));
+  // Done today: every action this person recorded today (History entries), newest first, with each task's review status.
+  const doneList = audit.filter((a) => a.user === first && !a.denied && new Date(a.ts).toDateString() === new Date().toDateString()).slice().sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  const reviewOf = (a) => { if (a.entityType !== "task_done") return null; const r = (collections.task_done || []).find((x) => x.ownerId === personaUser.id && x.taskId === a.entityId && x.date === new Date().toDateString()); return r ? { pending: "Waiting for review", approved: `Reviewed by ${r.reviewedBy}`, returned: `Sent back by ${r.reviewedBy}` }[r.status] : null; };
+  const runPrimary = (it) => (it.id === "close" ? setCloseOpen(true) : it.primary?.run());
+
+  const cutPct = (() => { const cut = new Date(); const start = new Date(); start.setHours(9, 0, 0, 0); cut.setTime(Date.now() + mins * 60000); return Math.max(0, Math.min(100, ((Date.now() - start) / Math.max(1, cut - start)) * 100)); })();
+  const reviewList = approvals;
+  const rIdx = reviewList.findIndex((a) => a.kind + a.id === reviewKey);
 
   return (
-    <div className="deck" data-testid="today">
-      <div className="home-head">
-        <div>
+    <div className="td" data-testid="today">
+      <header className="td-head">
+        <div className="td-hello">
           <h1>{greet}, {first}</h1>
           <p>{longDate()}{activeAmc ? <> · <b>{activeAmc}</b></> : null}</p>
         </div>
-      </div>
-
-      {since && !hideBack && (newSince.length > 0 || clearedSince > 0) && (
-        <div className="welcome-back" data-testid="welcome-back">
-          <Sun size={15} />
-          <span>Welcome back. Since {new Date(since.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}: <b>{newSince.length} new</b> item{newSince.length !== 1 ? "s" : ""} in your queue{clearedSince ? `, ${clearedSince} cleared` : ""}. You have {queue.length} in total.</span>
-          <button className="link" onClick={() => setQueueOpen(true)} data-testid="wb-open-queue">See my full queue</button>
-          <button className="icon-btn" onClick={() => setHideBack(true)} aria-label="Dismiss"><X size={14} /></button>
+        <div className="td-status" role="group" aria-label="Your day at a glance">
+          <button type="button" className={"td-chip" + (approvals.length ? " has" : "")} onClick={() => nav("/approvals")} data-testid="now-approvals"><i className="acc" /><span>Approvals waiting</span><b className="tnum">{approvals.length}</b></button>
+          <button type="button" className={"td-chip" + (sentBackMine.length ? " has" : "")} onClick={() => (sentBackMine[0] ? sentBackMine[0].go() : setQueueOpen(true))} data-testid="now-sent-back"><i className="warn" /><span>Sent back to you</span><b className="tnum">{sentBackMine.length}</b></button>
+          <button type="button" className={"td-chip" + (failedFiles.length ? " has bad" : "")} onClick={() => nav("/ingestion")} data-testid="now-failed"><i className="bad" /><span>Files that failed</span><b className="tnum">{failedFiles.length}</b></button>
+          <button type="button" className={"td-chip done" + (doneList.length ? " has" : "")} onClick={() => setDoneOpen(true)} data-testid="now-done"><Check size={14} /><span>Done today</span><b className="tnum">{doneList.length}</b></button>
+          <span className={"td-cut" + (mins <= 0 ? " passed" : mins < 60 ? " soon" : "")} data-testid="now-cutoff" title="Fund release cutoff">
+            <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" className="trk" /><circle cx="18" cy="18" r="15" className="arc" strokeDasharray={`${(cutPct / 100) * 94.2} 94.2`} transform="rotate(-90 18 18)" /></svg>
+            <span><small>Fund release cutoff</small><b>{mins > 0 ? `${Math.floor(mins / 60) ? `${Math.floor(mins / 60)}h ` : ""}${mins % 60}m left` : "Passed"}</b></span>
+          </span>
         </div>
-      )}
+      </header>
 
-      <NowStrip tiles={[
-        { kind: "approve", label: "Approvals waiting", value: approvals.length, sub: `Teammates' work for you to check`, clear: "Nothing to approve", onClick: () => nav("/approvals"), testid: "now-approvals" },
-        { kind: "back", label: "Sent back to you", value: sentBackMine.length, sub: "Fix and send again", clear: "Nothing sent back", onClick: () => (sentBackMine[0] ? sentBackMine[0].go() : setQueueOpen(true)), testid: "now-sent-back" },
-        { kind: "failed", label: "Files that failed", value: failedFiles.length, sub: "Layout changed, failed checks or not received", clear: "All files loaded", onClick: () => nav("/ingestion"), testid: "now-failed" },
-      ]} />
-
-      <div className="home-sec">
-        <h2>Your queue, one at a time</h2>
-        <div className="today-range" data-testid="today-range">
-          <CalendarDays size={14} />
-          <input type="date" className="input tnum" value={from} max={to} onChange={(e) => { if (e.target.value) { setFrom(e.target.value); setIdx(0); } }} data-testid="range-from" aria-label="From" />
-          <span>to</span>
-          <input type="date" className="input tnum" value={to} min={from} max={today} onChange={(e) => { if (e.target.value) { setTo(e.target.value); setIdx(0); } }} data-testid="range-to" aria-label="To" />
-          {[["Today", 0], ["7 days", 6], ["30 days", 29]].map(([l, d]) => { const f = isoDay(Date.now() - d * 86400000); return <button key={l} className={"rg-chip" + (from === f && to === today ? " on" : "")} onClick={() => { setFrom(f); setTo(today); setIdx(0); }}>{l}</button>; })}
-        </div>
-      </div>
-
-      <div className="deck-hero">
-        {/* 1 — The one thing to do now */}
-        <TiltCard className={"focus-card tone-" + (focus?.tone || "green")} max={4} data-testid="next-action">
-          <div className="fc-top">
-            <span className="fc-eyebrow">Do this next</span>
-            {focus && <span className="fc-count">{i + 1} <em>of {ranged.length}</em></span>}
-          </div>
-          <AnimatePresence mode="wait">
-            {focus ? (
-              <motion.div key={focus.id} className="fc-body" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.25 }}>
-                <div className="fc-kind">{focus.step && <span className="step-chip">{SHORT[STEP_KEY[focus.step]]}</span>}{focus.kind}{focus.light && <Light tone={focus.tone}>{focus.light}</Light>}</div>
-                <h2>{focus.title}</h2>
-                <p>{focus.detail}</p>
-                <SeenLine it={focus} />
-                {focus.sentBack && <div className="sent-back" data-testid="sent-back"><Ban size={13} /> Your No-action call was sent back by {focus.sentBack.supervisor}: “{focus.sentBack.reviewNote}”</div>}
-                <div className="fc-hint">{focus.when && <span className={"mw-when " + focus.tone}><Hourglass size={13} /> {focus.when}</span>}{focus.hint}</div>
-                <div className="fc-actions">
-                  <button className="btn btn-primary btn-lg" onClick={focus.primary.run} data-testid="next-action-btn">{focus.primary.label} <ArrowRight size={16} /></button>
-                  {focus.secondary && <button className="btn btn-outline btn-lg" onClick={focus.secondary.run} data-testid="focus-secondary">{focus.secondary.label}</button>}
-                  {focus.more && <button className="link" onClick={focus.more.run}>{focus.more.label}</button>}
-                  {focus.noActionOk && <button className="btn btn-ghost btn-sm na-btn" onClick={() => setNaItem(focus)} data-testid="focus-no-action" title={`Goes to ${supervisor} to verify`}><Ban size={13} /> No action</button>}
-                  <div className="fc-nav">
-                    <button className="icon-btn" disabled={i === 0} onClick={() => setIdx(i - 1)} aria-label="Previous"><ArrowLeft size={16} /></button>
-                    <button className="btn btn-ghost btn-sm" disabled={i >= ranged.length - 1} onClick={() => setIdx(i + 1)} data-testid="focus-skip">Skip for now <ArrowRight size={13} /></button>
-                  </div>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div key="clear" className="fc-body fc-clear" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                <Art name="badges" /><h2>You're all clear{from !== today || to !== today ? " for these dates" : " for today"}</h2><p>{overall.length ? `${overall.length} older or out-of-range item${overall.length !== 1 ? "s are" : " is"} still open — see Overall pending below.` : "Nothing is waiting for you. New work appears here automatically."}</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </TiltCard>
-
-        {/* 2 — Where the day stands */}
-        <div className="day-panel card" data-testid="day-panel">
-          <div className="dp-head"><span>Where your day stands</span><small>{from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`}</small></div>
-          <button type="button" className="dp-hero" onClick={() => document.querySelector('[data-testid="overall-pending"]')?.scrollIntoView({ behavior: "smooth" })} data-testid="dp-overall">
-            <span>Overall pending</span>
-            <b className="fx-num"><CountUp value={overall.length} /></b>
-            <small>{overall.length ? `Oldest from ${ageWords(overall[0].firstAt)} · no date limit` : "Nothing open"}</small>
-            <ArrowRight size={15} className="dp-go" />
-          </button>
-          <div className="dp-rows">
-            <div><Inbox size={14} /><span>{isChecker ? "Waiting for you" : "In range"}</span><b className="fx-num"><CountUp value={ranged.length} /></b></div>
-            {!isChecker && <div><Hourglass size={14} /><span>Checker approval</span><b className="fx-num"><CountUp value={waitingMine} /></b></div>}
-            <div><CheckCircle2 size={14} /><span>Done by you today</span><b className="fx-num"><CountUp value={doneToday} /></b></div>
+      <section className={"td-focus tone-" + (focus?.tone || "green")} data-testid="next-action">
+        <div className="td-focus-top">
+          <span className="td-label">Do this next</span>
+          <div className="td-focus-tools">
+            {focus && <span className="td-pos tnum">{i + 1} <em>of {ranged.length}</em></span>}
+            <DateRange value={range} onChange={(v) => { setRange(v); setIdx(0); }} testid="today-range" />
+            <button type="button" className="td-all" onClick={() => setQueueOpen(true)} data-testid="open-queue" aria-label={`See all ${ranged.length} items`}><ListChecks size={14} /> See all</button>
           </div>
         </div>
-      </div>
 
-
-      {/* 3 — Only the next three, never an endless list */}
-      <div className="upnext card" data-testid="up-next">
-        <div className="card-head"><h3><ListChecks size={15} /> Up next</h3>
-          <button className="link" onClick={() => setQueueOpen(true)} data-testid="open-queue">See everything in range ({ranged.length}) <ArrowRight size={12} /></button></div>
-        {upNext.length === 0 && <div className="card-pad muted">Nothing else after this one.</div>}
-        {upNext.map((it, k) => (
-          <button key={it.id} className={"un-row tone-" + it.tone} onClick={() => setIdx(i + 1 + k)}>
-            <i /><span className="un-kind">{it.kind}</span><span className="un-title">{it.title}</span>{it.dedupe && it.count > 1 && <em className="rep-badge"><Repeat size={11} /> {it.count}×</em>}{it.when && <span className={"mw-when " + it.tone}>{it.when}</span>}<ArrowRight size={13} />
-          </button>
-        ))}
-      </div>
-
-      {/* Today's to-do: the day's tasks from the user's KRAs (Ops only) */}
-      {hasCap(perms, "ingestion", "view") && <TodayTodo />}
-
-      {/* 4 — Overall pending: every open item, no date limit, oldest first */}
-      <div className="card op-card" data-testid="overall-pending">
-        <div className="card-head"><h3><Inbox size={15} /> Overall pending</h3>
-          <span className="muted">{overall.length} open · {olderCount} from before today · oldest first · no date limit</span></div>
-        {overall.length === 0 && <div className="card-pad muted">Nothing open.</div>}
-        <div className="op-list">
-          {(showAllPending ? overall : overall.slice(0, 8)).map((it) => (
-            <div key={it.id} className={"op-row tone-" + it.tone} data-testid={"op-" + it.id}>
-              <i />
-              <span className="op-date tnum"><b>{fmtDay(it.firstAt)}</b><small>{ageWords(it.firstAt)}</small></span>
-              <span className="op-main"><b>{it.title}</b><small>{it.kind}{EVENT_TYPES[it.eventType] ? ` · ${EVENT_TYPES[it.eventType].label}` : ""}{it.sentBack ? " · sent back by supervisor" : ""}</small></span>
-              {it.dedupe && it.count > 1 ? <em className="rep-badge" title={`Shown once. ${EVENT_TYPES[it.eventType]?.why}`}><Repeat size={11} /> {it.count}× since {fmtDay(it.firstAt)}</em> : <span />}
-              <span className="op-acts">
-                {it.noActionOk && <button className="btn btn-ghost btn-sm" onClick={() => setNaItem(it)} data-testid={"op-na-" + it.id}><Ban size={12} /> No action</button>}
-                <button className="btn btn-outline btn-sm" onClick={() => pickItem(it)}>Work on it</button>
-              </span>
+        {focus ? (
+            <div key={focus.id} className="td-body td-enter">
+              <div className="td-kind"><span className={"td-dot " + focus.tone} />{focus.id === "close" ? "End of day" : focus.kind}{focus.hint && <em>{focus.hint}</em>}</div>
+              {focus.when && <p className={"td-when " + focus.tone}><Hourglass size={13} /> {focus.when}</p>}
+              <h2>{focus.title}</h2>
+              {focus.detail && <p className="td-detail">{focus.detail}</p>}
+              {!focus.task && <SeenLine it={focus} />}
+              {focus.sentBack && <div className="sent-back" data-testid="sent-back"><Ban size={13} /> Your No action call was sent back by {focus.sentBack.supervisor}: “{focus.sentBack.reviewNote}”</div>}
+              <div className="td-actions">
+                {(focus.primary || focus.id === "close") && <button className="btn btn-primary" onClick={() => runPrimary(focus)} data-testid="next-action-btn">{focus.id === "close" ? "Close the day" : focus.primary.label} <ArrowRight size={14} /></button>}
+                {focus.secondary && <button className="btn btn-outline" onClick={focus.secondary.run} data-testid="focus-secondary"><Check size={15} /> {focus.secondary.label}</button>}
+                {focus.noActionOk && <button className="btn btn-ghost" onClick={() => setNaItem(focus)} data-testid="focus-no-action"><Ban size={14} /> No action required</button>}
+                <span className="td-nav">
+                  <button className="dl-kebab" disabled={i === 0} onClick={() => setIdx(i - 1)} aria-label="Previous"><ArrowLeft size={14} /></button>
+                  <button className="btn btn-ghost" disabled={i >= ranged.length - 1} onClick={() => setIdx(i + 1)} data-testid="focus-skip">Skip for now <ArrowRight size={14} /></button>
+                </span>
+              </div>
             </div>
-          ))}
-        </div>
-        {overall.length > 8 && <button className="link op-more" onClick={() => setShowAllPending((v) => !v)} data-testid="op-toggle">{showAllPending ? "Show fewer" : `Show all ${overall.length}`}</button>}
-      </div>
+          ) : (
+            <div key="clear" className="td-body td-clear td-enter">
+              <Art name="badges" size={84} /><h2>You're all clear</h2><p>Nothing is waiting for you{range.touched ? " in these dates" : ""}.</p>
+            </div>
+          )}
+
+        <footer className="td-foot">
+          <span className="td-progress"><span><b className="tnum">{doneTasks}</b> of {doneTasks + tasks.filter((t) => !t.phase && !taskDone[t.id]).length} tasks done today</span><i><u style={{ width: `${(doneTasks / Math.max(1, doneTasks + tasks.filter((t) => !t.phase && !taskDone[t.id]).length)) * 100}%` }} /></i></span>
+          <span className="td-steps" aria-hidden="true">{ranged.slice(0, 12).map((x, k) => <i key={x.id} className={x.tone + (k === i ? " on" : "")} />)}</span>
+        </footer>
+      </section>
 
       {naItem && <NoActionModal item={naItem} supervisor={supervisor} onClose={() => setNaItem(null)} onSubmit={markNoAction} />}
+      {rIdx >= 0 && <ReviewModal a={reviewList[rIdx]} pos={rIdx + 1} total={reviewList.length} onClose={() => setReviewKey(null)}
+        onPrev={rIdx > 0 ? () => setReviewKey(reviewList[rIdx - 1].kind + reviewList[rIdx - 1].id) : null}
+        onNext={rIdx < reviewList.length - 1 ? () => setReviewKey(reviewList[rIdx + 1].kind + reviewList[rIdx + 1].id) : null}
+        onDone={() => setReviewKey(null)} />}
 
       {queueOpen && (
-        <Drawer id="queue-drawer" title={isChecker ? "Everything waiting for your approval" : "Everything in this date range"} subtitle="Pick any item to make it your focus. Red first, then amber, then green; oldest first within each." onClose={() => setQueueOpen(false)}>
+        <Drawer id="queue-drawer" title={`Your list · ${ranged.length}`} subtitle="Most urgent first, then oldest first. Pick one to work on it." onClose={() => setQueueOpen(false)}>
           <div className="q-list">
             {ranged.map((it, k) => (
               <button key={it.id} className={"un-row tone-" + it.tone + (k === i ? " on" : "")} onClick={() => { setIdx(k); setQueueOpen(false); }}>
-                <i /><span className="un-num">{k + 1}</span><span className="un-title">{it.title}<small>{it.kind}{it.firstAt ? ` · ${it.dedupe ? "first seen" : "since"} ${fmtDay(it.firstAt)}` : ""}{it.dedupe && it.count > 1 ? ` · ${it.count}×` : ""}{it.when ? ` · ${it.when}` : ""}</small></span><ArrowRight size={13} />
+                <i /><span className="un-num">{k + 1}</span><span className="un-title">{it.title}<small>{it.kind}{it.when ? ` · ${it.when}` : it.firstAt ? ` · since ${fmtDay(it.firstAt)}` : ""}</small></span><ArrowRight size={13} />
               </button>
             ))}
           </div>
+        </Drawer>
+      )}
+
+      {doneOpen && (
+        <Drawer id="done-drawer" title={`Done today · ${doneList.length}`} subtitle="Everything you did today, newest first. Ticked tasks show whether your functional manager has reviewed them." onClose={() => setDoneOpen(false)}>
+          {doneList.length === 0 ? <div className="empty" style={{ border: 0 }}><Art name="clipboard" size={64} /><h3>Nothing yet today</h3><p>What you finish, approve, upload or mark as no action shows here.</p></div> : (
+            <ul className="done-list" data-testid="done-list">
+              {doneList.map((a) => (
+                <li key={a.id}>
+                  <span className="done-ic" aria-hidden="true"><Check size={14} /></span>
+                  <span className="done-main"><b>{a.action}</b><small>{a.entityLabel || "—"}{a.comment ? ` · ${a.comment}` : ""}</small>{reviewOf(a) && <em className={"done-rv " + (/Reviewed/.test(reviewOf(a)) ? "ok" : /Sent back/.test(reviewOf(a)) ? "bad" : "")}>{reviewOf(a)}</em>}</span>
+                  <span className="done-at tnum">{new Date(a.ts).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Drawer>
       )}
 
@@ -325,7 +282,7 @@ export default function Today() {
             {steps.slice(0, 5).map((s) => <li key={s.key} className={s.state}>{s.state === "done" ? <CheckCircle2 size={15} /> : <Hourglass size={15} />}<span><b>{s.title}</b> — {s.summary}</span></li>)}
           </ul>
           {close.status === "open" && canSubmitClose && <>
-            <p className="muted" style={{ margin: "14px 0 8px" }}>Anything not finished carries forward to tomorrow ({carried} open case{carried !== 1 ? "s" : ""}). Leave a note for tomorrow's team.</p>
+            <p className="muted" style={{ margin: "14px 0 8px" }}>Anything not finished carries forward to tomorrow ({carried} open item{carried !== 1 ? "s" : ""}). Leave a note for tomorrow's team.</p>
             <textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. SBI statement still missing; chased RM at 3:10 PM" />
           </>}
           {close.status === "pending" && <p style={{ marginTop: 14 }}>Submitted by <b>{close.submittedBy}</b>. {close.carried} item{close.carried !== 1 ? "s" : ""} carried forward.{close.note && <> Note: “{close.note}”</>}</p>}

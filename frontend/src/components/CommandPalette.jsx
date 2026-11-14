@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { navFor, screenLabel, PERSONAS, FUNCTIONS, hasCap } from "@/lib/access";
 import { PLAIN_EXCEPTION } from "@/lib/plain";
-import { Search, CornerDownLeft, ArrowRight, User, Zap } from "lucide-react";
+import { Search, ArrowRight, User, Zap } from "lucide-react";
 
 /** Search: jump to any screen you can open, find a case or refund by reference, or switch demo persona. */
 export default function CommandPalette({ open, onClose }) {
@@ -28,7 +28,7 @@ export default function CommandPalette({ open, onClose }) {
       <Command className="cmdk" label="Search" loop>
         <div className="cmdk-input"><Search size={16} /><Command.Input autoFocus placeholder="Search any module, screen or task you have access to…" /></div>
         <Command.List className="cmdk-list">
-          <Command.Empty className="cmdk-empty">No results.</Command.Empty>
+          <Command.Empty className="cmdk-empty">Nothing matches. Try a screen name, such as "Bank files" or "Approvals".</Command.Empty>
           {functions.length > 0 && <Command.Group heading="Do something">
             {functions.map((f) => (
               <Command.Item key={f.label} value={`${f.label} ${f.words}`} onSelect={() => go(f.path)} className="cmdk-item">
@@ -67,6 +67,7 @@ export default function CommandPalette({ open, onClose }) {
             ))}
           </Command.Group>
         </Command.List>
+        <div className="cmdk-foot" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Move</span><span><kbd>Enter</kbd> Open</span><span><kbd>Esc</kbd> Close</span></div>
       </Command>
     </div>
   );

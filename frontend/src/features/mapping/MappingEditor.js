@@ -6,7 +6,7 @@ import StepIndicator from "@/components/StepIndicator";
 import PreviewTable from "@/components/PreviewTable";
 import FileDropZone from "@/components/FileDropZone";
 import { Modal } from "@/components/Modal";
-import { Chip, Toggle, Note } from "@/components/bits";
+import { Chip, Toggle, Note, SkeletonBlock } from "@/components/bits";
 import { buildPreview, detectFor, sampleTable } from "@/mock/sampleFiles";
 import { matchHeader, suggestIncremental } from "@/lib/setupSchema";
 import { ChangesCard } from "@/features/setup/SetupBits";
@@ -46,7 +46,7 @@ export default function MappingEditor() {
     <div data-testid="mapping-editor">
       <div className="page-head"><div>
         <button className="link" onClick={() => nav(`/mapping?tab=${type}`)}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to mappings</button>
-        <h1 style={{ marginTop: 6 }}>{mapping.bankName} — Column Mapping</h1>
+        <h1 style={{ marginTop: 6 }}>{mapping.bankName} column mapping</h1>
       </div></div>
       <div className="card card-pad"><Note kind="info" icon={ShieldCheck}><b>{mapping.fileType}</b> is a bank standard format. The pre-built parser reads it, so there is no column mapping to maintain for this setup.</Note></div>
     </div>
@@ -197,7 +197,7 @@ export default function MappingEditor() {
     <div data-testid="mapping-editor">
       <div className="page-head"><div>
         <button className="link" onClick={() => nav(`/mapping?tab=${type}`)}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to mappings</button>
-        <h1 style={{ marginTop: 6 }}>{mapping.bankName}{mapping.formatName ? ` · ${mapping.formatName}` : ""} — Column Mapping</h1>
+        <h1 style={{ marginTop: 6 }}>{mapping.bankName}{mapping.formatName ? ` · ${mapping.formatName}` : ""} column mapping</h1>
         <div className="impact-chip" data-testid="impact"><Landmark size={13} /> Used by <b>{acctCount}</b> account{acctCount !== 1 ? "s" : ""} at {mapping.bankName}. A change here applies to all of them.</div>
       </div></div>
 
@@ -220,7 +220,7 @@ export default function MappingEditor() {
                 <button className="link" style={{ marginTop: 8 }} onClick={() => setReplacing(false)}>Keep the current sample</button>
               </div>
             )}
-            {analysing && <div className="analysing" data-testid="analysing"><div className="spinner" /><div><b>Reading the sample…</b><div style={{ fontSize: 12, color: "hsl(var(--muted))" }}>Finding the header row, separator and columns</div></div></div>}
+            {analysing && <div className="analysing" data-testid="analysing"><b>Reading the sample</b><p className="muted" style={{ margin: "2px 0 8px", fontSize: 12 }}>Finding the header row, separator and columns.</p><SkeletonBlock rows={4} label="Reading the sample" /></div>}
             {!analysing && (<>
               <div className="form-grid" style={{ marginTop: 16 }} data-testid="sample-settings">
                 <div className="field"><label className="field-label">File type {hdr === null && startCol === null && <span className="chip chip-auto"><Sparkles size={10} /> Auto-detected</span>}</label><input className="input" value={meta?.detect.fileType || "—"} readOnly disabled /></div>

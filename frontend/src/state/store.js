@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useReducer, useCallback } from "react";
 import { seedBankConfigs, seedCreditConfigs, seedMappings, seedStatusMap, newMappingFor, seedCutoffs, seedNarrationTags } from "../mock/seed";
 import { diffSetup, isStandard } from "../lib/setupSchema";
-import { seedUsers } from "../mock/userSeed";
+import { seedUsers, addSampleModuleRoles } from "../mock/userSeed";
 import { ACCOUNTS } from "../mock/bankMaster";
 import { uid } from "../lib/format";
 import { userAmcs } from "../lib/org";
@@ -33,6 +33,16 @@ function seedSetupRequests() {
 }
 
 /** Work one Ops person did today that a second Ops person checks (maker-checker). Synthetic samples. */
+// Tasks ticked done on Today. Each one waits for the functional manager's review (confirmed 13 Nov).
+// Sample work done before the demo opens, so the functional manager has something to review. Prototype only.
+const todayKey = () => new Date().toDateString();
+function seedTaskDone() {
+  const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  const rows = [["usr_priya", "Priya", "tpl_bs_upload_0900", 9, 6], ["usr_priya", "Priya", "tpl_cmis_upload_1030", 10, 34], ["usr_priya", "Priya", "tpl_checkpoint_0930", 9, 41],
+    ["usr_arun", "Arun", "tpl_bs_upload_0900", 9, 12], ["usr_arun", "Arun", "tpl_checkpoint_0930", 9, 38]];
+  return rows.map(([ownerId, owner, taskId, h, m]) => ({ id: `td_${ownerId}_${taskId}`, taskId, ownerId, owner, date: todayKey(), doneAt: at(h, m), status: "pending" }));
+}
+
 function seedOpsChecks(files) {
   const ago = (m) => new Date(Date.now() - m * 60000).toISOString();
   const out = [];
@@ -66,7 +76,7 @@ function buildSeed() {
     collections: {
       bank_config: configs, credit_config: creditConfigs, bank_mapping: mappings, users, roles,
       access_requests: [],
-      files: files.map((f) => ({ ...f, histV2: true })), emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], ops_checks: seedOpsChecks(files), file_uploads: [], setup_requests: seedSetupRequests(), no_action: seedNoAction(), dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
+      files: files.map((f) => ({ ...f, histV2: true })), emails: seedEmails(files), connections: seedConnections(files), sftp: seedSftp(files), manual_uploads: [], ops_checks: seedOpsChecks(files), task_done: seedTaskDone(), file_uploads: [], setup_requests: seedSetupRequests(), no_action: seedNoAction(), dismissals: [], balances: seedBalances(), jobs: seedJobs(), file_track: seedFileTrack(), liab_debits: seedLiability().debits, liab_payouts: seedLiability().payouts, liab_matches: [], credits, purchases, suggestions, matches: [], rules: seedRules(), rule_drafts: [],
       exceptions: seedExceptions(), documents: seedDocuments(),
       releases: seedReleases(), refunds: seedRefunds(), dayclose: [{ id: "day_today", status: "open" }], status_map: seedStatusMap(), cutoffs: seedCutoffs(), narration_tags: seedNarrationTags(),
     },
@@ -101,22 +111,30 @@ function load() {
           parsed.collections[k] = [...fresh.map((x) => ({ ...x, ...(saved.get(x.id) || {}) , amcs: x.amcs, amc: x.amc, source: x.source, fileType: x.fileType })), ...[...saved.values()].filter((x) => !fresh.some((y) => y.id === x.id))];
         });
         const seedPerms = Object.fromEntries(seedRoles().map((r) => [r.id, r.perms]));
+        // Task rights changed on 13 Nov (Level 1/2 assign only; the functional manager creates), so these role descriptions follow the seed.
+        const seedDesc = Object.fromEntries(seedRoles().filter((r) => ["role_recon_l1", "role_recon_l2", "role_functional_manager"].includes(r.id)).map((r) => [r.id, r.description]));
         // Screens that moved between roles: Scheduler monitor is IT support only; Status standardisation moved from admin to the setup maker / checker; Match rules and Reports are not in Phase 1.
-        const MOVED = ["scheduler", "status_std", "rules", "reports", "balances", "task_templates"];
+        const MOVED = ["scheduler", "status_std", "rules", "reports", "balances", "task_templates", "command"];
         parsed.collections.roles = parsed.collections.roles.map((r) => {
           if (r.id === "role_platform_admin") return { ...r, perms: seedPerms[r.id] };
           if (!(r.system && seedPerms[r.id])) return r;
           const perms = { ...seedPerms[r.id], ...r.perms };
           MOVED.forEach((k) => { if (seedPerms[r.id][k]) perms[k] = seedPerms[r.id][k]; else delete perms[k]; });
-          return { ...r, perms };
+          return { ...r, perms, description: seedDesc[r.id] || r.description };
         });
+        // Sample people for the modules not built yet join saved demo state once.
+        if (!parsed.collections.users.some((u) => (u.roles || []).includes("role_crms_agent"))) addSampleModuleRoles(parsed.collections.users);
         // New seed roles (Level 1, Level 2) join saved demo state; Priya and Arun get them as in the seed.
         seedRoles().forEach((sr) => { if (!parsed.collections.roles.some((r) => r.id === sr.id)) parsed.collections.roles.push(sr); });
         const LEVEL = { usr_priya: "role_recon_l2", usr_arun: "role_recon_l1" };
         parsed.collections.users = parsed.collections.users.map((u) => (LEVEL[u.id] && !(u.roles || []).includes(LEVEL[u.id]) ? { ...u, roles: [...(u.roles || []), LEVEL[u.id]] } : u));
         // Personas removed from the demo switcher fall back to Meera.
         if (!PERSONAS.some((x) => x.id === parsed.persona)) parsed.persona = "usr_meera";
+        // Layout changes moved to the AMCs Recon Ops open first (HDFC Bank → ICICI Prudential MF, ICICI Bank → HDFC Mutual Fund).
+        parsed.collections.files = (parsed.collections.files || []).map((f) => ({ file_101: "ICICI Prudential MF", file_104: "HDFC Mutual Fund" }[f.id] && f.drift ? { ...f, amc: { file_101: "ICICI Prudential MF", file_104: "HDFC Mutual Fund" }[f.id] } : f));
         if (!Array.isArray(parsed.collections.file_uploads)) parsed.collections.file_uploads = [];
+        // Finished tasks are per day: saved demo state from an earlier day starts today with the sample ones.
+        if (!(parsed.collections.task_done || []).some((t) => t.date === todayKey())) parsed.collections.task_done = seedTaskDone();
         if (!Array.isArray(parsed.collections.no_action)) parsed.collections.no_action = seedNoAction();
         // Platform Admin was renamed to Central Setup Team; carry the rename into saved demo state.
         parsed.collections.roles = parsed.collections.roles.map((r) => (r.id === "role_platform_admin" ? { ...r, name: "Central Setup Team", description: seedRoles()[0].description } : r));

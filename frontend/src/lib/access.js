@@ -22,9 +22,9 @@ export const MODULES = [
       { key: "today", label: "Today", plain: "Today", path: "/today", group: "Home", caps: ["view"] },
       { key: "inbox", label: "Approvals", plain: "Approvals", path: "/approvals", group: "Home", caps: ["view", "approve"] },
       { key: "balances", label: "Closing balances", plain: "Closing balances", path: "/closing-balances", group: "Home", caps: ["view", "edit", "export"] },
-      { key: "scheduler", quiet: true, label: "Scheduler monitor", plain: "File pickups", path: "/scheduler", group: "Home", caps: ["view", "export"] },
+      { key: "scheduler", label: "Scheduler monitor", plain: "File pickups", path: "/scheduler", group: "Home", caps: ["view", "export"] },
       { key: "no_action_review", label: "No-action review", plain: "No-action review", path: "/no-action-review", group: "Home", caps: ["view", "approve", "export"] },
-      { key: "command", label: "Dashboard", plain: "Team overview", path: "/command", group: "Home", caps: ["view", "export"], analytics: true },
+      { key: "command", label: "Dashboard", plain: "Dashboard", path: "/command", group: "Home", caps: ["view", "export"], analytics: true },
       { key: "task_templates", label: "Task templates", plain: "Team tasks", path: "/task-templates", group: "Home", caps: ["view", "edit", "approve"] },
       { key: "file_upload", label: "File upload", plain: "Upload files", path: "/upload", group: "Daily cycle", caps: ["view", "edit"] },
       { key: "ingestion", label: "Bank files", plain: "Bank files", path: "/ingestion", group: "Daily cycle", step: 1, caps: ["view", "edit", "approve"] },
@@ -35,7 +35,7 @@ export const MODULES = [
       { key: "release", label: "Fund release", plain: "Release money", path: "/release", group: "Daily cycle", step: 4, phase: "P2", caps: ["view", "edit", "approve", "export"] },
       { key: "refunds", label: "Refunds", plain: "Refunds", path: "/refunds", group: "Daily cycle", step: 5, phase: "P2", caps: ["view", "edit", "approve", "export"] },
       { key: "approvals", label: "Setup approvals", path: "/dashboard", group: "Setup", caps: ["view", "approve"], hidden: true },
-      { key: "audit", quiet: true, label: "Audit history", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
+      { key: "audit", label: "Audit history", plain: "History", path: "/audit", group: "Review", caps: ["view", "export"] },
     ],
   },
   {
@@ -104,17 +104,18 @@ export const MODULES = [
     // Any role can be given these screens in Roles & Access, so operations staff can be added to setup work too.
     key: "central_setup", label: "Central Setup", color: "#7c5cff", folders: true,
     screens: [
-      // Organised by file source, not by type of setting: a bank (or aggregator) page holds its accounts, columns,
-      // status codes and narration tags. Screens marked nav:false keep their permissions but live as tabs, not menus.
+      // Organised by file source: Bank statements holds Accounts, Column mapping, Transaction type mapping and Narration tags;
+      // Credit MIS holds Feeds, Column mapping and Transaction type mapping. Those three screens keep their own permissions
+      // (nav:false) and open as sections of the source screens, not as menu items.
       { key: "setup_todo", label: "To do", crumb: "To do", path: "/setup-todo", group: "Recon", caps: ["view"] },
       { key: "bank_setup", label: "Bank statements", crumb: "Bank statements", path: "/bank-setup", group: "Recon", caps: ["view", "edit", "approve", "export"] },
       { key: "credit_mis", label: "Credit MIS", crumb: "Credit MIS", path: "/credit-mis", group: "Recon", caps: ["view", "edit", "approve", "export"] },
-      { key: "cutoffs", quiet: true, label: "Cutoff times", path: "/cutoffs", group: "Recon", caps: ["view", "edit", "approve"] },
-      { key: "setup_scheduler", quiet: true, label: "File pickups", crumb: "File pickups", path: "/setup-scheduler", group: "Recon", caps: ["view", "export"] },
+      { key: "cutoffs", label: "Cutoff times", path: "/cutoffs", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "setup_scheduler", label: "File pickups", crumb: "File pickups", path: "/setup-scheduler", group: "Recon", caps: ["view", "export"] },
       { key: "setup_tasks", label: "Requests from Ops", crumb: "Setup to do", path: "/setup-tasks", group: "Recon", caps: ["view", "edit"], nav: false },
-      { key: "mapping", label: "Column mapping", crumb: "Column mapping", path: "/mapping", group: "Recon", caps: ["view", "edit", "approve"] },
-      { key: "status_std", label: "Transaction type mapping", crumb: "Transaction type mapping", path: "/status-standardisation", group: "Recon", caps: ["view", "edit", "approve"] },
-      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Recon", caps: ["view", "edit", "approve"] },
+      { key: "mapping", label: "Column mapping", crumb: "Column mapping", path: "/mapping", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
+      { key: "status_std", label: "Transaction type mapping", crumb: "Transaction type mapping", path: "/status-standardisation", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
+      { key: "narration_tags", label: "Narration tags", path: "/narration-tags", group: "Recon", caps: ["view", "edit", "approve"], nav: false },
       { key: "setup_approvals", label: "Approvals", crumb: "Setup to do", path: "/setup-approvals", group: "Recon", caps: ["view", "approve"], nav: false },
     ],
   },
@@ -144,19 +145,25 @@ export function seedRoles() {
       { users: ["view", "approve"], roles: ["view", "approve"] }),
     // Recon Ops: one role for the back-office team. Every member is both maker and checker; whoever did the work cannot authorise it.
     r("role_recon_ops", "Recon · Ops", "recon", "One role for the recon back-office (BO) team: uploads and reprocesses files, watches closing balances, and raises setup requests to the Central Setup Team. Every member is maker and checker: whoever did the work cannot authorise it; anyone else in the team can.",
-      { today: ["view"], inbox: ["view", "approve"], balances: ["view", "edit", "export"], file_upload: ["view", "edit"], ingestion: ["view", "edit", "approve"], manual_upload: ["view", "edit"], audit: ["view", "export"], task_templates: ["view"] }, { peer: true }),
-    // Level 1 and Level 2: added on top of Recon · Ops for senior team members. Both change the team's task templates
-    // (times, who does it, on or off); only Level 2 can add a new task. Whether Level 1/2 may add tasks is still to be confirmed.
-    r("role_recon_l1", "Recon · Level 1", "recon", "For senior Ops members. Changes the team's task templates: when each task is due, who does it, and whether it is on. Cannot add new tasks.",
+      { today: ["view"], command: ["view", "export"], inbox: ["view", "approve"], balances: ["view", "edit", "export"], file_upload: ["view", "edit"], ingestion: ["view", "edit", "approve"], manual_upload: ["view", "edit"], audit: ["view", "export"], task_templates: ["view"] }, { peer: true }),
+    // Level 1 and Level 2: added on top of Recon · Ops for senior team members. They see the team's tasks and assign them
+    // to people. They cannot create a task or change when it is due: the functional manager (the team leader) does that
+    // and reviews the work (confirmed 13 Nov). On Team tasks, "edit" = assign and "approve" = create and manage.
+    r("role_recon_l1", "Recon · Level 1", "recon", "For senior Ops members. Sees the team's tasks and assigns them to people. Cannot create a task or change when it is due.",
       { today: ["view"], task_templates: ["view", "edit"] }),
-    r("role_recon_l2", "Recon · Level 2", "recon", "Oversight of the Ops team. Everything Level 1 can do, and can add new tasks to the team's templates.",
-      { today: ["view"], task_templates: ["view", "edit", "approve"] }),
+    r("role_recon_l2", "Recon · Level 2", "recon", "For senior Ops members. Sees the team's tasks and assigns them to people. Cannot create a task or change when it is due.",
+      { today: ["view"], task_templates: ["view", "edit"] }),
     r("role_recon_auditor", "Recon · Auditor", "recon", "Read-only access to every recon screen, with export.", Object.fromEntries(Object.entries(all("recon", ["view", "export"])).filter(([k]) => !SCREENS[k].phase))),
-    r("role_functional_manager", "Recon · Functional Manager", "recon", "Dashboards and approval screens only: the team dashboard, closing balances, approvals and the No-action review. Never a maker; no setup screens.",
-      { command: ["view", "export"], balances: ["view", "export"], inbox: ["view", "approve"], no_action_review: ["view", "approve", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"] }),
+    r("role_functional_manager", "Recon · Functional Manager", "recon", "The team leader (a deputy manager, manager or senior manager). Creates the team's tasks and reviews the team's work: the team dashboard, closing balances, approvals and the No-action review. Does not do the daily Ops work; no setup screens.",
+      { task_templates: ["view", "edit", "approve"], command: ["view", "export"], balances: ["view", "export"], inbox: ["view", "approve"], no_action_review: ["view", "approve", "export"], brk_compute: ["view", "approve"], brk_payout: ["view", "approve"] }),
     r("role_it_support", "IT Support · Monitoring", "recon", "Scheduler monitor only: checks that scheduler jobs ran. Read-only; no business data.",
       { scheduler: ["view", "export"] }),
     r("role_sip_viewer", "SIP · Viewer", "sip", "Read-only view of SIP registrations, failures and mandates.", all("sip", ["view"])),
+    // Sample roles for modules that are not built yet, so screens that count people by module show every module. Synthetic.
+    r("role_crms_agent", "CRMS · Agent", "crms", "Sample role: works investor accounts and change requests.", all("crms", ["view", "edit"])),
+    r("role_cs_agent", "Customer Support · Agent", "support", "Sample role: handles service requests and complaints.", all("support", ["view", "edit"])),
+    r("role_pur_maker", "Purchase · Maker", "purchase", "Sample role: processes purchase applications.", all("purchase", ["view", "edit"])),
+    r("role_mis_viewer", "MIS Reports · Viewer", "mis", "Sample role: reads daily and regulatory MIS.", all("mis", ["view", "export"])),
     r("role_brk_maker", "Brokerage · Maker", "brokerage", "Computes brokerage and prepares payout batches.", all("brokerage", ["view", "edit", "export"])),
     r("role_brk_checker", "Brokerage · Checker", "brokerage", "Approves brokerage computations and payouts.", all("brokerage", ["view", "approve", "export"])),
     r("role_pst_maker", "Posting · Maker", "posting", "Posts realised transactions and reviews NIGO cases.", all("posting", ["view", "edit"])),

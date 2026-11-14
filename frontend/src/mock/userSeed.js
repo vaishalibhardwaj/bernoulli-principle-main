@@ -310,6 +310,7 @@ export function seedUsers() {
   // Platform access model: every user holds one or more module roles.
   const explicit = { usr_meera: ["role_platform_admin"], usr_rohit: ["role_access_approver"], usr_priya: ["role_recon_ops", "role_recon_l2"], usr_arun: ["role_recon_ops", "role_recon_l1"], usr_sanjay: ["role_recon_auditor"] };
   users.forEach((u, i) => { if (!u.roles) u.roles = explicit[u.id] || rolesForLegacy(u.role, i); });
+  addSampleModuleRoles(users);
 
   // AMC scope, daily-cycle assignment and biometric punch-in (for the 10-day auto-deactivation policy).
   const AMC = ["HDFC Mutual Fund", "ICICI Prudential MF", "Aditya Birla Sun Life MF", "Kotak Mahindra MF", "Nippon India MF", "DSP Mutual Fund"];
@@ -329,5 +330,16 @@ export function seedUsers() {
   // One active user who is about to cross the biometric limit, and the dormant (60+ days no login) users stay as generated.
   const near = users.find((u) => u.status === "active" && !PRIMARY_USERS.some((p) => p.id === u.id) && u.role === "operator");
   if (near) near.lastBiometric = new Date(now - 9 * day).toISOString();
+  return users;
+}
+
+/** Sample people for modules that are not built yet (CRMS, Customer Support, Purchase, MIS Reports). Synthetic. */
+export const SAMPLE_MODULE_ROLES = [["role_crms_agent", 3, 0], ["role_cs_agent", 4, 1], ["role_pur_maker", 6, 2], ["role_mis_viewer", 7, 3]];
+export function addSampleModuleRoles(users) {
+  const named = new Set(["usr_meera", "usr_anil", "usr_rohit", "usr_priya", "usr_arun", "usr_kavita", "usr_vikram", "usr_sanjay", "usr_deepa"]);
+  users.forEach((u, i) => {
+    if (named.has(u.id)) return;
+    SAMPLE_MODULE_ROLES.forEach(([rid, every, off]) => { if (i % every === off && !(u.roles || []).includes(rid)) u.roles = [...(u.roles || []), rid]; });
+  });
   return users;
 }

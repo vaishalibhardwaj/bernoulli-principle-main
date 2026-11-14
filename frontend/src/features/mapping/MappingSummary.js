@@ -1,18 +1,20 @@
+// Column mapping: one mapping per bank (or aggregator), and per layout when one sends more than one.
+// Around 10 to 12 banks, so the whole list fits on one screen: two dropdowns (status, bank) and one clean row each.
+// Each row says how many accounts read their files with it, so the impact of a change is visible before it is made.
 import React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Pencil, Eye, GitCompareArrows, Landmark } from "lucide-react";
+import { ArrowRight, Landmark } from "lucide-react";
 import { useStore } from "@/state/store";
-import { StatusPill, SkeletonRows, EmptyState } from "@/components/bits";
-import Pagination from "@/components/Pagination";
+import { StatusPill, EmptyState } from "@/components/bits";
+import Picker from "@/components/Picker";
 import { formatDate } from "@/lib/format";
 import { hasCap } from "@/lib/access";
-import { STATUS_FILTERS, statusBucket } from "@/lib/constants";
+import { statusBucket } from "@/lib/constants";
 import { paLabel } from "@/lib/setupSchema";
 
-/**
- * Column mapping is per bank name (~15–18 banks), not per account. Each row says how many accounts it drives,
- * so people see the impact of a change before they make it.
- */
+const STATUSES = [["all", "All statuses"], ["active", "Active"], ["inactive", "Inactive"], ["pending", "Pending for approval"], ["rejected", "Rejected"], ["draft", "Draft"]];
+const STEP = 15;
+
 export default function MappingSummary({ embedded = false, type = null }) {
   const { collections, perms } = useStore();
   const nav = useNavigate();
@@ -20,70 +22,61 @@ export default function MappingSummary({ embedded = false, type = null }) {
   const tab = type || (sp.get("tab") === "credit" ? "credit" : "bank");
   const [status, setStatus] = React.useState("all");
   const [bank, setBank] = React.useState("all");
-  const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(15);
-  const [loading, setLoading] = React.useState(true);
+  const [shown, setShown] = React.useState(STEP);
   const canEdit = hasCap(perms, "mapping", "edit");
 
   const all = collections.bank_mapping.filter((m) => (tab === "credit" ? m.type === "credit" : m.type === "bank"));
   const accountsFor = (m) => new Set((tab === "credit" ? collections.credit_config : collections.bank_config).filter((c) => c.bankName === m.bankName && (c.formatName || "") === (m.formatName || "")).map((c) => c.accountNumber)).size;
   const banks = [...new Set(all.map((m) => m.bankName))].sort();
-
-  React.useEffect(() => { setLoading(true); const t = setTimeout(() => setLoading(false), 300); return () => clearTimeout(t); }, [status, tab, page, pageSize, bank]);
-  React.useEffect(() => { setPage(1); }, [status, tab, bank]);
-
-  const filtered = all.filter((m) => (status === "all" || statusBucket(m.status) === status) && (bank === "all" || m.bankName === bank));
-  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
-  const counts = Object.fromEntries(STATUS_FILTERS.map((f) => [f.key, f.key === "all" ? all.length : all.filter((m) => statusBucket(m.status) === f.key).length]));
+  const st = (m) => statusBucket(m.status);
+  const rows = all.filter((m) => (status === "all" || st(m) === status) && (bank === "all" || m.bankName === bank))
+    .sort((a, b) => ["rejected", "pending", "draft", "active", "inactive"].indexOf(st(a)) - ["rejected", "pending", "draft", "active", "inactive"].indexOf(st(b)) || a.bankName.localeCompare(b.bankName));
+  const who = tab === "credit" ? "aggregator" : "bank";
 
   return (
-    <div data-testid="mapping-summary">
-      {!embedded && <div className="page-head"><div><h1>Column Mapping</h1><p>One mapping per bank (and per layout, when a bank sends more than one). Every account at that bank uses it.</p></div></div>}
-      {embedded && <p className="bs-mapnote">One mapping per {tab === "credit" ? "payment aggregator" : "bank"} (and per layout, when more than one is sent). Every account that uses it reads its files this way.</p>}
+    <div className="mp" data-testid="mapping-summary">
+      {!embedded && <div className="page-head"><div><h1>Column mapping</h1></div></div>}
+      {!embedded && (
+        <nav className="src-sections" role="tablist" aria-label="Mapping type">
+          {[["bank", "Bank statements"], ["credit", "Credit MIS"]].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setSp({ tab: k })} data-testid={"tab-" + k}>{l}</button>)}
+        </nav>
+      )}
 
-      <div className="card">
-        {!embedded && <div className="toolbar" style={{ gap: 4, paddingBottom: 0, borderBottom: "none" }}>
-          <button className={"btn " + (tab === "bank" ? "btn-primary" : "btn-ghost")} data-testid="tab-bank" onClick={() => setSp({ tab: "bank" })}>Bank Statement Mapping</button>
-          <button className={"btn " + (tab === "credit" ? "btn-primary" : "btn-ghost")} data-testid="tab-credit" onClick={() => setSp({ tab: "credit" })}>Credit MIS Mapping</button>
-        </div>}
-        <div className="toolbar">
-          <select className="select" style={{ maxWidth: 220 }} value={status} onChange={(e) => setStatus(e.target.value)} data-testid="mapping-filter-status">
-            {STATUS_FILTERS.map((f) => <option key={f.key} value={f.key}>{f.label} ({counts[f.key]})</option>)}
-          </select>
-          <select className="select" style={{ maxWidth: 240 }} value={bank} onChange={(e) => setBank(e.target.value)} data-testid="mapping-filter-bank">
-            <option value="all">All banks ({banks.length})</option>
-            {banks.map((b) => <option key={b}>{b}</option>)}
-          </select>
-        </div>
-        <div className="grid-scroll">
-          <table className="grid">
-            <thead><tr><th style={{ width: 54 }}>S.No</th><th>Bank</th>{tab === "credit" && <th>Payment aggregator</th>}<th>Layout</th><th>File Type</th><th className="r">Accounts using it</th><th>Status</th><th>Last updated</th><th style={{ width: 90 }}>Action</th></tr></thead>
-            {loading ? <SkeletonRows rows={7} cols={tab === "credit" ? 9 : 8} /> : (
-              <tbody>
-                {pageRows.map((m, i) => (
-                  <tr key={m.id} data-testid={"mapping-row-" + m.id}>
-                    <td className="tnum">{(page - 1) * pageSize + i + 1}</td>
-                    <td><b>{m.bankName}</b></td>
-                    {tab === "credit" && <td style={{ fontSize: 12 }}>{paLabel(m.paCode || (m.paCodes || [])[0])}</td>}
-                    <td style={{ fontSize: 12 }}>{m.formatName || <span className="muted">Standard</span>}</td>
-                    <td className="tnum">{m.standard ? `${m.fileType} (standard)` : m.fileType}</td>
-                    <td className="tnum r"><span className="acct-count"><Landmark size={12} /> {accountsFor(m)}</span></td>
-                    <td><StatusPill status={m.status === "not_started" ? "draft" : m.status} id={"map-status-" + m.id} />{m.status === "not_started" && <div className="muted" style={{ fontSize: 11 }}>not started</div>}</td>
-                    <td className="tnum muted">{formatDate(m.lastUpdated)}</td>
-                    <td>
-                      <button className="row-icon-btn" title={m.status === "pending" || !canEdit ? "View" : "Edit mapping"} data-testid={"map-edit-" + m.id} onClick={() => nav(`/mapping/${tab}/${m.id}`)}>
-                        {m.status === "pending" || !canEdit ? <Eye /> : <Pencil />}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            )}
-          </table>
-          {!loading && filtered.length === 0 && <EmptyState icon={GitCompareArrows} title="No mappings here yet" subtitle={tab === "credit" ? "Credit MIS mappings appear once a Credit MIS setup is approved." : "Mappings appear once a bank's first setup is approved."} />}
-        </div>
-        {!loading && filtered.length > 0 && <Pagination total={filtered.length} page={page} pageSize={pageSize} onPage={setPage} onPageSize={(s) => { setPageSize(s); setPage(1); }} idPrefix="map-pager" />}
+      <div className="mp-bar">
+        <Picker value={status} onChange={(v) => { setStatus(v); setShown(STEP); }} label="Status" testid="mapping-filter-status" width={250}
+          options={STATUSES.map(([k, l]) => ({ value: k, label: l, count: k === "all" ? all.length : all.filter((m) => st(m) === k).length }))} />
+        <Picker value={bank} onChange={(v) => { setBank(v); setShown(STEP); }} label={tab === "credit" ? "Bank" : "Bank"} testid="mapping-filter-bank" width={260}
+          options={[{ value: "all", label: "All banks", count: banks.length }, ...banks.map((b) => ({ value: b, label: b, count: all.filter((m) => m.bankName === b).length }))]} />
+        <span className="rq-count tnum">{rows.length} mapping{rows.length === 1 ? "" : "s"}</span>
       </div>
+
+      {rows.length === 0 ? (
+        <EmptyState art="search" title={all.length ? "No mapping matches" : "No mappings yet"} subtitle={all.length ? "Change the status or the bank." : `A mapping appears once a ${who}'s first setup is approved.`} />
+      ) : (
+        <div className="dl" style={{ "--cols": "44px minmax(0, 1.6fr) 110px 130px 170px 110px 64px" }}>
+          <div className="dl-h" aria-hidden="true"><span /><span>{tab === "credit" ? "Bank · aggregator" : "Bank"}</span><span>File type</span><span>Accounts using it</span><span>Status</span><span>Updated</span><span /></div>
+          <ul className="rq-list">
+            {rows.slice(0, shown).map((m) => {
+              const n = accountsFor(m);
+              const view = m.status === "pending" || !canEdit;
+              return (
+                <li key={m.id}>
+                  <button type="button" className="dl-r" onClick={() => nav(`/mapping/${tab}/${m.id}`)} data-testid={"mapping-row-" + m.id}>
+                    <span className="dl-ic" aria-hidden="true">{m.bankName.slice(0, 1)}</span>
+                    <span className="dl-main"><b>{m.bankName}</b><small>{tab === "credit" ? `${paLabel(m.paCode || (m.paCodes || [])[0])} · ` : ""}{m.formatName || "Standard layout"}</small></span>
+                    <span className="dl-c">{m.fileType}</span>
+                    <span className="dl-c"><Landmark size={14} /> {n}</span>
+                    <StatusPill status={st(m)} id={"map-status-" + m.id} />
+                    <span className="dl-c muted tnum">{formatDate(m.lastUpdated)}</span>
+                    <span className="rq-go" data-testid={"map-edit-" + m.id}>{view ? "View" : "Edit"} <ArrowRight size={14} /></span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {rows.length > shown && <button type="button" className="rq-more" onClick={() => setShown(shown + STEP)}>Show {Math.min(STEP, rows.length - shown)} more <span className="tnum">· {rows.length - shown} left</span></button>}
+        </div>
+      )}
     </div>
   );
 }

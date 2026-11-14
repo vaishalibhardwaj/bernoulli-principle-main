@@ -1,7 +1,7 @@
 // Today's to-do for an Operations user, generated from task templates.
 // A template is one piece of KRA work with the times it is due each day (bank statement upload at 9:00, 3:00 and 6:00)
-// and the person it is assigned to (none = the whole Ops team). Level 1 and Level 2 users change templates on the
-// Team tasks screen; the to-do list is rebuilt from them every day. All data is synthetic.
+// and the person it is assigned to (none = the whole Ops team). The functional manager creates and manages templates on the
+// Team tasks screen, and Level 1 and Level 2 users assign them; the to-do list is rebuilt from them every day. All data is synthetic.
 // `screen` is the access key that must be viewable for the "Open" link; `phase` marks work that lands later.
 
 const at = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
@@ -62,4 +62,39 @@ export function taskState(t, done, now = Date.now()) {
   if (d < now) return "overdue";
   if (d - now <= 60 * 60000) return "soon";
   return "later";
+}
+
+/**
+ * Where each task's main button goes, and what it says. One rule per task, so Today never sends anyone somewhere vague.
+ * The screen key is checked against the person's permissions before the button is shown.
+ */
+const CP_OF = { "0930": "am", "1530": "pm", "1830": "eve" };
+export function taskRoute(t) {
+  const base = t.template || t.id;
+  const slot = String(t.id).split("_").pop();
+  const R = {
+    tpl_bs_upload: ["Upload the statement", "file_upload", "/upload?type=bank"],
+    tpl_cmis_upload: ["Upload the Credit MIS file", "file_upload", "/upload?type=credit"],
+    tpl_rem_upload: ["Upload the remitter file", "file_upload", `/upload?type=remitter&bank=${encodeURIComponent("HDFC Bank")}`],
+    tpl_util_upload: ["Upload the file", "file_upload", "/upload"],
+    tpl_checkpoint: ["Open the checkpoint", "ingestion", `/ingestion?cp=${CP_OF[slot] || "pm"}`],
+    tpl_cmis_proc: ["See today's Credit MIS files", "file_upload", "/upload?type=credit&view=status"],
+    tpl_cb: ["See balances that don't match", "balances", "/closing-balances?only=broken"],
+    tpl_missing: ["See statements not uploaded", "ingestion", "/ingestion"],
+    tpl_remlate: ["See remitter schedules", "command", "/command?focus=remitter"],
+    tpl_fnu: ["See accounts where a sweep may be pending", "balances", "/closing-balances?only=red"],
+  }[base];
+  if (R) return { label: R[0], screen: R[1], path: R[2] };
+  // Tasks added in Task templates have no screen of their own: they go where their area's work is done.
+  const A = {
+    upload: ["Open File upload", "file_upload", "/upload"],
+    monitor: ["Open the checkpoint", "ingestion", "/ingestion"],
+    missing: ["See statements not uploaded", "ingestion", "/ingestion"],
+    balances: ["Open closing balances", "balances", "/closing-balances"],
+    funds: ["See accounts where a sweep may be pending", "balances", "/closing-balances?only=red"],
+    recon: ["Open matching", "match", "/match"],
+    exceptions: ["Open problem cases", "exceptions", "/exceptions"],
+  }[t.area];
+  if (A && (!t.screen || t.screen === "today")) return { label: A[0], screen: A[1], path: A[2] };
+  return { label: "Open it", screen: t.screen, path: t.path };
 }

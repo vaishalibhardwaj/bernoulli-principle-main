@@ -1,6 +1,7 @@
 import React from "react";
 import { STATUS, CHIP } from "@/lib/constants";
-import { Eye, EyeOff, Inbox, Info, AlertTriangle, Lock } from "lucide-react";
+import { Eye, EyeOff, Info, AlertTriangle, Lock } from "lucide-react";
+import { Art } from "@/components/Art";
 
 export function StatusPill({ status, id }) {
   const m = STATUS[status] || STATUS.draft;
@@ -59,13 +60,13 @@ export function VaultNote() {
   return <Note kind="vault" icon={Lock}>Stored in the secure vault. Never shown again after saving.</Note>;
 }
 
-export function EmptyState({ title, subtitle, icon }) {
-  const Ico = icon || Inbox;
+export function EmptyState({ title, subtitle, art = "empty", action }) {
   return (
     <div className="empty" data-testid="empty-state">
-      <div className="emoji"><Ico /></div>
+      <Art name={art} size={72} />
       <h3>{title}</h3>
-      <p>{subtitle}</p>
+      {subtitle && <p>{subtitle}</p>}
+      {action}
     </div>
   );
 }
@@ -88,4 +89,44 @@ export function InfoTip({ text, id }) {
   return (
     <span className="info-tip" title={text} id={id} data-testid={id}><Info /></span>
   );
+}
+
+/** A full-area state: something went wrong, no access, or nothing here. Says what happened and the way out. */
+export function StateBlock({ art = "empty", title, children, action, testid }) {
+  return (
+    <div className="state" role="status" data-testid={testid}>
+      <Art name={art} size={80} />
+      <h2>{title}</h2>
+      {children && <p>{children}</p>}
+      {action}
+    </div>
+  );
+}
+
+/** Loading placeholder lines, shown in place of a spinner while a file is being read. */
+export function SkeletonBlock({ rows = 4, label = "Loading" }) {
+  return (
+    <div role="status" aria-label={label} data-testid="skeleton">
+      {Array.from({ length: rows }, (_, i) => <div key={i} className="sk-row">{[0, 1, 2, 3].map((k) => <span key={k} className="sk" style={{ width: `${[70, 90, 55, 40][k]}%` }} />)}</div>)}
+    </div>
+  );
+}
+
+/** A small "in progress" mark for inside a button or a row. */
+export const Busy = () => <span className="sk sk-inline" aria-hidden="true" />;
+
+/** Catches a screen that fails to draw, so one broken screen never blanks the whole app. */
+export class ScreenBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidUpdate(prev) { if (prev.resetKey !== this.props.resetKey && this.state.failed) this.setState({ failed: false }); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <StateBlock art="error" title="This screen could not be shown" testid="screen-error"
+        action={<button type="button" className="btn btn-primary" onClick={() => this.setState({ failed: false })}>Try again</button>}>
+        Nothing you entered elsewhere is lost. Try again, or open another screen from the menu. If it keeps happening, tell IT Support which screen it was.
+      </StateBlock>
+    );
+  }
 }

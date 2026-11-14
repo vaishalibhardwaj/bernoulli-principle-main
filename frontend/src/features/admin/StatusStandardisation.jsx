@@ -1,8 +1,11 @@
 import React from "react";
-import { Scale, Plus, Check, Clock, Inbox } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Plus, MoreHorizontal, Copy } from "lucide-react";
+import { usePopover, PopoverPanel } from "@/components/Popover";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { Note } from "@/components/bits";
+import { StatusPill } from "@/components/bits";
+import Picker from "@/components/Picker";
 import { formatDate, uid } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -11,16 +14,12 @@ import { toast } from "sonner";
  * bank-specific credit/debit indicators into the system values CREDIT / DEBIT.
  * Maintained by Recon Ops; every add/change waits for another member of the team.
  */
-export default function StatusStandardisation() {
+export default function StatusStandardisation({ embedded = false }) {
+  const nav = useNavigate();
   const { collections, perms, act, currentUser } = useStore();
   const rows = collections.status_map || [];
   const canEdit = hasCap(perms, "status_std", "edit");
   const canApprove = hasCap(perms, "status_std", "approve");
-  const decide = (r, yes) => {
-    const res = act({ screen: "status_std", cap: "approve", kind: "status_map", id: r.id, target: r, patch: yes ? { status: "active", approvedBy: currentUser } : { status: r.requestedBy ? "requested" : "rejected", owner: r.requestedBy || r.owner },
-      audit: { entityLabel: `Status “${r.source}” → ${r.system}`, action: yes ? "Approve status mapping" : "Reject status mapping", from: "Pending", to: yes ? "Active" : "Rejected", comment: yes ? "Applies to files loaded from now on" : undefined } });
-    if (!res.ok) toast.error(res.error); else toast.success(yes ? `“${r.source}” is now ${r.system}` : "Sent back");
-  };
   const [draft, setDraft] = React.useState({ source: "", system: "CREDIT", seenAt: "", table: "RECON_BANK_TXN", column: "INSTRM_STATUS" });
   const [answer, setAnswer] = React.useState({});
 
@@ -36,9 +35,10 @@ export default function StatusStandardisation() {
   };
   const add = () => {
     const src = draft.source.trim();
-    if (!src) { toast.error("Enter the value as it appears in the bank file"); return; }
-    if (rows.some((r) => r.source.toUpperCase() === src.toUpperCase() && r.status !== "requested")) { toast.error(`“${src}” is already in the table`); return; }
-    if (save({ ...draft, source: src, id: uid("sm"), status: "pending", owner: currentUser, createdAt: new Date().toISOString() }, "Add status mapping")) setDraft({ ...draft, source: "", seenAt: "" });
+    if (!src) { toast.error("Enter the value as it appears in the bank file"); return false; }
+    if (rows.some((r) => r.source.toUpperCase() === src.toUpperCase() && r.status !== "requested")) { toast.error(`“${src}” is already in the table`); return false; }
+    if (save({ ...draft, source: src, id: uid("sm"), status: "pending", owner: currentUser, createdAt: new Date().toISOString() }, "Add status mapping")) { setDraft({ ...draft, source: "", seenAt: "" }); return true; }
+    return false;
   };
   const fulfil = (req) => {
     const system = answer[req.id];
@@ -46,55 +46,90 @@ export default function StatusStandardisation() {
     save({ ...req, system, status: "pending", owner: currentUser, requestedBy: req.owner }, "Add status mapping (maker request)");
   };
 
+  const ORDER = ["pending", "active"];
+  const [status, setStatus] = React.useState("all");
+  const [bank, setBank] = React.useState("all");
+  const [adding, setAdding] = React.useState(false);
+  const all = [...pending, ...active];
+  const seen = [...new Set(all.map((r) => r.seenAt).filter(Boolean))].sort();
+  const list = all.filter((r) => (status === "all" || r.status === status) && (bank === "all" || r.seenAt === bank)).sort((x, y) => ORDER.indexOf(x.status) - ORDER.indexOf(y.status));
+  const COLS = "40px minmax(0, 1.4fr) 120px minmax(0, 1.6fr) 210px 44px";
+
   return (
     <div data-testid="status-std">
-      <div className="page-head"><div>
-        <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Scale size={22} /> Transaction status standardisation</h1>
-        <p>How each bank's credit/debit indicator is converted to the system value. Used when a statement is loaded. Anyone in Recon Ops adds or changes values; another member of the team approves them.</p>
-      </div></div>
+      {!embedded && <div className="page-head"><div><h1>Transaction type mapping</h1></div></div>}
 
-      {!canEdit && <div style={{ marginBottom: 14 }}><Note kind="info">{canApprove ? "Approve or send back values someone else in the team added. Approved values apply to files loaded from then on." : "Read-only for you. Recon Ops adds or changes these values; anyone can ask for a missing value from Column mapping."}</Note></div>}
+      <div className="dl-bar">
+        <Picker value={status} onChange={setStatus} label="Status" testid="std-status" width={240}
+          options={[["all", "All statuses"], ["active", "Active"], ["pending", "Pending for approval"]].map(([k, l]) => ({ value: k, label: l, count: k === "all" ? all.length : all.filter((r) => r.status === k).length }))} />
+        <Picker value={bank} onChange={setBank} label="Seen at" testid="std-bank" width={240} options={[{ value: "all", label: "All", count: seen.length }, ...seen.map((b) => ({ value: b, label: b, count: all.filter((r) => r.seenAt === b).length }))]} />
+        {canEdit && !adding && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)} data-testid="std-add-open"><Plus size={15} /> Add value</button>}
+      </div>
 
-      {canEdit && requests.length > 0 && (
-        <div className="card card-pad" style={{ marginBottom: 16 }} data-testid="std-requests">
-          <h3 style={{ display: "flex", gap: 8, alignItems: "center", margin: "0 0 10px" }}><Inbox size={16} /> Asked for by makers <span className="pill pill-pending">{requests.length}</span></h3>
-          <table className="grid"><thead><tr><th>Value in file</th><th>Seen at</th><th>Asked by</th><th>Convert to</th><th /></tr></thead>
-            <tbody>{requests.map((r) => (
-              <tr key={r.id}><td className="tnum"><b>{r.source}</b></td><td>{r.seenAt}</td><td>{r.owner} · {formatDate(r.createdAt)}</td>
-                <td><select className="select" style={{ maxWidth: 140 }} value={answer[r.id] || ""} onChange={(e) => setAnswer({ ...answer, [r.id]: e.target.value })} data-testid={"std-answer-" + r.source}><option value="">Select…</option><option>CREDIT</option><option>DEBIT</option></select></td>
-                <td><button className="btn btn-primary btn-sm" onClick={() => fulfil(r)} data-testid={"std-fulfil-" + r.source}>Send for approval</button></td></tr>
-            ))}</tbody></table>
+      {adding && (
+        <div className="dl-form" data-testid="std-add">
+          <h3>New value</h3>
+          <label>Value in bank file<input className="input tnum" placeholder="e.g. CR" value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })} data-testid="std-source" autoFocus /></label>
+          <label>System value<select className="select" value={draft.system} onChange={(e) => setDraft({ ...draft, system: e.target.value })}><option>CREDIT</option><option>DEBIT</option></select></label>
+          <label>Seen at<input className="input" placeholder="Bank or aggregator (optional)" value={draft.seenAt} onChange={(e) => setDraft({ ...draft, seenAt: e.target.value })} /></label>
+          <div className="acts"><button type="button" className="btn btn-ghost" onClick={() => setAdding(false)}>Cancel</button><button type="button" className="btn btn-primary" onClick={() => { if (add()) setAdding(false); }} data-testid="std-add-btn">Send for approval</button></div>
         </div>
       )}
 
-      <div className="card">
-        <div className="grid-scroll">
-          <table className="grid">
-            <thead><tr><th>Value in bank file</th><th>System value</th><th>Seen at</th><th>DB table · column</th><th>Status</th><th>Added</th>{canApprove && <th />}</tr></thead>
-            <tbody>
-              {[...pending, ...active].map((r) => (
-                <tr key={r.id} data-testid={"std-row-" + r.source}>
-                  <td className="tnum"><b>{r.source}</b></td>
-                  <td><span className={"chip " + (r.system === "CREDIT" ? "chip-previous" : "chip-manual")}>{r.system}</span></td>
-                  <td>{r.seenAt || "—"}</td>
-                  <td className="tnum" style={{ fontSize: 12 }}>{r.table} · {r.column}</td>
-                  <td>{r.status === "active" ? <span className="pill pill-active"><span className="dot" /><Check size={11} /> Active</span> : <span className="pill pill-pending"><span className="dot" /><Clock size={11} /> Pending approval</span>}</td>
-                  <td>{r.owner} · {formatDate(r.createdAt)}</td>
-                  {canApprove && <td>{r.status === "pending" && (r.owner === currentUser ? <span className="muted">Your own</span> : <span style={{ display: "flex", gap: 6 }}><button className="btn btn-success btn-sm" onClick={() => decide(r, true)} data-testid={"std-approve-" + r.source}><Check size={13} /> Approve</button><button className="btn btn-outline btn-sm" onClick={() => decide(r, false)}>Send back</button></span>)}</td>}
-                </tr>
+      {canEdit && requests.length > 0 && (
+        <>
+          <h2 className="dl-sub">Asked for by makers <em className="tnum">{requests.length}</em></h2>
+          <div className="dl" data-testid="std-requests" style={{ "--cols": "44px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 160px 170px" }}>
+            <div className="dl-h" aria-hidden="true"><span /><span>Value in file</span><span>Seen at</span><span>Asked by</span><span>Convert to</span><span /></div>
+            <ul className="rq-list">
+              {requests.map((r) => (
+                <li key={r.id}><div className="dl-r">
+                  <span className="dl-ic" aria-hidden="true">?</span>
+                  <span className="dl-c"><b className="dl-strong tnum">{r.source}</b></span>
+                  <span className="dl-c">{r.seenAt || "—"}</span>
+                  <span className="dl-c muted">{r.owner} · {formatDate(r.createdAt)}</span>
+                  <select className="select dl-sel" aria-label={`Convert ${r.source} to`} value={answer[r.id] || ""} onChange={(e) => setAnswer({ ...answer, [r.id]: e.target.value })} data-testid={"std-answer-" + r.source}><option value="">Select…</option><option>CREDIT</option><option>DEBIT</option></select>
+                  <span className="dl-act"><button className="btn btn-primary btn-sm" onClick={() => fulfil(r)} data-testid={"std-fulfil-" + r.source}>Send for approval</button></span>
+                </div></li>
               ))}
-            </tbody>
-          </table>
-        </div>
-        {canEdit && (
-          <div className="std-add" data-testid="std-add">
-            <input className="input tnum" placeholder="Value as in file, e.g. CR" value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })} data-testid="std-source" />
-            <select className="select" value={draft.system} onChange={(e) => setDraft({ ...draft, system: e.target.value })}><option>CREDIT</option><option>DEBIT</option></select>
-            <input className="input" placeholder="Bank (optional)" value={draft.seenAt} onChange={(e) => setDraft({ ...draft, seenAt: e.target.value })} />
-            <button className="btn btn-primary" onClick={add} data-testid="std-add-btn"><Plus size={15} /> Add</button>
+            </ul>
           </div>
-        )}
+          <h2 className="dl-sub">All values</h2>
+        </>
+      )}
+
+      <div className="dl" style={{ "--cols": COLS }}>
+        <div className="dl-h" aria-hidden="true"><span /><span>Value in bank file</span><span>System value</span><span>Seen at</span><span>Status</span><span /></div>
+        {list.length === 0 && <div className="dl-empty">No values here.</div>}
+        <ul className="rq-list">
+          {list.map((r) => (
+            <li key={r.id}><div className="dl-r" data-testid={"std-row-" + r.source}>
+              <span className="dl-ic" aria-hidden="true">{r.system === "CREDIT" ? "C" : "D"}</span>
+              <span className="dl-main"><b className="tnum">{r.source}</b><small>{r.owner} · {formatDate(r.createdAt)}</small></span>
+              <span className="dl-c"><span className={"dl-sys" + (r.system === "CREDIT" ? " credit" : "")}>{r.system}</span></span>
+              <span className="dl-c">{r.seenAt || "—"}</span>
+              <span className="dl-stack"><StatusPill status={r.status} />{r.status === "pending" && (r.owner === currentUser ? <small className="muted">Waiting for a teammate</small> : canApprove ? <button type="button" className="link" onClick={() => nav("/setup-todo?tab=approve")} data-testid={"std-review-" + r.id}>Review in To do</button> : null)}</span>
+              <DbMenu row={r} />
+            </div></li>
+          ))}
+        </ul>
       </div>
     </div>
+  );
+}
+
+/** The "⋯" on a row: shows where the value is stored (database table and column), with a copy button. */
+function DbMenu({ row }) {
+  const pop = usePopover();
+  const where = `${row.table} · ${row.column}`;
+  return (
+    <span className="dl-more">
+      <button type="button" ref={pop.btn} className="dl-kebab" onClick={pop.toggle} aria-expanded={pop.open} aria-label={`More for ${row.source}`} data-testid={"std-more-" + row.source}><MoreHorizontal size={17} /></button>
+      <PopoverPanel state={pop} align="right" width={320} label="Database table and column">
+        <span className="pop-l">DB table · column</span>
+        <code className="pop-code">{where}</code>
+        <button type="button" className="btn btn-outline btn-sm" onClick={() => { navigator.clipboard?.writeText(where); toast.success("Copied"); pop.close(); }}><Copy size={13} /> Copy</button>
+      </PopoverPanel>
+    </span>
   );
 }

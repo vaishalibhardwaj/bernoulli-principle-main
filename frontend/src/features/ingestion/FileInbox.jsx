@@ -1,6 +1,7 @@
 import { fileSchedule, clock } from "@/lib/schedule";
 import { RequestSetupButton } from "@/features/setup/SetupTasks";
 import React from "react";
+import { Busy } from "@/components/bits";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { Drawer } from "@/components/Drawer";
@@ -10,7 +11,7 @@ import { formatDateTime, timeAgo } from "@/lib/format";
 import { num, Conf, ReadOnlyNote } from "@/features/ops/ui";
 import { Spark } from "@/features/ops/charts";
 import { CHANNEL_LABEL } from "@/mock/opsSeed";
-import { Inbox, CheckCircle2, XCircle, Fingerprint, ArrowRight, RefreshCw, Send, Trash2, Wand2, Clock, UploadCloud, Mail, Plug, Bot, Server, PauseCircle, PlayCircle, KeyRound, History, FileText, Loader2, RotateCcw, Paperclip, AlertTriangle } from "lucide-react";
+import { ChevronDown as ChevronDownIcon, Inbox, CheckCircle2, XCircle, Fingerprint, ArrowRight, RefreshCw, Send, Trash2, Wand2, Clock, UploadCloud, Mail, Plug, Bot, Server, PauseCircle, PlayCircle, KeyRound, History, FileText, RotateCcw, Paperclip, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Art } from "@/components/Art";
 import { JourneyBar } from "@/features/today/Cycle";
@@ -18,7 +19,9 @@ import BankCheckpoints from "@/features/dashboards/BankCheckpoints";
 import { PLAIN_FILE_STATUS } from "@/lib/plain";
 import { scopeToUser } from "@/lib/journey";
 import { uiStatus, BalanceBreak, TxnDupSection, DismissModal, SftpTab, ManualUploadModal, ManualLog } from "./ingestionBits";
-import { withAutoVoid, unresolvedFingerprints } from "@/lib/events";
+import { withAutoVoid, unresolvedFingerprints, supervisorOf, EVENT_TYPES } from "@/lib/events";
+import LayoutChange from "./LayoutChange";
+import { uid } from "@/lib/format";
 
 const STATUS = {
   loaded: { label: "Loaded", cls: "pill-active" },
@@ -129,7 +132,7 @@ function UploadModal({ file, corrected, onClose }) {
           <div className="up-file"><Paperclip size={14} /> <b>{picked}</b></div>
           {checks.map((c, i) => (
             <div key={c.label} className={"check-row " + (i >= shown ? "pending" : c.ok ? "ok" : "bad")}>
-              {i >= shown ? <Loader2 size={14} className="spin" /> : c.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+              {i >= shown ? <Busy /> : c.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
               <div><div>{c.label}</div>{i < shown && !c.ok && <div className="muted">{c.why}</div>}</div>
             </div>
           ))}
@@ -193,6 +196,7 @@ export default function FileInbox() {
   const [filter, setFilter] = React.useState("all");
   const [manualOpen, setManualOpen] = React.useState(sp.get("manual") === "1");
   const [dismissing, setDismissing] = React.useState(null);
+  const [toFm, setToFm] = React.useState(null); // { kind: "discard"|"leave", item, title }
   const [openId, setOpenId] = React.useState(sp.get("file"));
   const [uploadFor, setUploadFor] = React.useState(sp.get("upload") && sp.get("file") ? { id: sp.get("file"), corrected: false } : null);
   const [reprocessId, setReprocessId] = React.useState(null);
@@ -258,6 +262,13 @@ export default function FileInbox() {
     return res.ok;
   };
   const updConn = (c, patch, action, comment) => act({ screen: "ingestion", cap: "edit", kind: "connections", id: c.id, patch, audit: { entityLabel: `${c.bankName} ·${c.acct} (${CHANNEL_LABEL[c.type] || c.type})`, action, comment } });
+  // A call that needs no further work (discarding an email, leaving a layout change held) goes to the
+  // person's functional manager, in the same list as No action calls from Today.
+  const sendToManager = (itemId, eventType, title, detail, reason) => {
+    const sup = supervisorOf(personaUser);
+    act({ screen: "today", cap: "view", kind: "no_action", patch: { id: uid("na"), itemId, by: personaUser.name, supervisor: sup, eventType, kind: EVENT_TYPES[eventType]?.label || eventType, title, detail, reason, comment: "", at: new Date().toISOString(), status: "pending", firstAt: new Date().toISOString(), count: 1, amc: amcUser?.amcs?.[0] || null }, audit: { entityLabel: title, action: "Sent to functional manager", to: `Sent to ${sup}`, comment: reason } });
+    return sup;
+  };
   const updEmail = (e, patch, action, comment) => act({ screen: "ingestion", cap: "edit", kind: "emails", id: e.id, patch, audit: { entityLabel: `Email from ${e.from}`, action, comment } });
 
   // ---- Channel-specific "get the file" actions ----
@@ -433,14 +444,14 @@ export default function FileInbox() {
                   <div><span>Response time</span><b>{c.latencyMs ? (c.latencyMs >= 1000 ? `${(c.latencyMs / 1000).toFixed(1)} s` : `${c.latencyMs} ms`) : "—"}</b></div>
                 </div>
                 <div className="cc-spark"><span className="muted">Last 7 pulls</span><Spark values={c.successRate} width={120} height={24} bad={c.status !== "healthy"} />{c.tokenExpires && <span className={"muted" + (new Date(c.tokenExpires) < Date.now() ? " neg" : "")}><KeyRound size={11} /> token {new Date(c.tokenExpires) < Date.now() ? "expired" : `expires ${new Date(c.tokenExpires).toLocaleDateString("en-IN")}`}</span>}</div>
-                {c.job ? <div className="cc-run" data-testid={"job-" + c.id}><Loader2 size={13} className="spin" /> Running — started by {c.job.by} at {formatDateTime(c.job.at).split(", ")[1]}<i /></div>
+                {c.job ? <div className="cc-run" data-testid={"job-" + c.id}><Busy /> Running — started by {c.job.by} at {formatDateTime(c.job.at).split(", ")[1]}<i /></div>
                   : c.lastRun ? <div className={"cc-last " + (c.lastRun.ok ? "ok" : "bad")}>{c.lastRun.ok ? <CheckCircle2 size={13} /> : <XCircle size={13} />} Last run: {c.lastRun.ok ? "Success" : "Failed"} at {formatDateTime(c.lastRun.at).split(", ")[1]} by {c.lastRun.by}{c.lastRun.msg ? ` — ${c.lastRun.msg}` : ""}</div> : null}
                 {c.itRequest && <div className="muted cc-file">Run requested from IT support by {c.itRequest.by} at {formatDateTime(c.itRequest.at).split(", ")[1]}</div>}
                 {c.error && <div className="note warn cc-err"><div>{plainError(c)}<details><summary>Technical detail</summary>{c.error}</details></div></div>}
                 {c.dismissed && <div className="em-resolved">Alert dismissed by {c.dismissed.by}: {c.dismissed.why}. The connection itself is unchanged.</div>}
                 {f && <div className="muted cc-file">Today's file: <button className="link" onClick={() => { setTab("files"); setOpenId(f.id); }}>{statusText(f.status)}</button></div>}
                 {canEdit && <div className="cc-actions">
-                  <button className="btn btn-primary btn-sm" onClick={() => pullNow(c)} disabled={!!c.job} data-testid={"pull-" + c.id}>{c.job ? <><Loader2 size={13} className="spin" /> Running…</> : c.userTrigger === false ? <><Send size={13} /> Ask IT to run it</> : <><RefreshCw size={13} /> {c.type === "auto" ? "Run bot now" : "Pull now"}</>}</button>
+                  <button className="btn btn-primary btn-sm" onClick={() => pullNow(c)} disabled={!!c.job} data-testid={"pull-" + c.id}>{c.job ? <><Busy /> Running…</> : c.userTrigger === false ? <><Send size={13} /> Ask IT to run it</> : <><RefreshCw size={13} /> {c.type === "auto" ? "Run bot now" : "Pull now"}</>}</button>
                   {["failing", "degraded"].includes(c.status) && !c.dismissed && <button className="btn btn-ghost btn-sm" onClick={() => setDismissing({ kind: "conn", item: c })} data-testid={"dismiss-" + c.id}>Dismiss alert</button>}
                   {c.authIssue && (canSetup ? <button className="btn btn-outline btn-sm" onClick={() => renewToken(c)} data-testid={"renew-" + c.id}><KeyRound size={13} /> Renew token</button> : <span className="muted">Ask the setup maker to renew the token</span>)}
                   {c.captcha && f && <button className="btn btn-outline btn-sm" onClick={() => setUploadFor({ id: f.id, corrected: f.status === "check_failed" })}><UploadCloud size={13} /> Download by hand & upload</button>}
@@ -455,6 +466,20 @@ export default function FileInbox() {
       {open && (
         <Drawer id="file-drawer" title={`${label(open)} — ${open.fileName}`} subtitle={`${CHANNEL_LABEL[open.channel]} · ${fileSchedule(open) ? `scheduler every ${fileSchedule(open).every} min, last run ${clock(fileSchedule(open).last)}` : "arrives by hand"}`} onClose={() => setOpenId(null)}>
           {!canEdit && !canApprove && <ReadOnlyNote what="Maker" />}
+          {open.drift && ["drift", "drift_pending"].includes(open.status) ? (() => {
+            const setups = (rawCollections.bank_config || []).filter((c) => c.bankName === open.bankName && c.status === "active" && c.formatName);
+            const m = (rawCollections.bank_mapping || []).find((x) => x.type === "bank" && x.bankName === open.bankName && !x.standard);
+            return <LayoutChange file={open} setupUsed={setups.length > 1 ? `None of the ${setups.length} setups for ${open.bankName} match this layout` : null}
+              canFix={hasCap(perms, "mapping", "edit")} canSubmit={canEdit && canSetup} canAsk={canEdit && !canSetup} asked={Boolean(open.setupRequested)} canApprove={canApprove && open.owner !== currentUser} canLeave={canEdit && open.status === "drift"}
+              onFix={() => nav(m ? `/mapping/bank/${m.id}?proposal=${open.id}` : "/mapping")}
+              onSubmit={() => run(open, { status: "drift_pending", owner: currentUser }, "Submit mapping change", open.drift.summary)}
+              onAsk={() => { upsert("setup_requests", { id: uid("str"), type: "mapping", amc: open.amc, bankName: open.bankName, accountNumber: open.accountNumber, note: `${open.bankName} changed its statement layout: ${open.drift.summary}. ${num(open.drift.rowsHeld)} rows are held. Please confirm the proposed mapping.`, status: "open", raisedBy: personaUser.name, raisedById: personaUser.id, raisedAt: new Date().toISOString(), fileId: open.id });
+                run(open, { setupRequested: { by: currentUser, at: new Date().toISOString() } }, "Ask Central Setup to fix layout", open.drift.summary); toast.success("Sent to Central Setup. You will see the change here once they approve it."); }}
+              onApprove={() => run(open, { status: "loaded", fingerprint: open.fingerprint + "·v2", checks: open.checks.map((c) => ({ ...c, ok: true })) }, "Approve mapping change", `${num(open.drift.rowsHeld)} held rows released`, "approve")}
+              onLeave={() => setToFm({ kind: "leave", item: open, title: `Leave the ${open.bankName} rows held?` })}
+              history={<details className="lc-sec lc-checks"><summary><span><History size={15} /> Processing history</span><em>{open.attempts || 0} attempt{open.attempts === 1 ? "" : "s"}</em><ChevronDownIcon /></summary>
+                <ol className="ph-list">{withAutoVoid(open.history || []).slice().reverse().map((h, i) => <li key={i} className={(h.bad ? "bad" : "") + (h.voided ? " voided" : "")}><i /><div><b>{h.step}</b> <span className="muted">{formatDateTime(h.at).split(", ")[1]} · {h.by}</span><div className="muted">{h.text}</div></div></li>)}</ol></details>} />;
+          })() : <>
           {(() => { const u = uiStatus(open, connFor(open)); return <div className="kv-line"><span>Status</span><span><span className={"pill " + u.cls}><span className="dot" />{u.label}</span> <span className="muted">{u.remark}</span></span></div>; })()}
           {!simple && <div className="fd-section">
             <h4><Fingerprint size={14} /> Structure fingerprint</h4>
@@ -476,24 +501,6 @@ export default function FileInbox() {
           {open.receivedAt && <BalanceBreak file={open} />}
           {["loaded", "nil"].includes(open.status) && <TxnDupSection file={open} />}
 
-          {open.drift && open.status !== "loaded" && (
-            <div className="fd-section">
-              <h4><Wand2 size={14} /> {simple ? "The bank changed its file layout" : `Drift detected · ${open.drift.summary}`}</h4>
-              <div className="muted" style={{ marginBottom: 8 }}>Compared with the approved fingerprint: column names and order, added / missing columns, header row, and the data type of each column's values. Nothing changes until a checker approves.</div>
-              <div className="col-compare">
-                <div><div className="muted">Approved structure</div>{open.drift.oldColumns.map((c) => <span key={c} className={"col-pill" + (open.drift.newColumns.includes(c) ? "" : " gone")}>{c}</span>)}</div>
-                <div><div className="muted">Today's file</div>{open.drift.newColumns.map((c) => <span key={c} className={"col-pill" + (open.drift.oldColumns.includes(c) ? "" : " new")}>{c}</span>)}</div>
-              </div>
-              <table className="grid compact" style={{ marginTop: 10 }}>
-                <thead><tr><th>Field</th><th>Was</th><th>Proposed</th><th>Confidence</th></tr></thead>
-                <tbody>{open.drift.changes.map((c) => (
-                  <tr key={c.field}><td className="tnum">{c.field}</td><td>{c.old || <span className="muted">unmapped</span>}</td><td><b>{c.proposed}</b><div className="muted">{c.reason}</div></td><td><Conf value={c.confidence} /></td></tr>
-                ))}</tbody>
-              </table>
-              <div className="note" style={{ marginTop: 10 }}><Clock size={14} /><div>{num(open.drift.rowsHeld)} rows are <b>held, not rejected</b>. They load automatically the moment the mapping change is approved.</div></div>
-            </div>
-          )}
-
           <div className="fd-actions">
             {["late", "missing"].includes(open.status) && canEdit && <>
               <div className="note" style={{ width: "100%", marginBottom: 6 }}><div>Not received yet isn't a failure. If you need it now, upload it by hand{open.channel === "auto" ? ", or refetch the full statement with the portal bot" : ""}.</div></div>
@@ -503,10 +510,6 @@ export default function FileInbox() {
               <button className="btn btn-ghost" onClick={() => toast.success("Chaser email drafted to the bank's relationship manager")}><Send size={14} /> Chase bank RM</button>
               <button className="btn btn-ghost" onClick={() => markNil(open)} data-testid="fd-nil">Bank confirmed: no transactions today</button>
             </>}
-            {["drift", "drift_pending"].includes(open.status) && hasCap(perms, "mapping") && <button className="btn btn-outline" onClick={() => { const m = (rawCollections.bank_mapping || []).find((x) => x.type === "bank" && x.bankName === open.bankName && !x.standard); nav(m ? `/mapping/bank/${m.id}?proposal=${open.id}` : "/mapping"); }} data-testid="fd-review-mapping"><ArrowRight size={14} /> Review proposal in Column mapping</button>}
-            {open.status === "drift" && (canEdit && canSetup ? <button className="btn btn-primary" data-testid="fd-submit-mapping" onClick={() => run(open, { status: "drift_pending", owner: currentUser }, "Submit mapping change", open.drift.summary)}><Send size={14} /> Submit mapping change for approval</button> : <span className="muted">The setup maker confirms the new layout; a checker approves it.</span>)}
-            {open.status === "drift_pending" && canApprove && <button className="btn btn-success" data-testid="fd-approve-mapping" onClick={() => run(open, { status: "loaded", fingerprint: open.fingerprint + "·v2", checks: open.checks.map((c) => ({ ...c, ok: true })) }, "Approve mapping change", `${num(open.drift.rowsHeld)} held rows released`, "approve")}><CheckCircle2 size={14} /> Approve & release {num(open.drift.rowsHeld)} rows</button>}
-            {open.status === "drift_pending" && !canApprove && <span className="muted">Waiting for a checker to approve the mapping change.</span>}
             {open.status === "check_failed" && canEdit && !open.corrected && <>
               <button className="btn btn-primary" onClick={() => { run(open, (x) => ({ ...x, history: [...(x.history || []), stamp(currentUser, "Corrected statement requested", "Asked the bank for a corrected statement (balance mismatch)")] }), "Request corrected statement", "Balance mismatch"); }} data-testid="fd-ask-bank"><Send size={14} /> Ask the bank for a corrected statement</button>
               {canManual && <button className="btn btn-outline" onClick={() => setUploadFor({ id: open.id, corrected: true })}><UploadCloud size={14} /> Upload the corrected statement</button>}
@@ -530,6 +533,7 @@ export default function FileInbox() {
               ))}
             </ol>
           </div>
+          </>}
         </Drawer>
       )}
 
@@ -560,19 +564,42 @@ export default function FileInbox() {
               </>}
               {["no_attachment", "bad_type"].includes(email.reason) && <button className="btn btn-outline" onClick={() => { updEmail(email, { chased: true }, "Ask bank to resend", `Reply sent to ${email.from}`); toast.success(`Reply drafted to ${email.from} asking for the statement as CSV/XLSX.`); }}><Send size={14} /> Ask the bank to resend</button>}
               {!emailResolved(email) && email.suggestFileId && canManual && <button className="btn btn-outline" onClick={() => { setEmailId(null); setUploadFor({ id: email.suggestFileId }); }} data-testid="email-manual"><UploadCloud size={14} /> Upload the statement by hand instead</button>}
-              {!emailResolved(email) && <button className="btn btn-outline" onClick={() => { updEmail(email, { waiting: { by: currentUser, at: new Date().toISOString() } }, "Wait for corrected email", "Bank asked to resend"); toast("OK — it stays out of your focus list until a new email arrives."); }} data-testid="email-wait">Wait for a corrected email</button>}
-              {!email.dismissed && <button className="btn btn-ghost" onClick={() => setDismissing({ kind: "email", item: email })} data-testid="email-dismiss">Dismiss alert</button>}
-              <button className="btn btn-ghost" onClick={() => { updEmail(email, { status: "discarded" }, "Discard email", email.reasonText); toast("Email discarded (kept in the audit trail)."); setEmailId(null); }}><Trash2 size={14} /> Discard</button>
+              <button className="btn btn-ghost" onClick={() => setToFm({ kind: "discard", item: email, title: `Discard the email from ${email.from}?` })} data-testid="email-discard"><Trash2 size={14} /> Discard</button>
             </div>
           )}
         </Drawer>
       )}
 
+      {toFm && <ReasonModal title={toFm.title} reasons={toFm.kind === "discard" ? ["Not a statement (alert or advert)", "Duplicate of a file already loaded", "Wrong account or AMC", "Statement loaded another way", "Other"] : ["Expected, the bank will send the usual layout again", "Waiting for the bank to confirm the change", "Not needed today", "Other"]}
+        onClose={() => setToFm(null)}
+        onSubmit={(reason) => {
+          const it = toFm.item;
+          if (toFm.kind === "discard") { updEmail(it, { status: "discarded" }, "Discard email", reason); const sup = sendToManager(it.id, "rejected_email", `Discarded email from ${it.from}`, it.subject, reason); toast.success(`Email discarded. ${sup} will check the call.`); setEmailId(null); }
+          else { run(it, { leftHeld: { by: currentUser, at: new Date().toISOString(), reason } }, "Leave layout change held", reason); const sup = sendToManager(it.id, "file_layout_changed", `${it.bankName} changed its file layout`, `${it.drift.summary} · ${num(it.drift.rowsHeld)} rows held`, reason); toast.success(`Rows stay held. ${sup} will check the call.`); setOpenId(null); }
+          setToFm(null);
+        }} />}
       {manualOpen && canManual && <ManualUploadModal files={files} folders={sftp} onClose={() => setManualOpen(false)} />}
       {dismissing && <DismissModal what={dismissing.kind === "email" ? `email from ${dismissing.item.from}` : `${dismissing.item.bankName} ${CHANNEL_LABEL[dismissing.item.type]}`} onClose={() => setDismissing(null)}
         onSubmit={(why) => { const d = { by: currentUser, at: new Date().toISOString(), why }; if (dismissing.kind === "email") updEmail(dismissing.item, { dismissed: d }, "Dismiss alert", why); else updConn(dismissing.item, { dismissed: d }, "Dismiss alert", why); toast("Alert dismissed and recorded. The underlying work is not marked complete."); setDismissing(null); }} />}
       {uploadFile && <UploadModal file={uploadFile} corrected={uploadFor.corrected} onClose={() => setUploadFor(null)} />}
       {reprocessFile && <ReprocessModal file={reprocessFile} onClose={() => setReprocessId(null)} onUpload={() => { setReprocessId(null); setUploadFor({ id: reprocessFile.id, corrected: true }); }} />}
     </div>
+  );
+}
+
+/** Asks why, before a call that goes to the functional manager to check. */
+function ReasonModal({ title, reasons, onSubmit, onClose }) {
+  const [why, setWhy] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const ok = why && (why !== "Other" || note.trim().length >= 10);
+  return (
+    <Modal id="reason-modal" title={title} onClose={onClose}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!ok} onClick={() => onSubmit(why + (note.trim() ? ` — ${note.trim()}` : ""))} data-testid="reason-submit">Send to my functional manager</button></>}>
+      <p style={{ marginTop: 0 }}>Your functional manager sees this call and the reason, and can send it back to you.</p>
+      <div className="field"><label className="field-label" htmlFor="rm-why">Why?</label>
+        <select id="rm-why" className="select" value={why} onChange={(e) => setWhy(e.target.value)} data-testid="reason-pick"><option value="">Pick a reason…</option>{reasons.map((r) => <option key={r}>{r}</option>)}</select></div>
+      <div className="field" style={{ marginTop: 10 }}><label className="field-label" htmlFor="rm-note">Note {why === "Other" ? "(required, 10+ characters)" : "(optional)"}</label>
+        <textarea id="rm-note" className="textarea" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+    </Modal>
   );
 }

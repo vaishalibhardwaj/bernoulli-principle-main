@@ -29,10 +29,10 @@ Desktop, office hours, used all day. Sessions are scoped to one AMC at a time. A
 
 ## Brand Commitments
 
-- Light mode only: bright, airy, calm; premium and quietly futuristic; warm rather than corporate.
+- Light mode only: calm and warm, following the owner's reference design (sand background, rounded panels, orange actions, moving charts).
 - Must stay current for 10 to 15 years: timeless structure, generous space and clear hierarchy, no trend effects.
 - As beautiful and pleasant as the best consumer apps; people spend their whole working day in it.
-- 3D clay objects (Higgsfield) are kept for empty and done states only.
+- Simple line illustrations in the design system's stroke and palette, for empty, done, drop-zone and error states only.
 
 ## Evidence on Hand
 

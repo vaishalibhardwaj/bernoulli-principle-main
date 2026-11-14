@@ -11,7 +11,7 @@ import StepIndicator from "@/components/StepIndicator";
 import FileDropZone from "@/components/FileDropZone";
 import PreviewTable from "@/components/PreviewTable";
 import { ConfirmModal } from "@/components/Modal";
-import { Toggle, PasswordInput, Note, VaultNote } from "@/components/bits";
+import { Toggle, PasswordInput, Note, VaultNote, SkeletonBlock } from "@/components/bits";
 import { detectFor, buildPreview } from "@/mock/sampleFiles";
 import { FILE_TYPES, isDelimited, SEPARATORS, REVERSAL_CODES, LIABILITY_CATEGORIES, attachmentTypesFor, CAMS_DOMAIN, defaultSchedule } from "@/lib/setupSchema";
 import { PatternTester, ScheduleField, TestConnection, ChangesCard } from "@/features/setup/SetupBits";
@@ -160,7 +160,7 @@ export default function CreditMisWizard() {
     <div data-testid="credit-mis-wizard">
       <div className="page-head"><div>
         <button className="link" onClick={() => nav("/credit-mis")}><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to list</button>
-        <h1 style={{ marginTop: 6 }}>{isView ? "View" : mode === "edit" ? "Edit" : mode === "copy" ? "Copy" : "New"} Credit MIS Configuration</h1>
+        <h1 style={{ marginTop: 6 }}>{isView ? "View" : mode === "edit" ? "Edit" : mode === "copy" ? "Copy" : "New"} Credit MIS setup</h1>
       </div></div>
 
       <div className="card wizard">
@@ -204,7 +204,7 @@ export default function CreditMisWizard() {
             <FileDropZone fileName={form.fileConfig.sampleFileName} onPick={onPickFile} onClear={() => { setFile({ sampleFileName: null, detected: {}, edited: {} }); setShowPreview(false); }} />
             {detectFor(form.fileConfig.sampleFileName)?.mismatch && showPreview && <div style={{ marginTop: 14 }}><Note kind="warn">File extension says <b>XLS</b> but content looks like <b>HTML/CSV</b> — settings pre-filled from content.</Note></div>}
             <HowRead credit />
-            {analysing && <div className="analysing"><div className="spinner" /><div><b>Analysing file…</b></div></div>}
+            {analysing && <div className="analysing"><b>Reading the file</b><SkeletonBlock rows={4} label="Reading the file" /></div>}
             {showPreview && !analysing && (<>
               <div className="form-grid" style={{ marginTop: 18 }}>
                 <div className="field"><label className="field-label">File Format</label>
