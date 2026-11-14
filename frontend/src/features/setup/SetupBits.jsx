@@ -1,5 +1,6 @@
 import React from "react";
-import { Check, X, PlugZap, Loader2, CalendarClock, GitCompareArrows, Info } from "lucide-react";
+import { Busy } from "@/components/bits";
+import { Check, X, PlugZap, CalendarClock, GitCompareArrows, Info } from "lucide-react";
 import { testNames, simulateTest, defaultSchedule, diffSetup, EFFECTIVE_NOTE } from "@/lib/setupSchema";
 
 /** R4 / R6 — live preview of a file-name or subject pattern against names the bank actually sends. */
@@ -49,7 +50,7 @@ export function TestConnection({ conn, mode, onResult }) {
   return (
     <div className="tc-box" data-testid="test-connection">
       <div className="tc-head">
-        <button type="button" className="btn btn-outline" onClick={run} disabled={state?.loading} data-testid="btn-test-connection">{state?.loading ? <Loader2 className="spin" size={15} /> : <PlugZap size={15} />} Test connection</button>
+        <button type="button" className="btn btn-outline" onClick={run} disabled={state?.loading} data-testid="btn-test-connection">{state?.loading ? <Busy /> : <PlugZap size={15} />} Test connection</button>
         <span className="muted">Calls the bank once with these details. Nothing is loaded.</span>
       </div>
       {state && !state.loading && (

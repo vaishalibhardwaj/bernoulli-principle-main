@@ -1,14 +1,17 @@
 // Bank statement checkpoints: one light per bank for the chosen checkpoint, never one per account.
 // Green = every account of that bank has crossed the checkpoint; amber = one or more have not.
 // Clicking an amber bank lists only the accounts that have not crossed, with a download of that list.
-// Prototype: arrival times are synthetic. The afternoon checkpoint uses each account's real seed download time.
+// Statuses: Not uploaded, No transactions (file arrived with no rows), Uploaded, Pending, Failed.
+// Prototype: arrival times are synthetic and shared with Closing balances, so both screens agree.
 import React from "react";
+import { useSearchParams } from "react-router-dom";
 import { ChevronDown, Download } from "lucide-react";
 import { useStore } from "@/state/store";
 import { inScope } from "@/lib/org";
 import { maskAccount } from "@/lib/format";
 import { downloadCsv } from "@/features/reports/csv";
 import { minsNow, hhmm } from "./dashViz";
+import { STATUS_TEXT, categoryOf, dayFacts } from "./positions";
 
 export const CHECKPOINTS = [
   { key: "am", label: "Morning", at: 9 * 60 + 30, base: 9 * 60 },
@@ -18,37 +21,38 @@ export const CHECKPOINTS = [
 
 export const businessDate = () => new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
-const STATUS_TEXT = { processed: "Processed", no_txn: "No transactions", not_uploaded: "Not uploaded", pending: "Pending", failed: "Failed" };
-const REASON = { not_uploaded: "Statement not uploaded or not in the folder yet", pending: "Received, still being processed", failed: "File failed checks" };
+const REASON = { not_uploaded: "Statement has not been uploaded", pending: "Uploaded after the checkpoint, or still being processed", failed: "Upload or processing failed" };
 
 /** Each account's state at one checkpoint, as seen at minute `now`. */
-function accountAt(r, i, cp, now) {
-  // Afternoon: the real download time from the seed. Morning and evening: a spread of times around the slot.
-  const arrives = r.stmt === "not_received" ? null : cp.key === "pm" ? r.downloadedAt : cp.base + ((i * 37 + (cp.key === "am" ? 11 : 23)) % 34);
-  const failed = arrives != null && (i + cp.at) % 29 === 0;
+function accountAt(r, cp, now) {
+  const facts = dayFacts(r, 0);
+  const arrives = facts.missing ? null : cp.base + facts.offset;
+  const failed = arrives != null && facts.failed;
   const crossed = arrives != null && !failed && arrives <= Math.min(now, cp.at);
   let status;
-  if (crossed) status = r.stmt === "no_txn" ? "no_txn" : "processed";
+  if (crossed) status = facts.noTxn ? "no_txn" : "uploaded";
   else if (failed && arrives <= now) status = "failed";
   else if (arrives != null && arrives <= now) status = "pending";
   else status = "not_uploaded";
   return { ...r, arrives, crossed, status };
 }
 
-export default function BankCheckpoints({ compact = false }) {
+export default function BankCheckpoints({ compact = false, category = null }) {
   const { collections, amcUser } = useStore();
   const now = minsNow();
   const passed = CHECKPOINTS.filter((c) => c.at <= now);
-  const [cpKey, setCpKey] = React.useState((passed[passed.length - 1] || CHECKPOINTS[0]).key);
+  const [sp] = useSearchParams();
+  // Opened from Today: ?cp=am|pm|eve picks the checkpoint the task is about.
+  const [cpKey, setCpKey] = React.useState(() => (CHECKPOINTS.some((c) => c.key === sp.get("cp")) ? sp.get("cp") : (passed[passed.length - 1] || CHECKPOINTS[0]).key));
   const [open, setOpen] = React.useState(null);
   const cp = CHECKPOINTS.find((c) => c.key === cpKey);
   const due = cp.at <= now;
 
-  const rows = (collections.balances || []).filter((r) => inScope(amcUser, r.amc)).map((r, i) => accountAt(r, i, cp, now));
+  const rows = (collections.balances || []).filter((r) => inScope(amcUser, r.amc) && (!category || categoryOf(r) === category)).map((r) => accountAt(r, cp, now));
   const banks = [...new Set(rows.map((r) => r.bankName))].sort().map((name) => {
     const accts = rows.filter((r) => r.bankName === name);
     const pending = accts.filter((r) => !r.crossed);
-    return { name, total: accts.length, pending };
+    return { name, total: accts.length, pending, crossed: accts.filter((r) => r.crossed) };
   }).sort((a, b) => b.pending.length - a.pending.length || a.name.localeCompare(b.name));
   const amber = banks.filter((b) => b.pending.length).length;
 
@@ -56,12 +60,17 @@ export default function BankCheckpoints({ compact = false }) {
     ["Bank name", "Account number", "Business date", "Expected processing time", "Current processing status", "Pending reason"],
     b.pending.map((r) => [r.bankName, maskAccount(r.accountNumber), businessDate(), hhmm(cp.at), STATUS_TEXT[r.status], REASON[r.status] || ""]));
 
+  const allCrossed = banks.flatMap((b) => b.crossed);
+  const downloadCrossed = () => downloadCsv(`completed_${cp.key}_${new Date().toISOString().slice(0, 10)}.csv`,
+    ["Bank name", "Account number", "Business date", "Checkpoint", "Status", "Uploaded at"],
+    allCrossed.map((r) => [r.bankName, maskAccount(r.accountNumber), businessDate(), hhmm(cp.at), STATUS_TEXT[r.status], hhmm(r.arrives)]));
+
   return (
     <section className="card ck" data-testid="bank-checkpoints">
       <div className="ck-head">
         <div>
           <h2>Bank statements by checkpoint</h2>
-          <p>Business date {businessDate()} · one light per bank. Green means every account is in; amber means some are not. Open an amber bank to see which.</p>
+          <p>Business date {businessDate()}{category ? ` · ${category.toLowerCase()} accounts` : ""} · one light per bank. Green means every account has crossed the checkpoint; amber means one or more have not. Open an amber bank to see which.</p>
         </div>
         <div className="segmented" role="tablist" aria-label="Checkpoint">
           {CHECKPOINTS.map((c) => (
@@ -73,6 +82,7 @@ export default function BankCheckpoints({ compact = false }) {
       </div>
 
       <p className="ck-summary" data-testid="ck-summary">
+        {allCrossed.length > 0 && <button type="button" className="link ck-done-export" onClick={downloadCrossed} data-testid="ck-download-done">Download completed accounts ({allCrossed.length})</button>}
         {!due ? `The ${hhmm(cp.at)} checkpoint has not come yet. Banks show what is in so far.`
           : amber ? `${amber} of ${banks.length} banks have accounts that missed the ${hhmm(cp.at)} checkpoint.`
             : `All ${banks.length} banks crossed the ${hhmm(cp.at)} checkpoint.`}
@@ -87,7 +97,7 @@ export default function BankCheckpoints({ compact = false }) {
               <button type="button" className="ck-row" onClick={() => b.pending.length && setOpen(isOpen ? null : b.name)} disabled={!b.pending.length} aria-expanded={isOpen}>
                 <i className={"ck-dot " + tone} aria-hidden="true" />
                 <b>{b.name}</b>
-                <span className="ck-state">{b.pending.length === 0 ? `All ${b.total} account${b.total === 1 ? "" : "s"} processed` : `${b.pending.length} of ${b.total} account${b.total === 1 ? "" : "s"} ${due ? "pending" : "not in yet"}`}</span>
+                <span className="ck-state">{b.pending.length === 0 ? `All ${b.total} account${b.total === 1 ? "" : "s"} crossed` : `${b.pending.length} of ${b.total} account${b.total === 1 ? "" : "s"} ${due ? "pending" : "not in yet"}`}</span>
                 {b.pending.length > 0 && <ChevronDown size={16} className="ck-chev" />}
               </button>
               {isOpen && (
@@ -98,7 +108,7 @@ export default function BankCheckpoints({ compact = false }) {
                   </div>
                   <div className="ck-table-wrap">
                     <table className="table ck-table">
-                      <thead><tr><th>Account</th><th>Status</th><th>Expected by</th><th>Processing time</th><th>Reason</th></tr></thead>
+                      <thead><tr><th>Account</th><th>Status</th><th>Expected by</th><th>Uploaded at</th><th>Reason</th></tr></thead>
                       <tbody>
                         {b.pending.map((r) => (
                           <tr key={r.id}>

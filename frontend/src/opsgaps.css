@@ -6,7 +6,7 @@
 .ck-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .ck-head h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
 .ck-head p { margin: 0; color: var(--c-mute, #736e66); font-size: 13.5px; max-width: 60ch; }
-.ck-summary { margin: 14px 0 10px; font-weight: 500; color: var(--c-ink-2, #514d46); }
+.ck-summary { margin: 14px 0 10px; font-weight: 500; color: var(--c-ink-2, var(--text-2)); }
 .ck-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .ck-bank { border-radius: var(--c-r-sm, 14px); background: var(--c-sunk, #f2f0eb); }
 .ck-bank.amber { background: var(--c-amber-soft, #fbf0dc); }
@@ -14,7 +14,7 @@
 .ck-row:disabled { cursor: default; }
 .ck-row:focus-visible { outline: 2px solid var(--c-accent, #5b4ccf); outline-offset: 2px; }
 .ck-row b { font-weight: 600; }
-.ck-state { color: var(--c-ink-2, #514d46); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.ck-state { color: var(--c-ink-2, var(--text-2)); font-size: 13.5px; font-variant-numeric: tabular-nums; }
 .ck-dot { width: 12px; height: 12px; border-radius: 50%; display: block; }
 .ck-dot.green { background: var(--c-green, #2b7a4b); }
 .ck-dot.amber { background: #e39b1b; box-shadow: 0 0 0 4px rgba(227, 155, 27, .2); }
@@ -22,18 +22,18 @@
 .ck-chev { transition: transform .2s ease; color: var(--c-mute, #736e66); }
 .ck-bank.open .ck-chev { transform: rotate(180deg); }
 .ck-drill { padding: 0 16px 14px; }
-.ck-drill-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 10px; font-size: 13px; color: var(--c-ink-2, #514d46); font-weight: 500; }
+.ck-drill-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 10px; font-size: 13px; color: var(--c-ink-2, var(--text-2)); font-weight: 500; }
 .ck-table-wrap { max-height: 320px; overflow: auto; background: var(--c-card, #fff); border-radius: 12px; }
 .ck-table { width: 100%; font-size: 13px; }
 .ck-table th { position: sticky; top: 0; background: var(--c-card, #fff); }
 .ck-st { font-weight: 600; font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--c-sunk, #f2f0eb); white-space: nowrap; }
 .ck-st.failed { color: var(--c-rose, #b4344a); background: var(--c-rose-soft, #fbe9eb); }
 .ck-st.pending { color: var(--c-amber, #9a5600); background: var(--c-amber-soft, #fbf0dc); }
-.ck-st.not_uploaded { color: var(--c-ink-2, #514d46); }
+.ck-st.not_uploaded { color: var(--c-ink-2, var(--text-2)); }
 
 /* Upload details (bank, account, business date) */
 .fu-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 0 0 18px; }
-.fu-details label { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--c-ink-2, #514d46); }
+.fu-details label { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--c-ink-2, var(--text-2)); }
 .fu-details .hint { grid-column: 1 / -1; font-size: 12.5px; color: var(--c-mute, #736e66); margin: -4px 0 0; }
 
 /* Closing balance by bank: names and counts, no summed amounts */

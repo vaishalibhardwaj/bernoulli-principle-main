@@ -1,99 +1,55 @@
 ---
 name: CAMS recon
-description: Calm, warm, light workspace for an internal reconciliation tool
+description: Calm, warm workspace modelled on the owner's reference design. Sand canvas, porcelain panels, orange pill actions, light large figures, moving charts.
+tokens: frontend/src/theme/tokens.css
+components: frontend/src/theme/system.css
+look: frontend/src/theme/look.css
 colors:
-  accent: "#5b4ccf"
-  accent-deep: "#4a3cbd"
-  accent-soft: "#efedfb"
-  accent-ink: "#2f2785"
-  green: "#2b7a4b"
-  green-soft: "#e6f3eb"
-  amber: "#9a5600"
-  amber-soft: "#fbf0dc"
-  rose: "#b4344a"
-  rose-soft: "#fbe9eb"
-  ink: "#1d1b18"
-  ink-2: "#514d46"
-  mute: "#736e66"
-  line: "#e9e6df"
-  line-2: "#dbd7ce"
-  canvas: "#f7f6f2"
-  card: "#ffffff"
-  sunk: "#f2f0eb"
+  canvas: "sand gradient #e8ddd3 to #f1efec"
+  panel: "#f6f5f3"
+  row: "#ffffff"
+  accent: "#f2743b"
+  accent-hover: "#e3612a"
+  sage: "#8a9580"
+  text: "#1b1d2e"
+  text-2: "#55524d"
+  text-3: "#6f6b65"
+  ok: "#3d7651"
+  warn: "#93590c"
+  bad: "#b03a3a"
 typography:
-  greeting:
-    fontFamily: "Newsreader, Georgia, serif"
-    fontSize: "46px"
-    fontWeight: 400
-    lineHeight: 1.04
-    letterSpacing: "-0.01em"
-  title:
-    fontFamily: "Onest, system-ui, sans-serif"
-    fontSize: "30px"
-    fontWeight: 600
-    lineHeight: 1.1
-    letterSpacing: "-0.025em"
-  number:
-    fontFamily: "Onest, system-ui, sans-serif"
-    fontSize: "44px"
-    fontWeight: 600
-    lineHeight: 1
-    letterSpacing: "-0.035em"
-  section:
-    fontFamily: "Onest, system-ui, sans-serif"
-    fontSize: "19px"
-    fontWeight: 600
-    letterSpacing: "-0.015em"
-  body:
-    fontFamily: "Onest, system-ui, sans-serif"
-    fontSize: "14.5px"
-    fontWeight: 400
-    lineHeight: 1.45
-  label:
-    fontFamily: "Onest, system-ui, sans-serif"
-    fontSize: "12px"
-    fontWeight: 600
+  family: "Inter, system-ui, sans-serif (one family; light weight for large figures; tabular figures everywhere)"
+  title: { fontSize: "34px", fontWeight: 500, lineHeight: 1.15, letterSpacing: "-0.022em" }
+  section: { fontSize: "16px", fontWeight: 600 }
+  metric: { fontSize: "44px", fontWeight: 300, letterSpacing: "-0.03em" }
+  body: { fontSize: "14px", fontWeight: 400, lineHeight: 1.5 }
+  table: { fontSize: "13px" }
+  label: { fontSize: "12px", fontWeight: 500 }
+spacing: "4px base: 4, 8, 12, 16, 20, 24, 32, 40"
 rounded:
-  input: "10px"
-  control: "12px"
-  card-sm: "14px"
-  card: "20px"
-  pill: "999px"
-components:
-  button-primary:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.card}"
-    rounded: "{rounded.control}"
-  button-primary-hover:
-    backgroundColor: "{colors.accent-deep}"
-  button-outline:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.control}"
-  input:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.input}"
-  card:
-    backgroundColor: "{colors.card}"
-    rounded: "{rounded.card}"
-  now-tile-approve:
-    backgroundColor: "{colors.accent-soft}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.card}"
-  now-tile-sent-back:
-    backgroundColor: "{colors.amber-soft}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.card}"
-  now-tile-failed:
-    backgroundColor: "{colors.rose-soft}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.card}"
-  nav-item-active:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.control}"
+  small: "10px"
+  control: "14px"
+  row: "22px"
+  panel: "32px"
+  button: "999px"
+elevation: "Soft warm shadows on panels; stronger only for menus and the review window."
+motion: "Controls 140-220ms. Charts draw in once (about 1s) and rest; one slow pulse on a live end point. Reduced motion shows finished charts."
 ---
+
+## Rules of the system (13 Nov 2026, look updated the same day to the owner's reference)
+
+- **One place for the look.** Every colour, type size, space, radius, shadow and duration is a token in `frontend/src/theme/tokens.css`. Component rules live in `frontend/src/theme/system.css` and read only those tokens. Older style sheets resolve to the same tokens through aliases at the bottom of the token file.
+- **Colour.** Sand and porcelain by default. Orange for the main action. Side-menu icons carry their own tints, as in the reference. Green, amber and red mean state.
+- **Status is a dot and a word**, never colour alone.
+- **Amounts are right-aligned** in tabular figures.
+- **Illustrations** are line drawings (`components/Art.jsx`), 1.5px stroke, neutral ink with one accent stroke. Used only in empty, done, drop-zone, no-access and error states.
+- **Charts** follow the status colours when the series are statuses, carry a legend, a hover readout and a table view.
+- **Approve and send back always confirm** in a dialog that states what will happen.
+- **No descriptions under titles.** Page and section subtexts are hidden in theme/look.css.
+- The earlier "Calm Day" look and the neutral indigo look are retired.
+
+## Earlier notes (kept for history; superseded where they conflict with the rules above)
+
 
 # Design System: CAMS recon
 

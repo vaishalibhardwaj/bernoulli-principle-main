@@ -239,7 +239,7 @@ export default function BankConfigWizard() {
       <div className="page-head">
         <div>
           <button className="link" onClick={() => nav("/bank-setup")} data-testid="wizard-back-list"><ArrowLeft size={14} style={{ verticalAlign: -2 }} /> Back to list</button>
-          <h1 style={{ marginTop: 6 }}>{isView ? "View" : mode === "copy" ? "Copy" : mode === "edit" ? "Edit" : "New"} Bank Statement Configuration</h1>
+          <h1 style={{ marginTop: 6 }}>{isView ? "View" : mode === "copy" ? "Copy" : mode === "edit" ? "Edit" : "New"} bank statement setup</h1>
         </div>
       </div>
 

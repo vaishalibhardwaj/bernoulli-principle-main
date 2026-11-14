@@ -1,0 +1,170 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap");
+/* ============================================================================
+   CAMS Recon design tokens: the one place the look is defined.
+   Change a value here and every screen follows. No component rules live in this
+   file; they are in theme/system.css and read only these names.
+   Order: primitives -> semantic roles -> scales -> legacy aliases.
+   ============================================================================ */
+:root {
+  /* ---- Primitives: warm sand canvas, porcelain panels, navy ink, one orange accent ---- */
+  --n-0: #ffffff;
+  --n-25: #fbfaf8;
+  --n-50: #f6f5f3;
+  --n-100: #f0eeeb;
+  --n-150: #e9e6e2;
+  --n-200: #dcd8d2;
+  --n-300: #c4bfb8;
+  --n-400: #9b968f;
+  --n-500: #75716b;
+  --n-600: #55524d;
+  --n-700: #3a3936;
+  --n-800: #25262f;
+  --n-900: #1b1d2e;
+  --accent-500: #f2743b;
+  --accent-600: #e3612a;
+  --accent-700: #a8461b;
+  --accent-100: #fbdccb;
+  --accent-50: #fdf0e8;
+  --accent-rgb: 242, 116, 59;
+  --ink-rgb: 52, 40, 28;
+  --sage-500: #8a9580;
+  --sage-600: #727d69;
+  --sand-top: #e8ddd3;
+  --sand-bottom: #f1efec;
+
+  /* ---- Semantic colour ---- */
+  --bg-canvas: #efeae5;
+  --bg-canvas-image: linear-gradient(180deg, var(--sand-top) 0%, #ece5df 34%, var(--sand-bottom) 78%);
+  --bg-panel: var(--n-50);
+  --bg-surface: var(--n-25);
+  --bg-raised: var(--n-0);
+  --bg-sunken: var(--n-100);
+  --bg-hover: #fdfcfb;
+  --text: var(--n-900);
+  --text-2: var(--n-600);
+  --text-3: #6f6b65;
+  --text-on-accent: #ffffff;
+  --border: #ebe7e2;
+  --border-strong: var(--n-200);
+  --accent: var(--accent-500);
+  --accent-hover: var(--accent-600);
+  --accent-text: var(--accent-700);
+  --accent-soft: var(--accent-50);
+  --accent-line: var(--accent-100);
+  --ok: #3d7651;
+  --ok-soft: #e9f2ea;
+  --ok-dot: #6fa77f;
+  --warn: #93590c;
+  --warn-soft: #fbf0de;
+  --warn-dot: #e2a13c;
+  --bad: #b03a3a;
+  --bad-soft: #fbeaea;
+  --bad-dot: #e06a5a;
+  --focus: 0 0 0 3px rgba(var(--accent-rgb), .25);
+  /* Icon tints for the side menu (identity only, as in the reference) */
+  --ic-1: #3e9b74;
+  --ic-2: #b15fd3;
+  --ic-3: #c49a1c;
+  --ic-4: #ef6c3a;
+  --ic-5: #4f86c9;
+  --ic-6: #7a756e;
+
+  /* ---- Type ---- */
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-18: 18px;
+  --fs-22: 22px;
+  --fs-28: 30px;
+  --fs-34: 34px;
+  --fs-44: 44px;
+  --lh-tight: 1.15;
+  --lh-snug: 1.35;
+  --lh-body: 1.5;
+  --fw-light: 300;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --track-title: -.022em;
+  --track-metric: -.03em;
+
+  /* ---- Space ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* ---- Radius: soft, generous ---- */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 22px;
+  --r-xl: 32px;
+  --r-pill: 999px;
+
+  /* ---- Elevation: warm, soft ---- */
+  --e-0: none;
+  --e-1: 0 1px 2px rgba(var(--ink-rgb), .04), 0 10px 30px -22px rgba(var(--ink-rgb), .22);
+  --e-2: 0 2px 6px rgba(var(--ink-rgb), .05), 0 22px 48px -24px rgba(var(--ink-rgb), .28);
+  --e-3: 0 4px 10px rgba(var(--ink-rgb), .06), 0 40px 90px -30px rgba(var(--ink-rgb), .36);
+
+  /* ---- Motion ---- */
+  --dur-1: 140ms;
+  --dur-2: 220ms;
+  --dur-3: 900ms;
+  --ease: cubic-bezier(.22, .9, .24, 1);
+
+  /* ---- Control sizes ---- */
+  --h-control: 40px;
+  --h-control-sm: 32px;
+  --h-control-lg: 46px;
+  --row-h: 52px;
+
+  /* ==========================================================================
+     Legacy aliases. Older style sheets use these names; they now resolve to the
+     tokens above, so nothing outside this file holds a colour or a radius.
+     ========================================================================== */
+  --c-canvas: var(--bg-canvas);
+  --c-card: var(--bg-surface);
+  --c-sunk: var(--bg-sunken);
+  --c-ink: var(--text);
+  --c-ink-2: var(--text-2);
+  --c-mute: var(--text-3);
+  --c-line: var(--border);
+  --c-line-2: var(--border-strong);
+  --c-accent: var(--accent);
+  --c-accent-2: var(--accent-hover);
+  --c-accent-soft: var(--accent-soft);
+  --c-accent-ink: var(--accent-text);
+  --c-green: var(--ok);
+  --c-green-soft: var(--ok-soft);
+  --c-amber: var(--warn);
+  --c-amber-soft: var(--warn-soft);
+  --c-rose: var(--bad);
+  --c-rose-soft: var(--bad-soft);
+  --c-r-card: var(--r-lg);
+  --c-r-sm: var(--r-md);
+  --c-r-ctl: var(--r-md);
+  --c-shadow: var(--e-1);
+  --c-shadow-hi: var(--e-2);
+  --c-ease: var(--ease);
+  --au-blue-3: var(--accent-line);
+  --au-grad: var(--accent);
+  --glow: var(--focus);
+  --font-display: var(--font);
+  --font-ui: var(--font);
+  --font-serif: var(--font);
+  --page: 30 20% 92%;
+  --primary: 19 88% 59%;
+  --primary-hover: 18 77% 53%;
+  --primary-soft: 22 85% 95%;
+  --primary-soft-border: 21 87% 89%;
+  --primary-deep: 18 72% 38%;
+}

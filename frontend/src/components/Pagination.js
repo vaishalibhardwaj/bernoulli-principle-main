@@ -26,7 +26,7 @@ export default function Pagination({ total, page, pageSize, onPage, onPageSize, 
         Showing {start}–{end} of {total.toLocaleString("en-IN")} Records
       </span>
       <div className="pager-right">
-        <select className="pg-select" value={pageSize} data-testid={idPrefix + "-pagesize"}
+        <select className="pg-select" aria-label="Rows per page" value={pageSize} data-testid={idPrefix + "-pagesize"}
           onChange={(e) => onPageSize(parseInt(e.target.value, 10))}>
           {[15, 25, 50, 100, 250].map((s) => <option key={s} value={s}>{`${s} / page`}</option>)}
         </select>
@@ -37,7 +37,7 @@ export default function Pagination({ total, page, pageSize, onPage, onPageSize, 
         ))}
         <button className="pg-btn" disabled={page === pages} onClick={() => onPage(page + 1)} data-testid={idPrefix + "-next"} aria-label="Next"><ChevronRight size={15} /></button>
         <button className="pg-btn" disabled={page === pages} onClick={() => onPage(pages)} data-testid={idPrefix + "-last"} aria-label="Last"><ChevronsRight size={15} /></button>
-        <input className="pg-goto tnum" placeholder="Go" value={goto} data-testid={idPrefix + "-goto"}
+        <input className="pg-goto tnum" placeholder="Go" aria-label="Go to page" inputMode="numeric" value={goto} data-testid={idPrefix + "-goto"}
           onChange={(e) => setGoto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
       </div>
     </div>

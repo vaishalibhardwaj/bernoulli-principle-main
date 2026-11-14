@@ -1,280 +1,145 @@
+// Closing balances: each bank account's last closing balance next to the amount CAMS has reported as utilised.
+// Built to the Closing Balance & Fund Utilisation requirements confirmed on 13 Nov:
+// - one row per account, never a total across accounts;
+// - closing balance = running balance on the last transaction row of the business date (no 3 PM rule);
+// - one business date, from the last five calendar days, today by default. The date applies to this screen only;
+// - indicator: closing < CAMS utilised = green, closing > = red, equal = none. Informational, not proof of a sweep;
+// - no "Matches / Does not match" against a system balance, and no fund-position formula until the accounting sheet arrives.
+// "Balance does not match" is a separate statement-data check whose rule is still to be confirmed.
 import React from "react";
-import { Banknote, Download, CheckCircle2, AlertTriangle, MinusCircle, FileX2, Info, Filter, ListChecks, ArrowRight } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
+import { Download, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { toast } from "sonner";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
-import { inScope } from "@/lib/org";
 import { maskAccount } from "@/lib/format";
-import { inr, inrShort } from "@/features/ops/ui";
+import { inr } from "@/features/ops/ui";
 import { downloadCsv } from "@/features/reports/csv";
-import { schemeAttrs, SEBI_ASSET_CLASSES } from "@/mock/bankMaster";
-import { TiltCard } from "@/features/viz/Viz";
-import { Donut, Kpi, minsNow, hhmm } from "./dashViz";
-import BankCheckpoints, { businessDate } from "./BankCheckpoints";
-import { toast } from "sonner";
+import { Kpi, minsNow, ago } from "./dashViz";
+import BankCheckpoints from "./BankCheckpoints";
+import { CategoryDateBar, usePositions, lastFiveDays, timeOn, STATUS_TEXT, STATUS_HELP, INDICATOR_TEXT } from "./positions";
 
-const THREE_PM = 15 * 60;
-const FOUR_PM = 16 * 60;
-// Balance check (green / orange) and sweep (violet / blue) use different palettes on purpose.
-const BAL = { match: "#16a34a", mismatch: "#ff9f43", none: "rgba(140,160,200,.5)" };
-const STMT = { txn: "#16a34a", no_txn: "#5b4ccf", not_received: "rgba(140,160,200,.5)" };
-const SWP = { full: "#6366f1", partial: "#5b3fd1", pending: "rgba(99,102,241,.22)" };
-const STMT_TEXT = { txn: "Received", no_txn: "No transactions today", not_received: "Not received" };
-const ACCT_TYPE = { scheme: "Scheme account", common: "Common collection account" };
-const NO_FILTER = { bank: "all", account: "all", sebi: "all", type: "all" };
+const ACCT_TYPE = { scheme: "Scheme account", common: "Common account" };
+const NO_FILTER = { bank: "all", type: "all" };
 
-/**
- * Closing balance per bank account (counted per account, never per bank).
- * PRD 5.9: statements are downloaded after 3 PM; take the last transaction before 3 PM; compare its closing
- * balance with the system's — green if they match, orange if not. Recon managers also see fund utilisation:
- * how many matched accounts are fully swept, and when.
- */
 export default function ClosingBalances() {
-  const { collections, amcUser, perms, upsert, addAudit, actor } = useStore();
+  const { collections, perms, upsert, addAudit, actor } = useStore();
   const canResolve = hasCap(perms, "balances", "edit");
-  const dateKey = new Date().toISOString().slice(0, 10);
-  // A mismatch is one exception per bank + account + business date. Resolving it takes it out of the count for that date only.
-  const resolvedKey = (r) => `${r.bankName}|${r.accountNumber}|${dateKey}`;
-  const resolved = new Map((collections.cb_resolutions || []).map((x) => [x.id, x]));
-  const nav = useNavigate();
-  // Bank statement makers see the closing balance graph only; recon managers (approve fund release) see both.
-  const isManager = hasCap(perms, "release", "approve");
-  const [asAt, setAsAt] = React.useState("now");
+  const canExport = hasCap(perms, "balances", "export");
+  const [category, setCategory] = React.useState("Subscription");
+  const [back, setBack] = React.useState(0);
   const [f, setF] = React.useState(NO_FILTER);
-  const [only, setOnly] = React.useState("all");
-  const now = asAt === "now" ? minsNow() : Number(asAt);
-  const set = (k, v) => setF((x) => ({ ...x, [k]: v, ...(k === "bank" ? { account: "all" } : {}) }));
+  const [sp] = useSearchParams();
+  // Opened from Today: ?only=broken (balances that do not match) or ?only=red (sweep may be pending).
+  const [only, setOnly] = React.useState(() => (["broken", "red", "green", "missing"].includes(sp.get("only")) ? sp.get("only") : "all"));
+  const day = lastFiveDays()[back];
+  const now = minsNow();
+  const all = usePositions(category, back);
 
-  const all = (collections.balances || []).filter((r) => inScope(amcUser, r.amc)).map((r) => {
-    const attrs = schemeAttrs(r.schemeCode);
-    const received = r.stmt !== "not_received" && r.downloadedAt != null && r.downloadedAt <= now;
-    const stmtNow = received ? r.stmt : "not_received";
-    const off = received && Math.abs(r.closing - r.systemClosing) >= 0.005;
-    const fix = off ? resolved.get(`${r.bankName}|${r.accountNumber}|${dateKey}`) : null;
-    const check = !received ? "none" : !off ? "match" : fix ? "resolved" : "mismatch";
-    const swept = check !== "match" ? null : r.sweep === "full" && r.sweepAt <= now ? "full" : r.sweep && r.sweep !== "pending" && r.sweepAt <= now ? "partial" : "pending";
-    // Fund utilisation: a disbursement report flags the transactions it pays out; utilised = the sum of flagged transactions,
-    // remaining = closing balance − utilised (e.g. ₹23.7 Cr − ₹20 Cr = ₹3.7 Cr). Prototype: flagged amount follows the sweep.
-    const utilised = received && r.sweep && r.sweepAt != null && r.sweepAt <= now ? Math.round(r.closing * (r.sweptPct / 100) * 0.97 * 100) / 100 : 0;
-    return { ...r, ...attrs, received, stmtNow, check, fix, swept, utilised, remaining: received ? r.closing - utilised : null, delta: r.closing - r.prevClosing };
-  });
-  const banksAll = [...new Set(all.map((r) => r.bankName))].sort();
-  // Filters cascade: pick a bank → its account numbers appear; account type and SEBI asset class then offer only the values those accounts have.
-  const inBank = all.filter((r) => f.bank === "all" || r.bankName === f.bank);
-  const inAccount = inBank.filter((r) => f.account === "all" || r.accountNumber === f.account);
-  const typeOpts = [["scheme", "Scheme"], ["common", "Common collection"]].filter(([k]) => inAccount.some((r) => r.accountType === k));
-  const sebiOpts = SEBI_ASSET_CLASSES.filter((k) => inAccount.some((r) => r.sebiClass === k)).map((k) => [k, k]);
-  const rows = inAccount.filter((r) => (f.sebi === "all" || r.sebiClass === f.sebi) && (f.type === "all" || r.accountType === f.type));
-  const filtered = Object.values(f).some((v) => v !== "all");
+  // A balance that does not match is one item per bank + account + business date. Resolving it clears that date only.
+  const fixKey = (r) => `${r.bankName}|${r.accountNumber}|${day.iso}`;
+  const fixes = new Map((collections.cb_resolutions || []).map((x) => [x.id, x]));
+  const withFix = all.map((r) => ({ ...r, fix: r.balBreak ? fixes.get(fixKey(r)) : null }));
 
+  const banks = [...new Set(withFix.map((r) => r.bankName))].sort();
+  const rows = withFix.filter((r) => (f.bank === "all" || r.bankName === f.bank) && (f.type === "all" || r.accountType === f.type));
   const n = (pred) => rows.filter(pred).length;
-  const inCount = n((r) => r.received);
-  const matched = rows.filter((r) => r.check === "match");
-  const mism = n((r) => r.check === "mismatch");
-  const pctSweptAt = (t) => (matched.length ? Math.round((matched.filter((r) => r.sweep === "full" && r.sweepAt <= t).length / matched.length) * 100) : 0);
-  const order = { mismatch: 0, none: 1, resolved: 2, match: 3 };
-  const shown = rows.filter((r) => only === "all" || r.check === only || r.stmtNow === only || r.swept === only)
-    .sort((a, b) => order[a.check] - order[b.check] || a.bankName.localeCompare(b.bankName));
-  // Used only for funds not utilised; there is no total closing balance tile (account balances are independent).
-  const total = rows.filter((r) => r.received).reduce((s, r) => s + r.closing, 0);
-  // Banks are listed by name with account counts only: balances of different accounts are never added up.
-  const byBank = [...new Set(rows.map((r) => r.bankName))].sort().map((b) => {
-    const acc = rows.filter((r) => r.bankName === b);
-    return { b, n: acc.length, inN: acc.filter((r) => r.received).length, bad: acc.filter((r) => r.check === "mismatch").length };
-  });
-  const utilisedAll = rows.reduce((t, r) => t + r.utilised, 0);
-  // Today's tasks and file counts for this AMC: failing pickups, statements in, statements that failed.
-  const inAmcFile = (x) => inScope(amcUser, x.amc);
-  const files = (collections.files || []).filter(inAmcFile);
-  const failedFiles = files.filter((x) => ["check_failed", "drift", "unknown", "duplicate"].includes(x.status));
-  const failingJobs = (collections.jobs || []).filter((j) => j.status === "failure" && j.topic === "bank" && (!j.amcs || j.amcs.some((a) => inScope(amcUser, a))));
-  const tasks = [...failingJobs.map((j) => ({ k: j.id, text: `${j.name.replace(/^SFTP pickup — |^Portal bot — /, "")} failing`, sub: j.remarks })), ...failedFiles.slice(0, 4).map((x) => ({ k: x.id, text: `${x.bankName} ·${x.accountNumber.slice(-4)} statement failed`, sub: x.status.replace("_", " ") }))];
+  const withBalance = n((r) => r.closing != null);
+  const red = n((r) => r.indicator === "red");
+  const green = n((r) => r.indicator === "green");
+  const broken = n((r) => r.balBreak && !r.fix);
+  const PRED = { red: (r) => r.indicator === "red", green: (r) => r.indicator === "green", broken: (r) => r.balBreak && !r.fix, missing: (r) => r.closing == null };
+  const rank = (r) => (r.balBreak && !r.fix ? 0 : r.indicator === "red" ? 1 : r.closing == null ? 2 : 3);
+  const shown = rows.filter(PRED[only] || (() => true)).sort((a, b) => rank(a) - rank(b) || a.bankName.localeCompare(b.bankName) || a.accountNumber.localeCompare(b.accountNumber));
   const pick = (k) => setOnly(only === k ? "all" : k);
+  const filtered = f.bank !== "all" || f.type !== "all" || only !== "all";
+
   const resolve = (r) => {
-    const note = window.prompt(`Why is ${r.bankName} ${maskAccount(r.accountNumber)} off by ${inrShort(Math.abs(r.closing - r.systemClosing))}? This note is kept with the record.`);
+    const note = window.prompt(`What was wrong with the ${r.bankName} ${maskAccount(r.accountNumber)} statement, and how was it fixed? This note is kept with the record.`);
     if (!note || !note.trim()) return;
-    upsert("cb_resolutions", { id: resolvedKey(r), note: note.trim(), by: actor?.name || "You", at: new Date().toISOString() });
-    addAudit({ action: "Closing balance mismatch resolved", entity: "balance", entityId: resolvedKey(r), details: note.trim() });
-    toast.success(`Resolved for ${businessDate()}`);
+    upsert("cb_resolutions", { id: fixKey(r), note: note.trim(), by: actor?.name || "You", at: new Date().toISOString() });
+    addAudit({ entityType: "balance", entityId: fixKey(r), entityLabel: `${r.bankName} ${maskAccount(r.accountNumber)}`, action: "Balance mismatch resolved", comment: note.trim() });
+    toast.success(`Resolved for ${day.short}`);
   };
 
-  const exportCsv = () => downloadCsv(`closing_balances_${new Date().toISOString().slice(0, 10)}.csv`,
-    ["Business date", "Bank", "Account", "Account type", "Scheme", "SEBI category", "SEBI asset class", "Statement", "Downloaded", "Last txn before 3 PM", "Bank closing", "System closing (last line item)", "Paid out", "Funds not utilised", "Check", ...(isManager ? ["Sweep", "Swept at"] : [])],
-    shown.map((r) => [businessDate(), r.bankName, maskAccount(r.accountNumber), ACCT_TYPE[r.accountType], r.schemeName, r.sebiCategory, r.sebiClass, STMT_TEXT[r.stmtNow], r.received ? hhmm(r.downloadedAt) : "", r.lastTxnAt != null && r.received ? hhmm(r.lastTxnAt) : "", r.received ? r.closing.toFixed(2) : "Not received", r.systemClosing.toFixed(2), r.utilised.toFixed(2), r.remaining != null ? r.remaining.toFixed(2) : "", { match: "Match", mismatch: "Mismatch", resolved: "Mismatch resolved", none: "Not checked" }[r.check], ...(isManager ? [r.swept || "", r.swept === "full" ? hhmm(r.sweepAt) : ""] : [])]));
+  const exportCsv = () => downloadCsv(`closing_balances_${category.toLowerCase()}_${day.iso}.csv`,
+    ["S. No.", "Bank name", "Bank account number", "Classification", "Account type", "Business date", "Statement status", "Last closing balance", "CAMS fund utilised", "Last transaction date", "Last transaction time", "Last statement updated at", "Indicative status", "Balance does not match"],
+    shown.map((r, i) => [i + 1, r.bankName, maskAccount(r.accountNumber), r.category, ACCT_TYPE[r.accountType], day.iso, STATUS_TEXT[r.status], r.closing != null ? r.closing.toFixed(2) : "", r.camsUtilised != null ? r.camsUtilised.toFixed(2) : "", r.lastTxnAt != null ? day.iso : "", r.lastTxnAt != null ? timeOn(r.lastTxnAt) : "", r.updatedAt != null ? `${day.iso} ${timeOn(r.updatedAt)}` : "", r.indicator ? INDICATOR_TEXT[r.indicator] : "", r.balBreak ? (r.fix ? "Resolved" : "Yes") : ""]));
 
   return (
-    <div className="dz" data-testid="closing-balances">
+    <div className="dz cbx" data-testid="closing-balances">
       <div className="dz-head">
         <div>
-          <h1><Banknote size={22} /> Closing balances</h1>
-          <p>Every bank account's closing balance as at its last transaction before 3 PM, checked against the system's closing balance (the balance on the last line item in our tables){isManager ? ", and how much of it has not been utilised yet" : ""}.</p>
+          <h1>Closing balances</h1>
+          <p>Each bank account&apos;s latest closing balance, next to the amount CAMS has reported as utilised. Use it to see where an AMC sweep may still be pending.</p>
         </div>
-        <div className="dz-actions">
-          <span className="cb-date" data-testid="cb-date" title="The business date these balances are for">Business date {businessDate()}</span>
-          <div className="segmented dz-asat" title="See the day at another time">{[["now", "Now"], [String(THREE_PM + 30), "3:30 PM"], [String(FOUR_PM), "4 PM"], [String(17 * 60), "5 PM"]].map(([v, l]) => <button key={v} className={asAt === v ? "on" : ""} onClick={() => setAsAt(v)} data-testid={"asat-" + v}>{l}</button>)}</div>
-          <button className="btn btn-outline btn-sm" onClick={exportCsv} data-testid="cb-export"><Download size={14} /> Export</button>
-        </div>
+        {canExport && <div className="dz-actions"><button className="btn btn-outline btn-sm" onClick={exportCsv} data-testid="cb-export"><Download size={14} /> Export what is shown</button></div>}
       </div>
 
-      <div className="cb-filters" data-testid="cb-filters">
-        <Filter size={14} />
-        <Sel label="Bank" v={f.bank} on={(v) => setF({ ...NO_FILTER, bank: v })} opts={banksAll.map((b) => [b, b])} all="All banks" t="cb-bank" />
-        {f.bank !== "all" && <>
-          <Sel label="Account number" v={f.account} on={(v) => setF({ ...f, account: v, type: "all", sebi: "all" })} opts={inBank.map((r) => [r.accountNumber, maskAccount(r.accountNumber)])} all="All accounts" t="cb-account" />
-          <Sel label="Account type" v={f.type} on={(v) => set("type", v)} opts={typeOpts.length > 1 ? typeOpts : []} all={typeOpts.length === 1 ? typeOpts[0][1] : "All"} t="cb-type" />
-          <Sel label="SEBI asset class" v={f.sebi} on={(v) => set("sebi", v)} opts={sebiOpts.length > 1 ? sebiOpts : []} all={sebiOpts.length === 1 ? sebiOpts[0][1] : "All"} t="cb-sebi" />
-        </>}
-        {filtered && <button className="btn btn-ghost btn-sm" onClick={() => setF(NO_FILTER)} data-testid="cb-clear">Clear</button>}
-        <span className="cb-src" title="SEBI asset class comes from each scheme's SEBI category in the scheme master"><Info size={12} /> {f.bank === "all" ? "pick a bank to filter by account" : "SEBI asset class from the scheme master"}</span>
+      <CategoryDateBar category={category} onCategory={(c) => { setCategory(c); setF(NO_FILTER); setOnly("all"); }} back={back} onBack={setBack} dateNote="The date applies to this screen only." />
+
+      <div className="fu-callout cbx-info" data-testid="cb-info">
+        <Info size={16} />
+        <div>This is for information. A green or red mark is a simple comparison of two numbers. It does not prove that the AMC has or has not swept the funds, because money keeps moving in and out of the account.</div>
       </div>
 
-      <div className="cb-today" data-testid="cb-today">
-        <div className="cb-today-counts">
-          <span className="cb-tc"><b className="fx-num">{files.filter((x) => x.receivedAt).length}</b>statements received</span>
-          <span className="cb-tc bad"><b className="fx-num">{failedFiles.length}</b>failed</span>
-          <span className="cb-tc"><b className="fx-num">{files.filter((x) => !x.receivedAt).length}</b>not received yet</span>
-        </div>
-        <div className="cb-today-tasks">
-          <span className="cb-today-h"><ListChecks size={14} /> Today's tasks</span>
-          {tasks.length === 0 ? <span className="muted">Nothing failing.</span> : tasks.slice(0, 6).map((t) => <button key={t.k} className="cb-task" onClick={() => nav("/ingestion")} title={t.sub}><AlertTriangle size={12} /> {t.text}</button>)}
-          {tasks.length > 6 && <button className="link" onClick={() => nav("/ingestion")}>+{tasks.length - 6} more <ArrowRight size={12} /></button>}
-        </div>
+      <div className="dz-kpis cbx-kpis">
+        <Kpi label="Accounts with a balance" value={`${withBalance} of ${rows.length}`} sub={`${category.toLowerCase()} accounts · ${day.short}`} onClick={() => setOnly("all")} active={only === "all"} testid="kpi-accounts" />
+        <Kpi label="Sweep may be pending" value={red} sub="closing balance is above CAMS fund utilised" tone={red ? "warn" : "ok"} onClick={() => pick("red")} active={only === "red"} testid="kpi-red" />
+        <Kpi label="Sweep likely done" value={green} sub="closing balance is below CAMS fund utilised" tone="ok" onClick={() => pick("green")} active={only === "green"} testid="kpi-green" />
+        <Kpi label="Balance does not match" value={broken} sub={broken ? `not resolved for ${day.short}` : "none open"} tone={broken ? "warn" : "ok"} onClick={() => pick("broken")} active={only === "broken"} testid="kpi-mismatch" />
       </div>
 
-      {now < THREE_PM && (
-        <div className="fu-callout" data-testid="cb-before3">
-          <Info size={16} />
-          <div>It's before 3 PM. Today's statements are downloaded after 3 PM, so nothing has been checked yet. <button className="link" onClick={() => setAsAt(String(FOUR_PM))} data-testid="cb-preview">Preview the day at 4 PM</button></div>
-        </div>
-      )}
+      {back === 0 && <BankCheckpoints category={category} />}
 
-      <div className="dz-hero">
-        <TiltCard className="card dz-card" max={4} data-testid="stmt-donut">
-          <div className="dz-card-h">Statements in today <span className="muted">· by account</span></div>
-          <div className="dz-health">
-            <Donut size={156} value={`${inCount}/${rows.length}`} sub="accounts received"
-              segments={[{ v: n((r) => r.stmtNow === "txn"), color: STMT.txn }, { v: n((r) => r.stmtNow === "no_txn"), color: STMT.no_txn }, { v: n((r) => r.stmtNow === "not_received"), color: STMT.not_received }]} />
-            <ul className="dz-legend">
-              <li className="clickable" onClick={() => pick("txn")} data-testid="cb-txn"><i style={{ background: STMT.txn }} />Received <b>{n((r) => r.stmtNow === "txn")}</b></li>
-              <li className="clickable" onClick={() => pick("no_txn")} data-testid="cb-notxn"><i style={{ background: STMT.no_txn }} />No transactions today <b>{n((r) => r.stmtNow === "no_txn")}</b></li>
-              <li className="clickable" onClick={() => pick("not_received")} data-testid="cb-notrec"><i style={{ background: STMT.not_received }} />Not received <b>{n((r) => r.stmtNow === "not_received")}</b></li>
-            </ul>
+      <div className="card dz-card cbx-card" data-testid="balance-table">
+        <div className="cbx-card-h">
+          <div>
+            <h2>Closing balance by account</h2>
+            <p>Business date {day.label}. The closing balance is the running balance on the last transaction of that date. Each account stands on its own; balances are not added together.</p>
           </div>
-        </TiltCard>
-
-        <TiltCard className="card dz-card" max={4} data-testid="graph-balance">
-          <div className="dz-card-h">Closing balance check · 3 PM rule</div>
-          <div className="dz-health">
-            <Donut size={156} value={`${matched.length}/${inCount}`} sub="match the system"
-              segments={[{ v: matched.length, color: BAL.match }, { v: mism, color: BAL.mismatch }]} />
-            <ul className="dz-legend">
-              <li className="clickable" onClick={() => pick("match")}><i style={{ background: BAL.match }} />Matches system <b>{matched.length}</b></li>
-              <li className="clickable" onClick={() => pick("mismatch")}><i style={{ background: BAL.mismatch }} />Doesn't match <b>{mism}</b></li>
-            </ul>
-          </div>
-          <ol className="cb-rule"><li>Download after 3 PM</li><li>Last transaction before 3 PM</li><li>Its closing balance vs system</li></ol>
-        </TiltCard>
-
-        <div className="dz-kpis">
-          <Kpi label="Balances that don't match" value={mism} sub={mism ? `not resolved for ${businessDate()}` : "none open"} tone={mism ? "warn" : "ok"} onClick={() => pick("mismatch")} active={only === "mismatch"} testid="kpi-mismatch" />
-          <Kpi label="Funds not utilised" value={inrShort(total - utilisedAll)} sub={`${rows.filter((r) => r.remaining > 0).length} accounts with money not yet used`} tone="info" testid="kpi-not-utilised" />
-          <Kpi label="Bank accounts" value={rows.length} sub={`${amcUser.amcs?.length === 1 ? amcUser.amcs[0] : "your AMCs"}${filtered ? " · filtered" : ""}`} onClick={() => setOnly("all")} active={only === "all"} />
-        </div>
-      </div>
-
-      <BankCheckpoints />
-
-      <div className="card dz-card" data-testid="cb-by-bank">
-        <div className="dz-card-h">Closing balance by bank <span className="muted">· pick a bank to see each account's own balance</span></div>
-        {byBank.map(({ b, n: total, inN, bad }) => (
-          <button key={b} type="button" className={"cb-bank-row" + (f.bank === b ? " on" : "")} onClick={() => setF(f.bank === b ? NO_FILTER : { ...NO_FILTER, bank: b })} data-testid={"cb-drill-" + b.split(" ")[0]}>
-            <b>{b}</b>
-            <span>{inN} of {total} account{total === 1 ? "" : "s"} in{bad ? <> · <em className="warn">{bad} don&apos;t match</em></> : ""}</span>
-          </button>
-        ))}
-      </div>
-
-      {isManager && (
-        <div className="card dz-card cb-sweep-card" data-testid="graph-sweep">
-          <div className="dz-card-h">Fund utilisation · sweep of matched accounts <span className="muted">· completion % pinned at 3 PM and 4 PM</span></div>
-          <div className="cb-sweep-wrap">
-            <SweepChart rows={matched} now={now} pctAt={pctSweptAt} />
-            <ul className="dz-legend">
-              <li className="clickable" onClick={() => pick("full")}><i style={{ background: SWP.full }} />Fully swept <b>{n((r) => r.swept === "full")}</b></li>
-              <li className="clickable" onClick={() => pick("partial")}><i style={{ background: SWP.partial }} />Partly swept <b>{n((r) => r.swept === "partial")}</b></li>
-              <li className="clickable" onClick={() => pick("pending")}><i style={{ background: SWP.pending }} />Not swept yet <b>{n((r) => r.swept === "pending")}</b></li>
-              <li className="muted" style={{ fontSize: 12 }}>of {matched.length} matched accounts</li>
-            </ul>
+          <div className="cbx-filters" data-testid="cb-filters">
+            <label>Bank<select className="select" value={f.bank} onChange={(e) => setF({ ...f, bank: e.target.value })} data-testid="cb-bank"><option value="all">All banks</option>{banks.map((b) => <option key={b}>{b}</option>)}</select></label>
+            <label>Account type<select className="select" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })} data-testid="cb-type"><option value="all">All</option><option value="scheme">Scheme account</option><option value="common">Common account</option></select></label>
+            {filtered && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setF(NO_FILTER); setOnly("all"); }} data-testid="cb-clear">Show all</button>}
           </div>
         </div>
-      )}
 
-      <p className="cb-logic" data-testid="not-utilised-logic"><b>Funds not utilised</b> = closing balance minus the amount already paid out. An amount counts as paid out once the fund utilisation report marks its transactions. Accounts whose statement has not come in are left out, so the figure is never overstated.</p>
+        <div className="cbx-scroll">
+          <table className="table cbx-table">
+            <thead><tr>
+              <th>S. No.</th><th>Bank</th><th>Account</th><th className="num">Last closing balance</th><th className="num">CAMS fund utilised</th><th>Last transaction</th><th>Statement last updated</th><th>Indicative status</th>
+            </tr></thead>
+            <tbody>
+              {shown.slice(0, 200).map((r, i) => (
+                <tr key={r.id} data-testid={"bal-" + r.id} className={r.balBreak && !r.fix ? "is-broken" : ""}>
+                  <td className="tnum muted">{i + 1}</td>
+                  <td><b>{r.bankName}</b></td>
+                  <td><span className="tnum">{maskAccount(r.accountNumber)}</span><small>{ACCT_TYPE[r.accountType]} · {r.schemeName}</small></td>
+                  <td className="num">{r.closing != null ? <b className="tnum">{inr(r.closing)}</b> : <span className={"ck-st " + r.status} title={STATUS_HELP[r.status]}>{STATUS_TEXT[r.status]}</span>}
+                    {r.status === "no_txn" && <small>No transactions on this date</small>}
+                    {r.balBreak && (r.fix
+                      ? <small className="cbx-fixed" title={`${r.fix.note} · ${r.fix.by}`}><CheckCircle2 size={11} /> Mismatch resolved by {r.fix.by}</small>
+                      : <small className="cbx-break"><AlertTriangle size={11} /> Balance does not match{canResolve && <button type="button" className="link" onClick={() => resolve(r)} data-testid={"cb-resolve-" + r.id}>Resolve</button>}</small>)}
+                  </td>
+                  <td className="num">{r.camsUtilised != null ? <span className="tnum">{inr(r.camsUtilised)}</span> : <span className="muted">{r.closing != null ? "No report yet" : "—"}</span>}</td>
+                  <td>{r.lastTxnAt != null ? <><span className="tnum">{timeOn(r.lastTxnAt)}</span><small>{day.short} · row {r.lastSeq}</small></> : <span className="muted">—</span>}</td>
+                  <td>{r.updatedAt != null ? <><span className="tnum">{timeOn(r.updatedAt)}</span><small>{day.short}{back === 0 ? ` · ${ago(now - r.updatedAt)}` : ""}</small></> : <span className="muted">—</span>}</td>
+                  <td>{r.indicator ? <span className={"cbx-ind " + r.indicator}><i aria-hidden="true" />{INDICATOR_TEXT[r.indicator]}</span> : <span className="muted">{r.closing != null && r.camsUtilised != null ? "Amounts are equal" : "—"}</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {shown.length > 200 && <p className="muted card-pad">Showing 200 of {shown.length}. Pick a bank, or export.</p>}
+        {shown.length === 0 && <p className="muted card-pad">No {category.toLowerCase()} accounts match.</p>}
+      </div>
 
-      <div className="card dz-card dz-acc" data-testid="balance-table">
-        <div className="dz-card-h">Accounts <span className="muted">· {shown.length}{only !== "all" ? " · filtered" : ""}</span>{only !== "all" && <button className="link" style={{ marginLeft: "auto" }} onClick={() => setOnly("all")}>Show all</button>}</div>
-        {shown.slice(0, 200).map((r) => (
-          <div key={r.id} className={"dz-acc-row cb-acc-row c-" + r.check + (f.account === r.accountNumber ? " on" : "")} data-testid={"bal-" + r.id} role="button" tabIndex={0} title="Show only this account"
-            onClick={() => setF(f.account === r.accountNumber ? { ...NO_FILTER, bank: r.bankName } : { ...NO_FILTER, bank: r.bankName, account: r.accountNumber })}>
-            <span className={"dz-state cb-st s-" + r.stmtNow}>{r.stmtNow === "txn" ? <><CheckCircle2 size={12} /> Received</> : r.stmtNow === "no_txn" ? <><MinusCircle size={12} /> No transactions</> : <><FileX2 size={12} /> Not received</>}</span>
-            <div className="dz-acc-name"><b>{r.bankName}</b><span className="tnum">{maskAccount(r.accountNumber)} · {r.schemeName} · {r.sebiClass} ({r.sebiCategory}) · {r.accountType === "common" ? "common collection" : "scheme a/c"}</span></div>
-            <div className="dz-acc-up">{r.received ? <><b className="tnum">{r.lastTxnAt != null ? `last txn ${hhmm(r.lastTxnAt)}` : "nothing moved"}</b><span>downloaded {hhmm(r.downloadedAt)}</span></> : <><b>—</b><span>{now < THREE_PM ? "downloads start after 3 PM" : "chase the bank"}</span></>}</div>
-            <div className="dz-acc-bal"><b className="tnum">{r.received ? inr(r.closing) : "Not received"}</b><span title="System closing balance = the closing balance on the last line item in our tables for this account">system {inr(r.systemClosing)} · last line {r.lastTxnAt != null ? hhmm(r.lastTxnAt) : "opening"}{r.received ? `, updated ${hhmm(r.downloadedAt)}` : ""}</span>{r.received && <span className="cb-util">not utilised {inrShort(r.remaining)}{r.utilised > 0 ? ` (paid out ${inrShort(r.utilised)})` : ""}</span>}</div>
-            <div className="dz-acc-src">{r.check === "match" ? <span className="cb-chk match"><CheckCircle2 size={11} /> Matches</span>
-              : r.check === "mismatch" ? <><span className="cb-chk mismatch"><AlertTriangle size={11} /> Off by {inrShort(Math.abs(r.closing - r.systemClosing))}</span>{canResolve && <button type="button" className="btn btn-outline btn-sm cb-resolve" onClick={(e) => { e.stopPropagation(); resolve(r); }} data-testid={"cb-resolve-" + r.id}>Resolve</button>}</>
-              : r.check === "resolved" ? <span className="cb-chk resolved" title={`${r.fix.note} · ${r.fix.by}`}><CheckCircle2 size={11} /> Resolved · {r.fix.by}</span>
-              : <span className="muted">not checked</span>}</div>
-            <span className={"dz-cut cb-sw s-" + (r.swept || "none")}>{isManager ? (r.swept === "full" ? `swept ${hhmm(r.sweepAt)}` : r.swept === "partial" ? `${r.sweptPct}% swept` : r.swept === "pending" ? "not swept" : "") : ""}</span>
-          </div>
-        ))}
-        {shown.length > 200 && <p className="muted card-pad">Showing 200 of {shown.length}. Narrow with the filters, or export.</p>}
-        {shown.length === 0 && <p className="muted card-pad">No accounts match these filters.</p>}
+      <div className="cbx-legend" data-testid="cb-legend">
+        <p><span className="cbx-ind green"><i aria-hidden="true" />Sweep likely done</span> The closing balance is below CAMS fund utilised.</p>
+        <p><span className="cbx-ind red"><i aria-hidden="true" />Sweep may be pending</span> The closing balance is above CAMS fund utilised. Check with the AMC.</p>
+        <p><b>CAMS fund utilised</b> is the total for which CAMS has generated the utilisation report and set the flag. <b>Balance does not match</b> means the statement&apos;s rows do not add up; the exact check is still being confirmed.</p>
       </div>
     </div>
-  );
-}
-
-function Sel({ label, v, on, opts, all, t }) {
-  return (
-    <label className="cb-sel"><span>{label}</span>
-      <select className="select" value={v} onChange={(e) => on(e.target.value)} data-testid={t}>
-        <option value="all">{all}</option>
-        {opts.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-      </select>
-    </label>
-  );
-}
-
-/** Cumulative % of matched accounts fully swept, 10 AM–6 PM, with the 3 PM and 4 PM completion always labelled. */
-function SweepChart({ rows, now, pctAt }) {
-  const W = 460; const H = 170; const L = 34; const B = 24; const start = 10 * 60; const end = 18 * 60;
-  const x = (m) => L + ((m - start) / (end - start)) * (W - L - 10);
-  const y = (p) => 10 + (1 - p / 100) * (H - B - 10);
-  const upto = Math.min(end, Math.max(start, now));
-  const pts = []; for (let t = start; t <= upto; t += 5) pts.push([t, pctAt(t)]);
-  if (pts.length && pts[pts.length - 1][0] !== upto) pts.push([upto, pctAt(upto)]);
-  const line = pts.map(([t, p], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(p).toFixed(1)}`).join(" ");
-  const area = pts.length ? `${line} L${x(pts[pts.length - 1][0]).toFixed(1)},${y(0)} L${x(start)},${y(0)} Z` : "";
-  const pins = [[THREE_PM, "3 PM"], [FOUR_PM, "4 PM"]];
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="cb-sweep" role="img" aria-label={`Fully swept: ${pctAt(THREE_PM)}% at 3 PM, ${now >= FOUR_PM ? pctAt(FOUR_PM) + "%" : "not yet"} at 4 PM`}>
-      <defs><linearGradient id="swg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor={SWP.full} stopOpacity=".45" /><stop offset="1" stopColor={SWP.full} stopOpacity="0" /></linearGradient></defs>
-      {[0, 50, 100].map((p) => <g key={p}><line x1={L} x2={W - 10} y1={y(p)} y2={y(p)} className="dz-grid" /><text x={L - 6} y={y(p) + 3} textAnchor="end" className="dz-axis">{`${p}%`}</text></g>)}
-      {[10, 12, 14, 16, 18].map((h) => <text key={h} x={x(h * 60)} y={H - 6} textAnchor="middle" className="dz-axis">{`${h > 12 ? h - 12 : h} ${h >= 12 ? "PM" : "AM"}`}</text>)}
-      {area && <path d={area} fill="url(#swg)" />}
-      {line && <path d={line} fill="none" stroke={SWP.full} strokeWidth="2.2" style={{ filter: `drop-shadow(0 0 6px ${SWP.full})` }} />}
-      {pins.map(([t, l]) => {
-        const reached = now >= t; const p = pctAt(t); const lx = l === "3 PM" ? x(t) - 70 : x(t) + 4; const ly = reached ? Math.max(12, y(p) - 26) : 12;
-        return (
-          <g key={l} data-testid={"sweep-pin-" + l.replace(" ", "")}>
-            <line x1={x(t)} x2={x(t)} y1={10} y2={H - B} stroke={SWP.partial} strokeDasharray="3 3" />
-            <rect x={lx} y={ly} width="66" height="18" rx="5" fill="#ffffff" stroke={SWP.partial} />
-            <text x={lx + 33} y={ly + 12.5} textAnchor="middle" fontSize="11" fontWeight="600" fill="#0f172a">{`${l}: ${reached ? p + "%" : "—"}`}</text>
-            {reached && <circle cx={x(t)} cy={y(p)} r="4" fill={SWP.full} />}
-          </g>
-        );
-      })}
-      {!rows.length && <text x={W / 2} y={H / 2} textAnchor="middle" className="dz-axis">No matched accounts yet</text>}
-    </svg>
   );
 }

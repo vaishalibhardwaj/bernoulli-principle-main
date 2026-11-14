@@ -1,10 +1,11 @@
 import { patternsFor, hhmm, LEARN_MIN_DAYS, LEARN_MAX_DAYS, LATE_AFTER_MIN } from "@/lib/uploadPatterns";
 import React from "react";
+import { Busy } from "@/components/bits";
 import { useStore } from "@/state/store";
 import { Modal } from "@/components/Modal";
 import { formatDateTime, timeAgo, uid } from "@/lib/format";
 import { num } from "@/features/ops/ui";
-import { CheckCircle2, XCircle, Folder, FolderOpen, Layers, UploadCloud, AlertTriangle, Loader2, Clock } from "lucide-react";
+import { CheckCircle2, XCircle, Folder, FolderOpen, Layers, UploadCloud, AlertTriangle, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { C, Donut } from "@/features/dashboards/dashViz";
 
@@ -123,7 +124,7 @@ export function SftpTab({ folders, files, canEdit, onOpenFile }) {
               })}
             </ul>
             {canEdit && <div className="cc-actions">
-              <button className="btn btn-outline btn-sm" onClick={() => scan(fo)} data-testid={"scan-" + fo.id}>{fo.scanning ? <><Loader2 size={13} className="spin" /> Scanning… (started by {fo.scanning.by})</> : <><Clock size={13} /> Scan now</>}</button>
+              <button className="btn btn-outline btn-sm" onClick={() => scan(fo)} data-testid={"scan-" + fo.id}>{fo.scanning ? <><Busy /> Scanning… (started by {fo.scanning.by})</> : <><Clock size={13} /> Scan now</>}</button>
             </div>}
           </div>
         );

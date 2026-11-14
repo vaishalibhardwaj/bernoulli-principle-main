@@ -41,6 +41,7 @@ const CHANNELS = ["Direct", "BSE StAR", "NSE NMF", "MFU", "Razorpay", "CAMSPay"]
 // AMC that a record belongs to (drives each user's AMC scope).
 const AMC_OF = ["HDFC Mutual Fund", "ICICI Prudential MF", "Aditya Birla Sun Life MF", "Kotak Mahindra MF", "Nippon India MF", "DSP Mutual Fund"];
 const amcFor = (i) => AMC_OF[i % AMC_OF.length];
+export const DRIFT_AMC = { 0: "ICICI Prudential MF", 3: "HDFC Mutual Fund" };
 const amcOfInvestor = (inv) => amcFor(INVESTORS.indexOf(inv));
 
 const utr = (code) => `${code}R5${Math.floor(1e10 + R() * 9e10)}`;
@@ -69,7 +70,8 @@ export function seedFiles() {
     const fp = (bank.code + (kind === "drift" ? "9F2C" : "4A1E") + (1000 + i * 37)).toLowerCase();
     const f = {
       id: "file_" + (101 + i),
-      amc: amcFor(i),
+      // The two layout changes sit with the AMCs the Recon Ops personas look at first.
+      amc: DRIFT_AMC[i] || amcFor(i),
       bankName, bankCode: bank.code, accountNumber: acc.accountNumber, channel,
       expectedBy: todayAt(eh, em),
       receivedAt: received ? new Date(new Date(todayAt(eh, em)).getTime() - (20 - i) * 60000).toISOString() : null,

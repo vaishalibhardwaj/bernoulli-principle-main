@@ -1,6 +1,6 @@
 // Team tasks: the templates every Ops person's Today list is built from.
-// Level 1 and Level 2 change when a task is due, who does it and whether it is on. Only Level 2 adds new tasks
-// (whether Level 1/2 should add tasks at all is still to be confirmed). Everyone else sees the list read-only.
+// The functional manager (the team leader) creates tasks, sets when they are due and switches them on or off.
+// Level 1 and Level 2 only choose who does each task. Everyone else sees the list read-only. (Confirmed 13 Nov.)
 import React from "react";
 import { Plus, Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -14,8 +14,8 @@ const fmt = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return `${((
 
 export default function TaskTemplates() {
   const { collections, perms, users, upsert, addAudit } = useStore();
-  const canEdit = hasCap(perms, "task_templates", "edit");
-  const canAdd = hasCap(perms, "task_templates", "approve");
+  const canAssign = hasCap(perms, "task_templates", "edit");
+  const canManage = hasCap(perms, "task_templates", "approve");
   const templates = templatesFrom(collections.task_templates);
   const ops = users.filter((u) => (u.roles || []).includes("role_recon_ops") && u.status === "active");
   const nameOf = (id) => users.find((u) => u.id === id)?.name || "Whole team";
@@ -34,31 +34,31 @@ export default function TaskTemplates() {
       <div className="page-head"><div>
         <h1>Team tasks</h1>
         <p>Each Ops person's Today list is built from these tasks, every day. A task with several times shows up once per time.
-          {canEdit ? " Change the times, who does it, or switch a task off." : " Only Level 1 and Level 2 users can change them."}</p>
+          {canManage ? " Add a task, change its times or who does it, or switch it off." : canAssign ? " Choose who does each task. The functional manager adds tasks and sets their times." : " The functional manager adds tasks. Level 1 and Level 2 users choose who does them."}</p>
       </div>
-      {canAdd && <div className="actions"><button className="btn btn-primary" onClick={() => setAdding(true)} data-testid="tt-add"><Plus size={15} /> Add a task</button></div>}
+      {canManage && <div className="actions"><button className="btn btn-primary" onClick={() => setAdding(true)} data-testid="tt-add"><Plus size={15} /> Add a task</button></div>}
       </div>
 
-      {!canEdit && <div className="fu-callout"><Lock size={16} /><div>You can see the team's tasks but not change them.</div></div>}
+      {!canAssign && <div className="fu-callout"><Lock size={16} /><div>You can see the team's tasks but not change them.</div></div>}
 
       {adding && <NewTask ops={ops} onCancel={() => setAdding(false)} onSave={(t) => { upsert("task_templates", t); addAudit({ action: "Task template added", entity: "task_template", entityId: t.id, details: t.title }); toast.success(`Added: ${t.title}`); setAdding(false); }} />}
 
       <div className="card">
         <table className="table tt-table">
-          <thead><tr><th>Task</th><th>KRA</th><th>When</th><th>Who does it</th><th>On</th>{canEdit && <th />}</tr></thead>
+          <thead><tr><th>Task</th><th>KRA</th><th>When</th><th>Who does it</th><th>On</th>{canAssign && <th />}</tr></thead>
           <tbody>
             {templates.map((t) => editing === t.id
-              ? <EditRow key={t.id} t={t} ops={ops} onCancel={() => setEditing(null)} onSave={(change, what) => { save(t, change, what); setEditing(null); }} />
+              ? <EditRow key={t.id} t={t} ops={ops} canManage={canManage} onCancel={() => setEditing(null)} onSave={(change, what) => { save(t, change, what); setEditing(null); }} />
               : (
                 <tr key={t.id} data-testid={"tt-row-" + t.id} className={t.active === false ? "muted" : ""}>
                   <td><b>{t.title}</b>{t.phase && <span className="muted"> · {t.phase}</span>}<div className="muted" style={{ fontSize: 12.5 }}>{AREAS.find((a) => a.key === t.area)?.label}</div></td>
                   <td>{t.kra || <span className="muted">—</span>}</td>
                   <td><div className="tt-times">{t.times?.length ? t.times.map((x) => <span key={x}>{fmt(x)}</span>) : <span>{t.when || "No fixed time"}</span>}</div></td>
                   <td>{nameOf(t.assignee)}</td>
-                  <td>{canEdit
+                  <td>{canManage
                     ? <input type="checkbox" checked={t.active !== false} onChange={(e) => save(t, { active: e.target.checked }, e.target.checked ? "switched on" : "switched off")} aria-label={`${t.title} on`} data-testid={"tt-on-" + t.id} />
                     : t.active === false ? "Off" : "On"}</td>
-                  {canEdit && <td><button className="btn btn-outline btn-sm" onClick={() => setEditing(t.id)} data-testid={"tt-edit-" + t.id}>Change</button></td>}
+                  {canAssign && <td><button className="btn btn-outline btn-sm" onClick={() => setEditing(t.id)} data-testid={"tt-edit-" + t.id}>{canManage ? "Change" : "Assign"}</button></td>}
                 </tr>
               ))}
           </tbody>
@@ -68,21 +68,26 @@ export default function TaskTemplates() {
   );
 }
 
-function EditRow({ t, ops, onCancel, onSave }) {
+function EditRow({ t, ops, canManage, onCancel, onSave }) {
   const [times, setTimes] = React.useState((t.times || []).join(", "));
   const [assignee, setAssignee] = React.useState(t.assignee || "");
   const list = parseTimes(times);
   const bad = list.find((x) => !TIME_RE.test(x));
   const submit = () => {
+    const who = `assigned to ${assignee ? ops.find((u) => u.id === assignee)?.name : "whole team"}`;
+    // Level 1 and Level 2 only assign: the times stay as the functional manager set them.
+    if (!canManage) { onSave({ assignee: assignee || null }, who); return; }
     if (bad) { toast.error(`"${bad}" is not a time. Use 24-hour HH:MM, for example 15:30.`); return; }
     const sorted = [...new Set(list.map((x) => x.padStart(5, "0")))].sort();
-    onSave({ times: sorted, assignee: assignee || null }, `times ${sorted.join(", ") || "none"}; assigned to ${assignee ? ops.find((u) => u.id === assignee)?.name : "whole team"}`);
+    onSave({ times: sorted, assignee: assignee || null }, `times ${sorted.join(", ") || "none"}; ${who}`);
   };
   return (
     <tr data-testid={"tt-editing-" + t.id}>
       <td><b>{t.title}</b></td>
       <td>{t.kra || "—"}</td>
-      <td><input className="input" value={times} onChange={(e) => setTimes(e.target.value)} placeholder="09:00, 15:00" aria-label="Times, 24-hour, comma separated" data-testid="tt-times" /></td>
+      <td>{canManage
+        ? <input className="input" value={times} onChange={(e) => setTimes(e.target.value)} placeholder="09:00, 15:00" aria-label="Times, 24-hour, comma separated" data-testid="tt-times" />
+        : <div className="tt-times">{t.times?.length ? t.times.map((x) => <span key={x}>{fmt(x)}</span>) : <span>{t.when || "No fixed time"}</span>}</div>}</td>
       <td><select className="select" value={assignee} onChange={(e) => setAssignee(e.target.value)} aria-label="Who does it" data-testid="tt-assignee">
         <option value="">Whole team</option>
         {ops.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}

@@ -2,7 +2,7 @@ import React from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Landmark, CreditCard, GitCompareArrows, History, Gauge, Inbox, Combine, Siren, ScanText,
-  PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound, Lock,
+  PanelLeftClose, PanelLeft, ChevronRight, LogOut, RotateCcw, AlertTriangle, Bell, Users, Shield, KeyRound,
   Calculator, Wallet, BookUser, FileStack, FileWarning, Layers, Undo2, Percent, ChevronDown, Eye,
   Home, ClipboardCheck, FileInput, Banknote, Search, Building2, Scale, Clock, Activity, Tags, FolderCog, ClipboardList,
   ListTodo,
@@ -13,6 +13,7 @@ import { dailyCycle } from "@/lib/journey";
 import { useStore } from "@/state/store";
 import { userAmcs, inScope, amcOfAccount } from "@/lib/org";
 import { ConfirmModal } from "@/components/Modal";
+import { StateBlock, ScreenBoundary } from "@/components/bits";
 import { navFor, homePath, screenForPath, hasCap, PERSONAS, VERTICALS, screenLabel, MODULES } from "@/lib/access";
 import { toast } from "sonner";
 
@@ -51,6 +52,13 @@ export default function AppShell() {
   const approvals = useApprovals().filter((a) => !a.own);
 
   React.useEffect(() => { setBannerSeen(false); }, [persona, state.sessionId]);
+  // One shortcut for power users: Ctrl or Cmd + K opens search from anywhere. Everything else stays mouse-first.
+  React.useEffect(() => {
+    const onKey = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((o) => !o); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const modKey = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘" : "Ctrl";
   React.useEffect(() => {
     const close = () => { setMenuOpen(false); setPersonaOpen(false); setBellOpen(false); };
     if (menuOpen || personaOpen || bellOpen) { window.addEventListener("click", close); return () => window.removeEventListener("click", close); }
@@ -112,11 +120,12 @@ export default function AppShell() {
     <div className={"shell" + (state.sidebarCollapsed ? " collapsed" : "") + (simple ? " simple" : "")}>
       <aside className={"sidebar" + (state.sidebarCollapsed ? " mini" : "")}>
         <div className="sidebar-brand">
-          <div className="brand-mark"><Shield size={16} /></div>
-          <div className="brand-text">
-            CAMS Operations
-            <small>{modules.map((m) => m.label).join(" · ") || "No module access"}</small>
-          </div>
+          <div className="brand-mark"><Shield size={15} /></div>
+          <div className="brand-text">CAMS Recon</div>
+        </div>
+        <div className="sb-profile" data-testid="sb-profile">
+          <span className="sb-avatar" aria-hidden="true">{personaUser.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}<i /></span>
+          <span className="sb-who"><b>{personaUser.name}</b><small>{personaLabel.split(" · ")[1] || currentRole}</small></span>
         </div>
 
         <nav className="nav" data-testid="sidebar-nav">
@@ -134,15 +143,12 @@ export default function AppShell() {
                       <FolderCog /><span className="nav-label">{g.name}</span><ChevronRight className="nav-chev" />
                     </button>
                   ) : g.name !== m.label && <div className="nav-section-title">{g.name}</div>}
-                  {open && <div className={folder ? "nav-folder-items" : undefined}>{[...g.screens.filter((s) => !s.quiet), ...g.screens.filter((s) => s.quiet)].map((s, k, list) => {
+                  {open && <div className={folder ? "nav-folder-items" : undefined}>{g.screens.map((s, k) => {
                     const Icon = ICONS[s.key] || Layers;
                     const badge = badgeFor(s.key);
-                    // Rarely used screens sit last in their group, under a quiet "Less often" line.
-                    const firstQuiet = s.quiet && k > 0 && !list[k - 1].quiet;
                     return (
                       <React.Fragment key={s.key}>
-                      {firstQuiet && <div className="nav-quiet">Less often</div>}
-                      <NavLink to={s.path} end={s.path === "/dashboard"} className={({ isActive }) => "nav-item" + (s.quiet ? " quiet" : "") + (isActive ? " active" : "")} data-testid={"nav-" + s.key}>
+                      <NavLink to={s.path} end={s.path === "/dashboard"} style={{ "--ic": `var(--ic-${(k % 6) + 1})` }} className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} data-testid={"nav-" + s.key}>
                         <Icon /><span className="nav-label">{screenLabel(s, simple)}</span>{s.step && <span className="nav-step" title={`Step ${s.step} of the daily cycle`}>{s.step}</span>}
                         {badge > 0 && <span className="nav-badge pop" key={badge}>{badge}</span>}
                       </NavLink>
@@ -187,7 +193,7 @@ export default function AppShell() {
               </div>
             )}
           </div>}
-          <button className="search-trigger" onClick={() => setPaletteOpen(true)} data-testid="open-search"><Search size={14} /><span>Search or jump to…</span></button>
+          <button className="search-trigger" onClick={() => setPaletteOpen(true)} data-testid="open-search" aria-keyshortcuts="Control+K Meta+K"><Search size={14} /><span>Search or jump to…</span><kbd>{modKey} K</kbd></button>
           <div className="topbar-spacer" />
           <div style={{ position: "relative" }}>
             <button className="icon-btn" aria-label="Notifications" data-testid="bell" onClick={(e) => { e.stopPropagation(); setBellOpen((o) => !o); }}>
@@ -273,13 +279,11 @@ export default function AppShell() {
                 <button className="x" onClick={() => setBannerSeen(true)} aria-label="Dismiss"><span style={{ fontSize: 18 }}>×</span></button>
               </div>
             )}
-            {allowed ? <Outlet /> : (
-              <div className="card card-pad no-access" data-testid="no-access">
-                <Lock size={28} />
-                <h2>You don't have access to {screenLabel(screen, simple)}</h2>
-                <p className="muted">Access is granted per screen through roles in Administration › Roles & Access. Ask your admin to add a role that includes <b>{screen.label}</b>.</p>
-                <button className="btn btn-primary" onClick={() => nav(homePath(perms, simple))}>Go to my home screen</button>
-              </div>
+            {allowed ? <ScreenBoundary resetKey={loc.pathname}><Outlet /></ScreenBoundary> : (
+              <StateBlock art="lock" testid="no-access" title={`You don't have access to ${screenLabel(screen, simple)}`}
+                action={<button className="btn btn-primary" onClick={() => nav(homePath(perms, simple))}>Go to my home screen</button>}>
+                Access is given per screen through roles. Ask the Central Setup Team to add a role that includes {screen.label}. Nothing on this screen was opened or changed.
+              </StateBlock>
             )}
           </div>
         </div>

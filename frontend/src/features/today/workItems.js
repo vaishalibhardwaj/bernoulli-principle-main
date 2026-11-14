@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/state/store";
 import { hasCap } from "@/lib/access";
+import { userAmcs } from "@/lib/org";
 import { scopeToUser } from "@/lib/journey";
 import { PLAIN_EXCEPTION } from "@/lib/plain";
 import { maskAccount } from "@/lib/format";
@@ -73,19 +74,35 @@ export function useWorkItems() {
   }
   if (hasCap(perms, "ingestion", "edit")) {
     const setup = hasCap(perms, "bank_setup", "edit");
-    (collections.files || []).filter((f) => ["late", "missing", "check_failed", "retrying", "unknown"].includes(f.status) || (f.status === "drift" && setup)).forEach((f) => {
+    // Ops see a layout change too: it holds the account's rows until the new mapping is approved. Setup confirms it; Ops follows it.
+    (collections.files || []).filter((f) => ["late", "missing", "check_failed", "retrying", "unknown", "drift", "drift_pending"].includes(f.status)).forEach((f) => {
       const manual = f.channel === "manual";
-      const eventType = { late: "statement_missing", missing: "statement_missing", check_failed: "file_format", retrying: "file_format", unknown: "file_unknown", drift: "file_layout_changed" }[f.status];
-      const rep = EVENT_TYPES[eventType].dedupe ? repeatHistory(f.id, 15) : { firstAt: f.expectedBy };
-      const how = { late: manual ? "upload" : "pull", missing: manual ? "upload" : "pull", check_failed: f.corrected ? "reprocess" : "corrected", retrying: "reprocess", unknown: "onboard", drift: "drift" }[f.status];
+      const eventType = { late: "statement_missing", missing: "statement_missing", check_failed: "file_format", retrying: "file_format", unknown: "file_unknown", drift: "file_layout_changed", drift_pending: "file_layout_changed" }[f.status];
+      // A layout change happens once, when it is detected; only format errors repeat with each pickup.
+      const rep = f.drift ? { firstAt: f.drift.detectedAt || f.receivedAt, count: 1 } : EVENT_TYPES[eventType].dedupe ? repeatHistory(f.id, 15) : { firstAt: f.expectedBy };
+      const how = { late: manual ? "upload" : "pull", missing: manual ? "upload" : "pull", check_failed: f.corrected ? "reprocess" : "corrected", retrying: "reprocess", unknown: "onboard", drift: setup ? "drift" : f.setupRequested ? "driftAsked" : "driftOps", drift_pending: "driftWait" }[f.status];
+      // Layout change: compared with the approved fingerprint (column names, order, header row, value types), with a confidence per column.
+      const dr = f.drift;
+      const low = dr?.changes?.length ? Math.round(Math.min(...dr.changes.map((c) => c.confidence)) * 100) : null;
+      const driftLine = dr ? `${dr.changes.length} column${dr.changes.length === 1 ? "" : "s"} changed${low != null ? ` · lowest confidence ${low}%` : ""} · ${(dr.rowsHeld || 0).toLocaleString("en-IN")} rows held` : "";
       items.push({
-        id: f.id, tone: ["late", "missing"].includes(f.status) ? "red" : "amber", sort: 100, kind: "Bank file", step: 1, eventType, ...rep,
-        title: { upload: `Upload today's ${f.bankName} statement`, pull: `${f.bankName} statement hasn't arrived`, corrected: `${f.bankName} statement balances don't add up`, refetch: `${f.bankName} statement balances don't add up`, reprocess: `Reprocess the ${f.bankName} statement`, onboard: `${f.bankName} sent a file we don't recognise`, drift: `${f.bankName} changed its file layout` }[how],
-        detail: `Account ·${f.accountNumber.slice(-4)} · arrives by ${{ manual: "manual upload", email: "email", api: "API", auto: "portal bot" }[f.channel]}`,
-        hint: { upload: "Download it from internet banking, then upload it here", pull: "Pull it now, or upload it by hand", corrected: "Ask the bank for a corrected statement, then upload it", refetch: "Re-fetch the full statement, then reprocess", reprocess: "A fresh copy is ready — reprocess it", onboard: "Needs a new setup", drift: "The system has proposed the new mapping — confirm it" }[how],
-        primary: { label: { upload: "Upload statement", pull: "Get the file", corrected: "Upload corrected file", refetch: "Open file", reprocess: "Reprocess", onboard: "Open file", drift: "Review new layout" }[how], run: () => nav(`/ingestion?file=${f.id}${["upload", "corrected"].includes(how) ? "&upload=1" : ""}`) },
+        id: f.id, tone: ["late", "missing"].includes(f.status) ? "red" : f.setupRequested || f.status === "drift_pending" ? "green" : "amber", sort: 100, kind: "Bank file", step: 1, eventType, ...rep,
+        title: { upload: `Upload today's ${f.bankName} statement`, pull: `${f.bankName} statement hasn't arrived`, corrected: `${f.bankName} statement balances don't add up`, refetch: `${f.bankName} statement balances don't add up`, reprocess: `Reprocess the ${f.bankName} statement`, onboard: `${f.bankName} sent a file we don't recognise`, drift: `${f.bankName} changed its file layout`, driftOps: `${f.bankName} changed its file layout`, driftWait: `${f.bankName} layout change is waiting for approval`, driftAsked: `${f.bankName} layout change is with Central Setup` }[how],
+        detail: (how.startsWith("drift") && driftLine) ? `Account ·${f.accountNumber.slice(-4)} · ${driftLine}` : `Account ·${f.accountNumber.slice(-4)} · arrives by ${{ manual: "manual upload", email: "email", api: "API", auto: "portal bot", sftp: "SFTP" }[f.channel] || f.channel}`,
+        hint: { upload: "Download it from internet banking, then upload it here", pull: "Pull it now, or upload it by hand", corrected: "Ask the bank for a corrected statement, then upload it", refetch: "Re-fetch the full statement, then reprocess", reprocess: "A fresh copy is ready — reprocess it", onboard: "Needs a new setup", drift: "The system has proposed the new mapping — confirm it", driftOps: "Rows are held, not lost. Check what changed, then ask Central Setup to fix it", driftWait: "A teammate is approving the new mapping; the held rows load as soon as it is approved", driftAsked: "You asked Central Setup to fix it. The held rows load once they approve the new mapping" }[how],
+        // Missing statements that arrive by hand go straight to File upload, filled in for this bank and account.
+        // Everything else opens the file in Bank files, where the checks and the choices for that problem are.
+        primary: how === "upload"
+          ? { label: "Upload the statement", run: () => nav(`/upload?type=bank&bank=${encodeURIComponent(f.bankName)}&account=${f.accountNumber}`) }
+          : { label: { pull: "Get the file", corrected: "See the mismatch", refetch: "See the mismatch", reprocess: "Reprocess", onboard: "See the file", drift: "See what changed", driftOps: "See what changed", driftWait: "See what changed", driftAsked: "See what changed" }[how], run: () => nav(`/ingestion?file=${f.id}`) },
       });
     });
+    // Files that landed (SFTP or uploaded on screen) but failed when they were picked up, e.g. wrong number of columns.
+    (raw.file_track || []).filter((t) => t.outcome === "failed" && (!t.amc || userAmcs(amcUser).includes(t.amc))).forEach((t) => items.push({
+      id: "ft_" + t.id, tone: "amber", sort: 120, kind: t.source === "ui" ? "Uploaded file" : "File in SFTP", step: 1, eventType: "file_format", firstAt: t.placedAt || new Date(Date.now() - (t.placed || 0) * 60000).toISOString(),
+      title: `${t.name} was not loaded`, detail: t.note || "Failed when it was picked up", hint: t.source === "ui" ? `Uploaded by ${t.uploadedBy || "a teammate"}` : t.folder,
+      primary: { label: "Upload it again", run: () => nav(`/upload?type=${t.fileType || "bank"}&view=status`) },
+    }));
     // Manual SFTP accounts whose learned upload time has passed by 15+ minutes with nothing in the folder.
     patternsFor(collections.files).filter((p) => p.state === "late").forEach((p) => items.push({
       id: "mpl_" + p.fileId, tone: "red", sort: 90, kind: "Manual SFTP upload", step: 1, eventType: "manual_upload_late", firstAt: new Date(new Date().setHours(0, p.expected + 15, 0, 0)).toISOString(),
@@ -99,12 +116,12 @@ export function useWorkItems() {
       id: e.id, tone: useful ? "red" : "amber", sort: 150, kind: "Rejected email", step: 1, eventType: "rejected_email", firstAt: e.receivedAt || e.at || new Date().toISOString(),
       title: useful ? "A statement email was rejected, but it's the one we're missing" : `Email from ${e.from} was rejected`,
       detail: e.reasonText, hint: e.attachment.name ? `Attachment: ${e.attachment.name}` : "No attachment",
-      primary: { label: useful ? "Use this attachment" : "Open email", run: () => nav(`/ingestion?tab=email&email=${e.id}`) },
+      primary: { label: useful ? "See the email" : "See the email", run: () => nav(`/ingestion?tab=email&email=${e.id}`) },
     }); });
     (collections.connections || []).filter((x) => x.status === "failing" && !x.dismissed).forEach((x) => items.push({
       id: x.id, tone: "amber", sort: 160, kind: "Bank connection", step: 1, eventType: x.type === "api" ? "api_failure" : "bot_failure", ...repeatHistory(x.id, x.every || 30, 2), title: `${x.bankName} ${x.type === "api" ? "API" : "portal bot"} is failing`, detail: x.error,
       hint: x.captcha ? "Download the statement by hand and upload it" : "The token needs renewing in Bank statement setup",
-      primary: { label: "Open connection", run: () => nav("/ingestion?tab=conns") },
+      primary: { label: "See the connection", run: () => nav(`/ingestion?tab=conns&conn=${x.id}`) },
     }));
   }
   if (hasCap(perms, "bank_setup", "edit")) {

@@ -8,6 +8,9 @@ import "@/future.css";
 import "@/aurora.css";
 import "@/calm.css";
 import "@/opsgaps.css";
+import "@/theme/tokens.css";
+import "@/theme/system.css";
+import "@/theme/look.css";
 import App from "@/App";
 import { StoreProvider } from "@/state/store";
 import { Toaster } from "sonner";
@@ -17,7 +20,7 @@ root.render(
   <React.StrictMode>
     <StoreProvider>
       <App />
-      <Toaster position="bottom-right" richColors closeButton duration={3200} />
+      <Toaster position="bottom-right" closeButton duration={3600} toastOptions={{ className: "ds-toast" }} />
     </StoreProvider>
   </React.StrictMode>,
 );

@@ -1,22 +1,20 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useStore } from "@/state/store";
 import { MODULES, MODULE_BY_KEY, SCREENS, hasCap } from "@/lib/access";
-import { Avatar } from "@/components/au";
-import { EmptyState } from "@/components/bits";
+import { EmptyState, SkeletonBlock } from "@/components/bits";
+import Picker from "@/components/Picker";
+import DateRange from "@/components/DateRange";
+import { usePopover, PopoverPanel } from "@/components/Popover";
 import { formatDate, timeAgo, highlight } from "@/lib/format";
 import RolePermissionsDrawer from "./RolePermissionsDrawer";
 import AddEditUserDrawer from "./AddEditUserDrawer";
 import DeactivateUserModal from "./DeactivateUserModal";
 import OnboardingModal from "./OnboardingModal";
-import { StatusOverview, ModuleAccess } from "./CamsConstellation";
 import "./userManagement.css";
 import { Modal } from "@/components/Modal";
-import { AMCS, userAmcs, inScope, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS, DORMANT_DAYS } from "@/lib/org";
+import { AMCS, userAmcs, inScope, isDormant, daysSince, BIOMETRIC_LIMIT_DAYS } from "@/lib/org";
 
-import {
-  UserPlus, Search, Download, Shield, Pencil, Power, PowerOff,
-  Users, X, Building2, CalendarDays, MoreHorizontal
-} from "lucide-react";
+import { UserPlus, Search, Download, Shield, Pencil, Power, PowerOff, X, Building2, MoreHorizontal, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
 // Three ID statuses plus one common "Inactive" flag for active IDs that have gone quiet.
@@ -24,7 +22,11 @@ import { toast } from "sonner";
 const isInactive = (u) => u.status === "active" && (isDormant(u) || (u.lastBiometric && daysSince(u.lastBiometric) >= 7));
 
 const isoDay = (d) => d.toISOString().slice(0, 10);
-const STATUS_WORD = { active: "Active", inactive: "Inactive", invited: "Invited", deactivated: "Deactivated" };
+// Three statuses on screen: Active (ID works), Inactive (ID switched off), Pending (invited, not signed in yet).
+// An active ID that has gone quiet stays Active and carries a "no sign-in" note in Last activity.
+const STATUS_WORD = { active: "Active", inactive: "Inactive", pending: "Pending" };
+const STATUS_PILL = { active: "active", inactive: "deactivated", pending: "invited" };
+const statusOf = (u) => (u.status === "deactivated" ? "inactive" : ["invited", "invite_expired"].includes(u.status) ? "pending" : "active");
 
 export default function UserManagement() {
   const {
@@ -124,10 +126,7 @@ export default function UserManagement() {
       if (roleFilter !== "all" && !(u.roles || []).includes(roleFilter)) return false;
       if (moduleFilter !== "all" && !(u.roles || []).some((rid) => roleById[rid] && modsOf(roleById[rid]).has(moduleFilter))) return false;
       // Status filter
-      if (statusFilter === "inactive") { if (!isInactive(u)) return false; }
-      else if (statusFilter === "active") { if (u.status !== "active" || isInactive(u)) return false; }
-      else if (statusFilter === "invited") { if (!["invited", "invite_expired"].includes(u.status)) return false; }
-      else if (statusFilter !== "all" && u.status !== statusFilter) return false;
+      if (statusFilter !== "all" && statusOf(u) !== statusFilter) return false;
       // Search
       if (debouncedSearch) {
         const q = debouncedSearch.toLowerCase();
@@ -193,34 +192,36 @@ export default function UserManagement() {
   const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const toggleAll = () => setSelected((s) => { const n = new Set(s); pageIds.forEach((id) => (allOnPage ? n.delete(id) : n.add(id))); return n; });
 
-  const statusOf = (u) => (u.status === "deactivated" ? "deactivated" : ["invited", "invite_expired"].includes(u.status) ? "invited" : isInactive(u) ? "inactive" : "active");
   const statusCount = (k) => scoped.filter((u) => statusOf(u) === k).length;
   const STATUSES = [
-    { key: "active", label: "Active", count: statusCount("active"), color: "#22a06b", hint: "Signed in and punched in recently", testid: "tile-active" },
-    { key: "inactive", label: "Inactive", count: statusCount("inactive"), color: "#e8a23a", hint: `No sign-in ${DORMANT_DAYS}+ days or no punch-in 7+ days`, testid: "tile-inactive" },
-    { key: "invited", label: "Invited", count: statusCount("invited"), color: "#5b4ccf", hint: "Has roles, hasn't signed in yet", testid: "tile-invited" },
-    { key: "deactivated", label: "Deactivated", count: statusCount("deactivated"), color: "#e5484d", hint: "ID switched off, cannot sign in", testid: "tile-deactivated" },
+    { key: "active", label: "Active", count: statusCount("active"), testid: "tile-active" },
+    { key: "inactive", label: "Inactive", count: statusCount("inactive"), testid: "tile-inactive" },
+    { key: "pending", label: "Pending", count: statusCount("pending"), testid: "tile-invited" },
   ];
-  const toList = () => setTimeout(() => document.getElementById("um-list")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   const pickModule = (k) => { setModuleFilter(moduleFilter === k ? "all" : k); setRoleFilter("all"); };
 
   const activity = (u, st) => {
     const ago = (iso) => { const d = daysSince(iso); return d === 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`; };
-    if (st === "deactivated") return [<>Switched off</>, u.deactivatedAt ? formatDate(u.deactivatedAt) : (u.deactivationReason || "—")];
-    if (st === "invited") return [<>Never signed in</>, u.status === "invite_expired" ? "Invite expired" : `Invite sent ${ago(u.invitedAt || u.createdAt)}`];
+    if (st === "inactive") return [<>Switched off</>, u.deactivatedAt ? formatDate(u.deactivatedAt) : (u.deactivationReason || "—"), false];
+    if (st === "pending") return [<>Never signed in</>, u.status === "invite_expired" ? "Invite expired" : `Invite sent ${ago(u.invitedAt || u.createdAt)}`, false];
     const first = u.lastLogin ? timeAgo(u.lastLogin) : "Never signed in";
+    const quiet = isInactive(u);
     const bio = u.lastBiometric ? (daysSince(u.lastBiometric) >= 7 ? `No punch-in ${daysSince(u.lastBiometric)} days` : `Punched in ${ago(u.lastBiometric)}`) : "No punch-in record";
-    return [first, bio];
+    return [first, quiet && isDormant(u) ? `No sign-in ${daysSince(u.lastLogin || u.createdAt)} days` : bio, quiet];
   };
+  const amcOptions = [{ value: "all", label: "All AMCs", count: AMCS.length }, ...AMCS.map((a) => ({ value: a, label: a }))];
+  const COLS = "24px 40px minmax(170px, 1.3fr) minmax(130px, .9fr) minmax(190px, 1.4fr) 104px minmax(130px, 1fr) 40px";
 
   return (
-    <div className="user-management-page" data-testid="user-management-page">
-      <div className="page-head">
-        <div>
-          <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><Users size={24} /> User Management</h1>
-          <p>Find a person, check what they can do, fix their access.</p>
+    <div className="user-management-page um2" data-testid="user-management-page">
+      <div className="page-head"><div><h1>Users</h1></div></div>
+      <div className="um2-toolbar">
+        <div className="um2-scope">
+          <Picker value={amcFilter} onChange={setAmcFilter} label="AMC" testid="scope-amc" width={280} options={amcOptions} />
+          <DateRange value={{ from: fromDate, to: toDate }} onChange={(v) => { if (v.from) setFromDate(v.from); if (v.to) setToDate(v.to); }} testid="scope" />
+          {scopeChanged && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAmcFilter("all"); setFromDate(today); setToDate(today); }} data-testid="scope-reset"><X size={13} /> Reset</button>}
         </div>
-        <div className="actions">
+        <div className="um2-acts">
           <span title={`Disabled until the ID management integration is confirmed. It will disable IDs with no biometric punch-in for ${BIOMETRIC_LIMIT_DAYS} consecutive days.`}>
             <button type="button" className="btn btn-outline" disabled data-testid="btn-biometric-check"><Shield size={15} /> Run biometric check</button>
           </span>
@@ -228,147 +229,107 @@ export default function UserManagement() {
         </div>
       </div>
 
-      <StatusOverview scope={
-      <div className="ux-scope" data-testid="um-scope">
-        <Building2 size={14} />
-        <select value={amcFilter} onChange={(e) => setAmcFilter(e.target.value)} data-testid="scope-amc" aria-label="AMC">
-          <option value="all">All AMCs</option>
-          {AMCS.map((a) => <option key={a} value={a}>{a}</option>)}
-        </select>
-        <span className="ux-scope-div" />
-        <CalendarDays size={14} />
-        <input className="tnum" type="date" value={fromDate} max={toDate} onChange={(e) => e.target.value && setFromDate(e.target.value)} data-testid="scope-from" aria-label="From date" />
-        <span className="muted">to</span>
-        <input className="tnum" type="date" value={toDate} min={fromDate} max={today} onChange={(e) => e.target.value && setToDate(e.target.value)} data-testid="scope-to" aria-label="To date" />
-        {scopeChanged && <button type="button" className="ux-scope-reset" onClick={() => { setAmcFilter("all"); setFromDate(today); setToDate(today); }} data-testid="scope-reset" aria-label="Reset filters"><X size={13} /></button>}
-      </div>
-      } total={scoped.length} statuses={STATUSES} status={statusFilter} onStatus={(k) => { setStatusFilter(k); if (k !== "all") toList(); }} />
+      <section className="um2-hero" data-testid="um-scope">
+        <button type="button" className={"um2-total" + (statusFilter === "all" ? " on" : "")} onClick={() => setStatusFilter("all")} data-testid="tile-total">
+          <span>People with a CAMS ID</span><b className="tnum">{scoped.length}</b>
+        </button>
+        {STATUSES.map((t) => (
+          <button key={t.key} type="button" className={"um2-stat s-" + t.key + (statusFilter === t.key ? " on" : "")} onClick={() => setStatusFilter(statusFilter === t.key ? "all" : t.key)} data-testid={t.testid}>
+            <span><i aria-hidden="true" />{t.label}</span><b className="tnum">{t.count}</b>
+            <em className="um2-bar" aria-hidden="true"><u style={{ width: `${scoped.length ? (t.count / scoped.length) * 100 : 0}%` }} /></em>
+          </button>
+        ))}
+      </section>
 
-      <div className="uo-grid">
-        <div className="uo-list" id="um-list">
-          <div className="uo-list-top">
-            <div className="uo-seg" role="tablist" aria-label="Status">
-              {[{ key: "all", label: "All", count: scoped.length }, ...STATUSES].map((t) => (
-                <button key={t.key} type="button" role="tab" aria-selected={statusFilter === t.key} className={statusFilter === t.key ? "on" : ""} onClick={() => setStatusFilter(t.key)} data-testid={t.key === "all" ? "tile-total" : `seg-${t.key}`}>
-                  {t.label} <em className="tnum">{t.count}</em>
-                </button>
-              ))}
-            </div>
-            <div className="uo-tools" data-testid="user-toolbar">
-              <label className="uo-search"><Search size={16} /><input type="text" placeholder="Search name or ID" value={search} onChange={(e) => setSearch(e.target.value)} data-testid="user-search-input" /></label>
-              {moduleFilter !== "all" && (
-                <span className="uo-chip" style={{ "--c": MODULE_BY_KEY[moduleFilter]?.color }}><i />{MODULE_BY_KEY[moduleFilter]?.label}{roleFilter !== "all" && <> · {roleById[roleFilter]?.name.replace(/^.*· /, "")}</>}
-                  <button type="button" onClick={() => { setModuleFilter("all"); setRoleFilter("all"); }} aria-label="Clear module filter" data-testid="btn-reset-filters"><X size={12} /></button></span>
-              )}
-              <button type="button" className="uo-btn" onClick={() => handleExportCsv(selected.size ? filteredUsers.filter((u) => selected.has(u.id)) : filteredUsers)} data-testid="btn-export-csv">
-                <Download size={15} /> {selected.size ? `Export ${selected.size} selected` : "Export"}
-              </button>
-              {selected.size > 0 && <button type="button" className="uo-link" onClick={() => setSelected(new Set())}>Clear selection</button>}
-            </div>
-          </div>
-
-          <div className="uo-table" data-testid="user-table" role="table">
-            <div className="uo-tr uo-th" role="row">
-              <span><input type="checkbox" className="uo-check" checked={allOnPage} onChange={toggleAll} aria-label="Select all on this page" /></span>
-              <span>Name</span><span>Module &amp; role</span><span>Status</span><span>Last activity</span><span />
-            </div>
-            {loading ? <div className="ux-skel">{Array.from({ length: 6 }).map((_, i) => <i key={i} />)}</div> : pageRows.map((u, i) => {
-              const st = statusOf(u);
-              const [l1, l2] = activity(u, st);
-              const isSelf = u.id === actor.id;
-              return (
-                <div key={u.id} className={"uo-tr st-" + st + (selected.has(u.id) ? " sel" : "")} role="row" style={{ animationDelay: `${Math.min(i * 20, 240)}ms` }} data-testid={`user-row-${u.id}`}>
-                  <span><input type="checkbox" className="uo-check" checked={selected.has(u.id)} onChange={() => toggleSel(u.id)} aria-label={`Select ${u.name}`} /></span>
-                  <span className="uo-who">
-                    <Avatar name={u.name} size={38} />
-                    <span>
-                      <b>{highlight(u.name, debouncedSearch)}{isSelf && <em className="ux-you" title="You are signed in as this user">You</em>}</b>
-                      <small className="tnum">{highlight(u.empNo, debouncedSearch)} · <span data-testid={`amc-${u.id}`}><AmcCell user={u} compact /></span></small>
-                    </span>
-                  </span>
-                  <span>{renderRoles(u)}</span>
-                  <span><span className={"ux-pill " + st} data-testid={`status-${u.status}`}><i />{STATUS_WORD[st]}</span></span>
-                  <span className={"uo-act" + (st === "inactive" ? " warn" : "")}><b>{l1}</b><small>{l2}</small></span>
-                  <span><RowMenu user={u} isSelf={isSelf} canEdit={canEdit} canManageIds={canManageIds} pending={pendingReactivation.has(u.id)}
-                    onEdit={() => { setEditingUser(u); setAddEditOpen(true); }} onDeactivate={() => setDeactivatingUser(u)} onReactivate={() => handleToggleReactivate(u)} /></span>
-                </div>
-              );
-            })}
-            {!loading && pageRows.length === 0 && <EmptyState icon={Users} title="No one matches" subtitle="Try another name, or clear the filters." />}
-          </div>
-
-          <div className="uo-foot">
-            <span>Showing <b>{total ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + pageRows.length}` : 0}</b> of <b>{total}</b></span>
-            <span className="uo-pager">
-              <button type="button" className="uo-btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} data-testid="users-pager-prev">Previous</button>
-              <button type="button" className="uo-btn" disabled={page * pageSize >= total} onClick={() => setPage((p) => p + 1)} data-testid="users-pager-next">Next</button>
-            </span>
-          </div>
-        </div>
-
+      <div className="um2-grid">
         {(() => {
-          // Active people only: inactive, invited and deactivated IDs are left out of this view.
-          const activePeople = scoped.filter((u) => statusOf(u) === "active");
-          const activeIn = (k) => activePeople.filter((u) => (u.roles || []).some((rid) => roleById[rid] && modsOf(roleById[rid]).has(k))).length;
-          return <ModuleAccess modules={MODULES.map((m) => ({ key: m.key, label: m.label, color: m.color, users: activeIn(m.key), roles: roles.filter((r) => modsOf(r).has(m.key)).length }))}
-            active={moduleFilter === "all" ? null : moduleFilter} onPick={pickModule} onRoles={setSelectedRolePerms} />;
+          // Active people only (signed in recently): inactive, pending and quiet IDs are left out of this view.
+          const activePeople = scoped.filter((u) => statusOf(u) === "active" && !isInactive(u));
+          const mods = MODULES.map((m) => ({ key: m.key, label: m.label, users: activePeople.filter((u) => (u.roles || []).some((rid) => roleById[rid] && modsOf(roleById[rid]).has(m.key))).length })).sort((x, y) => y.users - x.users);
+          const max = Math.max(1, ...mods.map((m) => m.users));
+          return (
+            <section className="um2-mods" data-testid="module-strip">
+              <header><h2>People by module</h2>{moduleFilter !== "all" && <button type="button" className="link" onClick={() => pickModule(moduleFilter)}>Show everyone</button>}</header>
+              <ul>
+                {mods.map((m) => (
+                  <li key={m.key}>
+                    <button type="button" className={"um2-mod" + (moduleFilter === m.key ? " on" : "") + (!m.users ? " none" : "")} onClick={() => pickModule(m.key)} aria-pressed={moduleFilter === m.key} data-testid={`module-card-${m.key}`}>
+                      <span>{m.label}</span><b className="tnum">{m.users}</b>
+                      <i aria-hidden="true"><u style={{ width: `${(m.users / max) * 100}%` }} /></i>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
         })()}
+        <section id="um-list">
+          <div className="dl-bar" data-testid="user-toolbar">
+            <label className="rq-search"><Search size={15} aria-hidden="true" /><input type="text" placeholder="Search name or employee ID" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search people" data-testid="user-search-input" /></label>
+            <Picker value={statusFilter} onChange={setStatusFilter} label="Status" testid="status-filter" width={220} options={[{ value: "all", label: "All", count: scoped.length }, ...STATUSES.map((t) => ({ value: t.key, label: t.label, count: t.count }))]} />
+            {moduleFilter !== "all" && (
+              <span className="um2-chip">{MODULE_BY_KEY[moduleFilter]?.label}{roleFilter !== "all" && <> · {roleById[roleFilter]?.name.replace(/^.*· /, "")}</>}
+                <button type="button" onClick={() => { setModuleFilter("all"); setRoleFilter("all"); }} aria-label="Clear module filter" data-testid="btn-reset-filters"><X size={12} /></button></span>
+            )}
+            <button type="button" className="btn btn-outline btn-sm um2-export" onClick={() => handleExportCsv(selected.size ? filteredUsers.filter((u) => selected.has(u.id)) : filteredUsers)} data-testid="btn-export-csv">
+              <Download size={14} /> {selected.size ? `Export ${selected.size} selected` : "Export"}
+            </button>
+            {selected.size > 0 && <button type="button" className="link" onClick={() => setSelected(new Set())}>Clear selection</button>}
+          </div>
+
+          <div className="dl" data-testid="user-table" style={{ "--cols": COLS }}>
+            <div className="dl-h" role="row">
+              <span><input type="checkbox" className="uo-check" checked={allOnPage} onChange={toggleAll} aria-label="Select all on this page" /></span>
+              <span /><span>Person</span><span>AMC access</span><span>Module and role</span><span>Status</span><span>Last activity</span><span />
+            </div>
+            {loading ? <SkeletonBlock rows={6} label="Loading people" /> : (
+              <ul className="rq-list">
+                {pageRows.map((u) => {
+                  const st = statusOf(u);
+                  const [l1, l2, quiet] = activity(u, st);
+                  const isSelf = u.id === actor.id;
+                  return (
+                    <li key={u.id}>
+                      <div className={"dl-r um2-row" + (selected.has(u.id) ? " sel" : "")} data-testid={`user-row-${u.id}`}>
+                        <span><input type="checkbox" className="uo-check" checked={selected.has(u.id)} onChange={() => toggleSel(u.id)} aria-label={`Select ${u.name}`} /></span>
+                        <span className="dl-ic um2-av" aria-hidden="true">{u.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}</span>
+                        <span className="dl-main"><b>{highlight(u.name, debouncedSearch)}{isSelf && <em className="um2-you">You</em>}</b><small className="tnum" title={u.designation || undefined}>{highlight(u.empNo, debouncedSearch)}</small></span>
+                        <span className="dl-c" data-testid={`amc-${u.id}`}><AmcCell user={u} /></span>
+                        <span className="um2-roles">{renderRoles(u)}</span>
+                        <span><span className={"pill pill-" + (st === "active" ? "active" : st === "inactive" ? "rejected" : "pending")} data-testid={`status-${STATUS_PILL[st]}`}><span className="dot" />{STATUS_WORD[st]}</span></span>
+                        <span className={"dl-main um2-act" + (quiet ? " warn" : "")}><b>{l1}</b><small>{l2}</small></span>
+                        <RowMenu user={u} isSelf={isSelf} canEdit={canEdit} canManageIds={canManageIds} pending={pendingReactivation.has(u.id)}
+                          onEdit={() => { setEditingUser(u); setAddEditOpen(true); }} onDeactivate={() => setDeactivatingUser(u)} onReactivate={() => handleToggleReactivate(u)} />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {!loading && pageRows.length === 0 && <EmptyState art="search" title="No one matches" subtitle="Try another name, or clear the filters." />}
+            <div className="um2-foot">
+              <span className="tnum">{total ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + pageRows.length}` : 0} of {total}</span>
+              <span className="um2-pager">
+                <button type="button" className="btn btn-outline btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} data-testid="users-pager-prev">Previous</button>
+                <button type="button" className="btn btn-outline btn-sm" disabled={page * pageSize >= total} onClick={() => setPage((p) => p + 1)} data-testid="users-pager-next">Next</button>
+              </span>
+            </div>
+          </div>
+        </section>
+
       </div>
-      {/* Role Permissions Drawer */}
-      <RolePermissionsDrawer
-        moduleKey={selectedRolePerms}
-        roles={roles}
-        roleCounts={roleCounts}
-        onClose={() => setSelectedRolePerms(null)}
-        onFilterRole={(rid) => { setRoleFilter(rid); setModuleFilter("all"); }}
-      />
-
-      {/* Add / Edit User Drawer */}
-      <AddEditUserDrawer
-        isOpen={addEditOpen}
-        onClose={() => {
-          setAddEditOpen(false);
-          setEditingUser(null);
-        }}
-        editingUser={editingUser}
-        allUsers={users}
-        actor={actor}
-        roles={roles}
-        onSaveUser={(form, id) => {
-          const res = id ? updateUser(id, form) : addUser(form);
-          if (res.ok && res.pending) toast.info(`${res.pending} privileged role(s) sent to a second admin for approval`);
-          return res;
-        }}
-        onOpenInviteEmail={(newUser) => {
-          setOnboardingUser(newUser);
-        }}
-      />
-
-      {/* Deactivate User Modal */}
+      <RolePermissionsDrawer moduleKey={selectedRolePerms} roles={roles} roleCounts={roleCounts} onClose={() => setSelectedRolePerms(null)} onFilterRole={(rid) => { setRoleFilter(rid); setModuleFilter("all"); }} />
+      <AddEditUserDrawer isOpen={addEditOpen} onClose={() => { setAddEditOpen(false); setEditingUser(null); }} editingUser={editingUser} allUsers={users} actor={actor} roles={roles}
+        onSaveUser={(form, id) => { const res = id ? updateUser(id, form) : addUser(form); if (res.ok && res.pending) toast.info(`${res.pending} privileged role(s) sent to a second admin for approval`); return res; }}
+        onOpenInviteEmail={(newUser) => setOnboardingUser(newUser)} />
       {reactivating && <ReactivateModal user={reactivating} onClose={() => setReactivating(null)} onSubmit={(reason, ticket, bio) => {
         const res = requestReactivation(reactivating.id, reason, ticket, bio);
         if (!res.ok) { toast.error(res.error); return; }
         toast.success(`Reactivation of ${reactivating.name} sent to a second admin (Roles & Access → Approvals).`);
         setReactivating(null);
       }} />}
-      <DeactivateUserModal
-        isOpen={Boolean(deactivatingUser)}
-        user={deactivatingUser}
-        onClose={() => setDeactivatingUser(null)}
-        onConfirmDeactivate={(userId, reason) => {
-          deactivateUser(userId, reason);
-        }}
-      />
-
-      {/* Onboarding Flow Preview Modal */}
-      <OnboardingModal
-        isOpen={Boolean(onboardingUser)}
-        user={onboardingUser}
-        onClose={() => setOnboardingUser(null)}
-        onUserActivated={(userId) => {
-          activateOnboardedUser(userId);
-        }}
-      />
+      <DeactivateUserModal isOpen={Boolean(deactivatingUser)} user={deactivatingUser} onClose={() => setDeactivatingUser(null)} onConfirmDeactivate={(userId, reason) => deactivateUser(userId, reason)} />
+      <OnboardingModal isOpen={Boolean(onboardingUser)} user={onboardingUser} onClose={() => setOnboardingUser(null)} onUserActivated={(userId) => activateOnboardedUser(userId)} />
     </div>
   );
 }
@@ -393,57 +354,38 @@ function ReactivateModal({ user, onClose, onSubmit }) {
   );
 }
 
-/** AMC access: the first AMC by name, the rest one click away in a small list. */
-function AmcCell({ user, compact }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+/** AMC access: "All AMCs", one AMC by name, or "3 AMCs" that opens the full list above the page. */
+function AmcCell({ user }) {
+  const pop = usePopover();
   const all = !user?.amcs || user.amcs.includes("ALL");
   const list = userAmcs(user);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [open]);
-  if (all) return <span className="um-text">{compact ? "All AMCs" : `All AMCs (${list.length})`}</span>;
-  if (list.length === 1) return <span className="um-text uo-amc1" title={list[0]}>{list[0]}</span>;
+  if (all) return <span className="um2-amc"><Building2 size={14} /> All AMCs</span>;
+  if (list.length === 1) return <span className="um2-amc" title={list[0]}><Building2 size={14} /> {list[0]}</span>;
   return (
-    <span className="amc-cell" ref={ref}>
-      {compact ? <button type="button" className="amc-more" onClick={() => setOpen((o) => !o)} aria-expanded={open} data-testid={`amc-more-${user.id}`}>{list.length} AMCs</button>
-        : <><span className="um-text">{list[0]}</span>{" "}<button type="button" className="amc-more" onClick={() => setOpen((o) => !o)} aria-expanded={open} data-testid={`amc-more-${user.id}`}>+{list.length - 1} more</button></>}
-      {open && (
-        <div className="amc-pop" data-testid={`amc-pop-${user.id}`}>
-          <div className="amc-pop-head">{user.name.split(" ")[0]} · {list.length} AMCs</div>
-          <ul>{list.map((a) => <li key={a}>{a}</li>)}</ul>
-        </div>
-      )}
-    </span>
+    <>
+      <button type="button" ref={pop.btn} className="um2-amc more" onClick={pop.toggle} aria-expanded={pop.open} data-testid={`amc-more-${user.id}`}><Building2 size={14} /> {list.length} AMCs <ChevronDown size={13} /></button>
+      <PopoverPanel state={pop} width={280} label={`${user.name}'s AMCs`}>
+        <span className="pop-l">{user.name.split(" ")[0]} works on {list.length} AMCs</span>
+        <ul className="pop-list" data-testid={`amc-pop-${user.id}`}>{list.map((a) => <li key={a}><Building2 size={14} />{a}</li>)}</ul>
+      </PopoverPanel>
+    </>
   );
 }
 
 /** Row actions behind one "⋯" button: edit roles, deactivate or request reactivation. */
 function RowMenu({ user, isSelf, canEdit, canManageIds, pending, onEdit, onDeactivate, onReactivate }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [open]);
-  if (!canEdit && !canManageIds) return null;
-  const run = (fn) => () => { setOpen(false); fn(); };
+  const pop = usePopover();
+  if (!canEdit && !canManageIds) return <span />;
+  const run = (fn) => () => { pop.close(); fn(); };
   return (
-    <span className="uo-menu" ref={ref}>
-      <button type="button" className="uo-kebab" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={`Actions for ${user.name}`} data-testid={`row-menu-${user.id}`}><MoreHorizontal size={17} /></button>
-      {open && (
-        <div className="uo-menu-pop" role="menu">
-          {canEdit && <button type="button" role="menuitem" onClick={run(onEdit)} data-testid={`action-edit-${user.id}`}><Pencil size={14} /> Edit roles &amp; AMC access</button>}
-          {canManageIds && (user.status === "deactivated"
-            ? <button type="button" role="menuitem" disabled={pending} onClick={run(onReactivate)} data-testid={`action-reactivate-${user.id}`}><Power size={14} /> {pending ? "Reactivation requested" : "Request reactivation"}</button>
-            : <button type="button" role="menuitem" className="danger" disabled={isSelf} onClick={run(onDeactivate)} data-testid={`action-deactivate-${user.id}`}><PowerOff size={14} /> {isSelf ? "Can't deactivate yourself" : "Deactivate"}</button>)}
-        </div>
-      )}
+    <span className="dl-more">
+      <button type="button" ref={pop.btn} className="dl-kebab" onClick={pop.toggle} aria-expanded={pop.open} aria-label={`Actions for ${user.name}`} data-testid={`row-menu-${user.id}`}><MoreHorizontal size={17} /></button>
+      <PopoverPanel state={pop} align="right" width={260} className="pop-menu" label={`Actions for ${user.name}`}>
+        {canEdit && <button type="button" onClick={run(onEdit)} data-testid={`action-edit-${user.id}`}><Pencil size={14} /> Edit roles and AMC access</button>}
+        {canManageIds && (user.status === "deactivated"
+          ? <button type="button" disabled={pending} onClick={run(onReactivate)} data-testid={`action-reactivate-${user.id}`}><Power size={14} /> {pending ? "Reactivation requested" : "Request reactivation"}</button>
+          : <button type="button" className="danger" disabled={isSelf} onClick={run(onDeactivate)} data-testid={`action-deactivate-${user.id}`}><PowerOff size={14} /> {isSelf ? "Can't deactivate yourself" : "Deactivate"}</button>)}
+      </PopoverPanel>
     </span>
   );
 }
